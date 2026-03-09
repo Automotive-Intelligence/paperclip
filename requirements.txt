@@ -1,6 +1,3 @@
-agno
-openai
-psycopg2-binary
+agno[os,postgres,openai]
 fastapi
 uvicorn
-python-dotenv
