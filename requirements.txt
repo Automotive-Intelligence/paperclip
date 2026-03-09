@@ -1,3 +1,4 @@
 agno[os,postgres,openai]
+psycopg[binary]
 fastapi
 uvicorn
