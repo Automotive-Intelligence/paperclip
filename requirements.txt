@@ -1,4 +1,6 @@
-agno[os,postgres,openai]
+crewai
+crewai-tools
+litellm
 psycopg[binary]
 fastapi
 uvicorn
