@@ -93,6 +93,10 @@ def health():
         "businesses": list(BUSINESSES.keys())
     }
 
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "Paperclip", "version": "2.0.0"}
+
 @app.get("/agents")
 def list_agents():
     return {
@@ -120,13 +124,12 @@ async def chat(agent_id: str, request: ChatRequest):
     )
 
     crew = Crew(
-        agents=[agent],
-        tasks=[task],
-        process=Process.sequential,
-        memory=False,
-        verbose=False
-    )
-
+    agents=[agent],
+    tasks=[task],
+    process=Process.sequential,
+    memory=False,
+    verbose=False
+)
     result = crew.kickoff()
 
     return ChatResponse(
