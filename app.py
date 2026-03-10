@@ -123,7 +123,7 @@ async def chat(agent_id: str, request: ChatRequest):
         agents=[agent],
         tasks=[task],
         process=Process.sequential,
-        memory=True,
+        memory=False,
         verbose=False
     )
 
