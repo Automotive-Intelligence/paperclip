@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, HTMLResponse
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
 
@@ -95,7 +95,8 @@ def health():
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "Paperclip", "version": "2.0.0"}
+    with open("static/index.html", "r") as f:
+        return HTMLResponse(content=f.read())
 
 @app.get("/agents")
 def list_agents():
