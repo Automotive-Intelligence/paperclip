@@ -28,5 +28,6 @@ chase = Agent(
     ),
     llm=get_llm(),
     memory=True,
+    tools=[web_search_tool],
     verbose=True
 )
