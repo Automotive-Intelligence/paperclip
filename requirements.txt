@@ -3,3 +3,4 @@ litellm
 psycopg[binary]
 fastapi
 uvicorn
+tavily-python
