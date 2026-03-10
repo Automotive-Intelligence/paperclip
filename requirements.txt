@@ -1,5 +1,4 @@
-crewai
-crewai-tools
+crewai==1.10.1
 litellm
 psycopg[binary]
 fastapi
