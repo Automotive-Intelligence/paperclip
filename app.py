@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, HTTPException, HTMLResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
 
