@@ -65,8 +65,12 @@ def _db_url() -> str:
 
 @contextmanager
 def _db():
-    """Thread-safe single-use DB connection context manager."""
-    conn = psycopg.connect(_db_url())
+    """Thread-safe single-use DB connection context manager.
+
+    connect_timeout=5 ensures we fail fast if the DB socket isn't ready
+    at boot time instead of hanging indefinitely and blocking the event loop.
+    """
+    conn = psycopg.connect(_db_url(), connect_timeout=5)
     try:
         yield conn
         conn.commit()
@@ -465,6 +469,7 @@ def run_jennifer_retention():
     except Exception as e:
         logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
 
+
 def run_carlos_retention():
     try:
         task = Task(
@@ -494,7 +499,7 @@ def run_carlos_retention():
         logging.error(f"[Scheduler] Carlos retention failed: {type(e).__name__}: {e}")
 
 
-# ── Specialists ── 10:00, 10:02, 10:04 CST ──────────────────────────────────────────
+# ── Specialists ── 10:00, 10:02, 10:04 CST ────────────────────────────────────────────
 
 def run_nova_intelligence():
     try:
@@ -575,7 +580,7 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
-# ── Register All 13 Scheduler Jobs ────────────────────────────────────────────
+# ── Register All 13 Scheduler Jobs ──────────────────────────────────────────────
 
 # CEOs — 8:00, 8:02, 8:04
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
@@ -639,15 +644,32 @@ scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=
     replace_existing=True, misfire_grace_time=3600)
 
 
-# ── FastAPI App ───────────────────────────────────────────────────────────────────
+# ── FastAPI App ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
-    scheduler.start()
-    logging.info("[Scheduler] Started — 13 agent jobs registered.")
+    # ── DB init — never crash startup if Postgres isn't ready ─────────────────
+    try:
+        init_db()
+    except Exception as e:
+        logging.warning(
+            f"[DB] Startup init failed — app will run without Postgres: {e}"
+        )
+
+    # ── Scheduler — never crash startup if APScheduler misfires ──────────────────
+    try:
+        scheduler.start()
+        logging.info("[Scheduler] Started — 13 agent jobs registered.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Failed to start: {e}")
+
     yield
-    scheduler.shutdown(wait=False)
+
+    # ── Shutdown ──────────────────────────────────────────────────────────────────
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     logging.info("[Scheduler] Shut down.")
 
 
@@ -662,7 +684,7 @@ app = FastAPI(
 )
 
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
+# ── Auth ─────────────────────────────────────────────────────────────────────────
 
 class AuthRequest(BaseModel):
     agent_id: str
@@ -727,7 +749,7 @@ async def get_agent_log(agent_name: str):
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-    # ── Postgres primary ───────────────────────────────────────────────────────────────────
+    # ── Postgres primary ──────────────────────────────────────────────────────────────────
     if DATABASE_URL:
         try:
             with _db() as conn:
@@ -754,7 +776,7 @@ async def get_agent_log(agent_name: str):
             logging.error(f"[DB] get_agent_log query failed: {e}")
             # fall through to filesystem
 
-    # ── Filesystem fallback ──────────────────────────────────────────────────────────────────
+    # ── Filesystem fallback ────────────────────────────────────────────────────────────────────
     pattern = os.path.join("logs", f"{agent_name}_*.log")
     matches = sorted(glob.glob(pattern), reverse=True)
     if not matches:
