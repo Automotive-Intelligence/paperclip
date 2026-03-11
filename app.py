@@ -720,6 +720,11 @@ def get_agent_business(agent_id: str) -> str:
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+
 @app.post("/chat")
 async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)):
     validate_key(authorization)
