@@ -1,6 +1,7 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import HTMLResponse
+from typing import Optional
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
 
@@ -46,6 +47,29 @@ AGENTS = {
 }
 
 BUSINESSES = {
+
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "")
+RYAN_KEY = os.environ.get("RYAN_KEY", "")
+
+BUSINESS_AGENTS = {
+    "aiphoneguy": ["alex", "tyler", "zoe", "jennifer"],
+    "callingdigital": ["dek", "marcus", "sofia", "carlos", "nova"],
+    "autointelligence": ["michael-mata", "ryan-data", "chase", "atlas", "phoenix"],
+}
+
+def get_allowed_businesses(key: str) -> list:
+    if ADMIN_KEY and key == ADMIN_KEY:
+        return ["aiphoneguy", "callingdigital", "autointelligence"]
+    if RYAN_KEY and key == RYAN_KEY:
+        return ["autointelligence"]
+    return []
+
+def get_agent_business(agent_id: str) -> str:
+    for biz, agents in BUSINESS_AGENTS.items():
+        if agent_id in agents:
+            return biz
+    return None
+    
     "aiphoneguy": {
         "name": "The AI Phone Guy",
         "agents": ["alex", "tyler", "zoe", "jennifer"]
@@ -85,6 +109,17 @@ def get_business_for_agent(agent_id: str) -> str:
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
+
+class AuthRequest(BaseModel):
+    key: str
+
+@app.post("/auth/validate")
+def validate_key(request: AuthRequest):
+    businesses = get_allowed_businesses(request.key)
+    if businesses:
+        return {"valid": True, "businesses": businesses}
+    return {"valid": False, "businesses": []}
+
 def health():
     return {
         "status": "ok",
@@ -107,11 +142,13 @@ def list_agents():
     }
 
 @app.post("/chat/{agent_id}", response_model=ChatResponse)
-async def chat(agent_id: str, request: ChatRequest):
-    if agent_id not in AGENTS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_id}' not found. Available agents: {list(AGENTS.keys())}"
+async def chat(agent_id: str, request: ChatRequest, x_access_key: Optional[str] = Header(None)):
+    if ADMIN_KEY or RYAN_KEY:
+        allowed = get_allowed_businesses(x_access_key or "")
+        if not allowed:
+            raise HTTPException(status_code=401, detail="Invalid access key")
+        if get_agent_business(agent_id) not in allowed:
+            raise HTTPException(status_code=403, detail="Access denied to this agent")
         )
 
     agent = AGENTS[agent_id]
