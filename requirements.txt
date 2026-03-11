@@ -4,3 +4,5 @@ psycopg[binary]
 fastapi
 uvicorn
 tavily-python
+apscheduler>=3.10.4
+pytz
