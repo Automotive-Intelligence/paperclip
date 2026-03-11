@@ -2,15 +2,16 @@ import os
 import glob
 import logging
 import datetime
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import PlainTextResponse
-from typing import Optional
+from fastapi.responses import PlainTextResponse, JSONResponse
+from typing import Optional, List
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+import psycopg
 
 
 # ── Agent Imports ──────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
 
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────────
 
 CST = pytz.timezone("America/Chicago")
 
@@ -49,8 +50,88 @@ os.makedirs("logs", exist_ok=True)
 
 API_KEYS = set(filter(None, os.getenv("API_KEYS", "").split(",")))
 
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# ── Agent Registry ─────────────────────────────────────────────────────────────
+
+# ── Database ───────────────────────────────────────────────────────────────────
+
+def _db_url() -> str:
+    """Normalize Railway's postgres:// URL to postgresql:// for psycopg3."""
+    url = DATABASE_URL
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+@contextmanager
+def _db():
+    """Thread-safe single-use DB connection context manager."""
+    conn = psycopg.connect(_db_url())
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Create agent_logs table and index if they don't exist."""
+    if not DATABASE_URL:
+        logging.warning("[DB] DATABASE_URL not set — Postgres logging disabled, using filesystem.")
+        return
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_logs (
+                        id          SERIAL PRIMARY KEY,
+                        agent_name  TEXT        NOT NULL,
+                        log_type    TEXT        NOT NULL,
+                        run_date    DATE        NOT NULL,
+                        content     TEXT        NOT NULL,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_logs_lookup
+                        ON agent_logs (agent_name, created_at DESC);
+                """)
+        logging.info("[DB] agent_logs table ready.")
+    except Exception as e:
+        logging.error(f"[DB] init_db failed: {e}")
+
+
+def persist_log(agent_name: str, log_type: str, content: str):
+    """Write an agent run result to Postgres (primary) and filesystem (backup)."""
+    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
+    run_date = datetime.date.fromisoformat(today)
+
+    # ── Filesystem backup (always) ──────────────────────────────────────────────────────────
+    log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
+    try:
+        with open(log_path, "w") as f:
+            f.write(content)
+    except Exception as e:
+        logging.warning(f"[FS] Could not write {log_path}: {e}")
+
+    # ── Postgres primary ───────────────────────────────────────────────────────────────────
+    if not DATABASE_URL:
+        return
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (agent_name, log_type, run_date, content),
+                )
+        logging.info(f"[DB] Persisted {agent_name}/{log_type} for {today}")
+    except Exception as e:
+        logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
+
+
+# ── Agent Registry ─────────────────────────────────────────────────────────────────
 
 AGENTS = {
     # The AI Phone Guy
@@ -72,6 +153,24 @@ AGENTS = {
     "phoenix": phoenix,
 }
 
+# Maps each agent to its log_type label (matches log file naming)
+LOG_TYPES = {
+    "alex":         "briefing",
+    "dek":          "briefing",
+    "michael_meta": "briefing",
+    "tyler":        "prospecting",
+    "marcus":       "prospecting",
+    "ryan_data":    "prospecting",
+    "zoe":          "content",
+    "sofia":        "content",
+    "chase":        "content",
+    "jennifer":     "retention",
+    "carlos":       "retention",
+    "nova":         "intelligence",
+    "atlas":        "intel",
+    "phoenix":      "delivery",
+}
+
 BUSINESSES = {
     "aiphoneguy": {
         "name": "The AI Phone Guy",
@@ -88,16 +187,14 @@ BUSINESSES = {
 }
 
 
-# ── Scheduler ──────────────────────────────────────────────────────────────────
+# ── Scheduler ───────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler()
 
 
-# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ─────────────────────────────────────
+# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────────────
 
 def run_alex_daily_briefing():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"alex_briefing_{today}.log")
     try:
         task = Task(
             description=(
@@ -116,16 +213,13 @@ def run_alex_daily_briefing():
         )
         crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Alex briefing complete -> {log_path}")
+        persist_log("alex", "briefing", str(result))
+        logging.info("[Scheduler] Alex briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Alex briefing failed: {type(e).__name__}: {e}")
 
 
 def run_dek_daily_briefing():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"dek_briefing_{today}.log")
     try:
         task = Task(
             description=(
@@ -144,16 +238,13 @@ def run_dek_daily_briefing():
         )
         crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Dek briefing complete -> {log_path}")
+        persist_log("dek", "briefing", str(result))
+        logging.info("[Scheduler] Dek briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Dek briefing failed: {type(e).__name__}: {e}")
 
 
 def run_michael_meta_daily_briefing():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"michael_meta_briefing_{today}.log")
     try:
         task = Task(
             description=(
@@ -172,18 +263,15 @@ def run_michael_meta_daily_briefing():
         )
         crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Michael Meta briefing complete -> {log_path}")
+        persist_log("michael_meta", "briefing", str(result))
+        logging.info("[Scheduler] Michael Meta briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
 
 
-# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ─────────────────────────────────
+# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ──────────────────────────────────────────
 
 def run_tyler_prospecting():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"tyler_prospecting_{today}.log")
     try:
         task = Task(
             description=(
@@ -203,16 +291,13 @@ def run_tyler_prospecting():
         )
         crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Tyler prospecting complete -> {log_path}")
+        persist_log("tyler", "prospecting", str(result))
+        logging.info("[Scheduler] Tyler prospecting complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
 
 
 def run_marcus_prospecting():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"marcus_prospecting_{today}.log")
     try:
         task = Task(
             description=(
@@ -232,16 +317,13 @@ def run_marcus_prospecting():
         )
         crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Marcus prospecting complete -> {log_path}")
+        persist_log("marcus", "prospecting", str(result))
+        logging.info("[Scheduler] Marcus prospecting complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
 
 
 def run_ryan_data_prospecting():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"ryan_data_prospecting_{today}.log")
     try:
         task = Task(
             description=(
@@ -261,18 +343,15 @@ def run_ryan_data_prospecting():
         )
         crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Ryan Data prospecting complete -> {log_path}")
+        persist_log("ryan_data", "prospecting", str(result))
+        logging.info("[Scheduler] Ryan Data prospecting complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
 
 
-# ── Marketing Content ── 9:00, 9:02, 9:04 CST ─────────────────────────────────
+# ── Marketing Content ── 9:00, 9:02, 9:04 CST ──────────────────────────────────────────
 
 def run_zoe_content():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"zoe_content_{today}.log")
     try:
         task = Task(
             description=(
@@ -294,16 +373,13 @@ def run_zoe_content():
         )
         crew = Crew(agents=[zoe], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Zoe content complete -> {log_path}")
+        persist_log("zoe", "content", str(result))
+        logging.info("[Scheduler] Zoe content complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Zoe content failed: {type(e).__name__}: {e}")
 
 
 def run_sofia_content():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"sofia_content_{today}.log")
     try:
         task = Task(
             description=(
@@ -326,16 +402,13 @@ def run_sofia_content():
         )
         crew = Crew(agents=[sofia], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Sofia content complete -> {log_path}")
+        persist_log("sofia", "content", str(result))
+        logging.info("[Scheduler] Sofia content complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Sofia content failed: {type(e).__name__}: {e}")
 
 
 def run_chase_content():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"chase_content_{today}.log")
     try:
         task = Task(
             description=(
@@ -358,18 +431,15 @@ def run_chase_content():
         )
         crew = Crew(agents=[chase], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Chase content complete -> {log_path}")
+        persist_log("chase", "content", str(result))
+        logging.info("[Scheduler] Chase content complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
 
 
-# ── Client Success ── 9:30, 9:32 CST ──────────────────────────────────────────
+# ── Client Success ── 9:30, 9:32 CST ──────────────────────────────────────────────────────
 
 def run_jennifer_retention():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"jennifer_retention_{today}.log")
     try:
         task = Task(
             description=(
@@ -390,16 +460,12 @@ def run_jennifer_retention():
         )
         crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Jennifer retention complete -> {log_path}")
+        persist_log("jennifer", "retention", str(result))
+        logging.info("[Scheduler] Jennifer retention complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
 
-
 def run_carlos_retention():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"carlos_retention_{today}.log")
     try:
         task = Task(
             description=(
@@ -422,18 +488,15 @@ def run_carlos_retention():
         )
         crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Carlos retention complete -> {log_path}")
+        persist_log("carlos", "retention", str(result))
+        logging.info("[Scheduler] Carlos retention complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Carlos retention failed: {type(e).__name__}: {e}")
 
 
-# ── Specialists ── 10:00, 10:02, 10:04 CST ────────────────────────────────────
+# ── Specialists ── 10:00, 10:02, 10:04 CST ──────────────────────────────────────────
 
 def run_nova_intelligence():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"nova_intelligence_{today}.log")
     try:
         task = Task(
             description=(
@@ -453,16 +516,13 @@ def run_nova_intelligence():
         )
         crew = Crew(agents=[nova], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Nova intelligence complete -> {log_path}")
+        persist_log("nova", "intelligence", str(result))
+        logging.info("[Scheduler] Nova intelligence complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Nova intelligence failed: {type(e).__name__}: {e}")
 
 
 def run_atlas_intel():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"atlas_intel_{today}.log")
     try:
         task = Task(
             description=(
@@ -483,16 +543,13 @@ def run_atlas_intel():
         )
         crew = Crew(agents=[atlas], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Atlas intel complete -> {log_path}")
+        persist_log("atlas", "intel", str(result))
+        logging.info("[Scheduler] Atlas intel complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Atlas intel failed: {type(e).__name__}: {e}")
 
 
 def run_phoenix_delivery():
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    log_path = os.path.join("logs", f"phoenix_delivery_{today}.log")
     try:
         task = Task(
             description=(
@@ -512,9 +569,8 @@ def run_phoenix_delivery():
         )
         crew = Crew(agents=[phoenix], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        with open(log_path, "w") as f:
-            f.write(str(result))
-        logging.info(f"[Scheduler] Phoenix delivery complete -> {log_path}")
+        persist_log("phoenix", "delivery", str(result))
+        logging.info("[Scheduler] Phoenix delivery complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
@@ -583,10 +639,11 @@ scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=
     replace_existing=True, misfire_grace_time=3600)
 
 
-# ── FastAPI App ────────────────────────────────────────────────────────────────
+# ── FastAPI App ───────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     scheduler.start()
     logging.info("[Scheduler] Started — 13 agent jobs registered.")
     yield
@@ -600,7 +657,7 @@ app = FastAPI(
         "AI agent platform powering The AI Phone Guy, Calling Digital, "
         "and Automotive Intelligence."
     ),
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -665,10 +722,39 @@ async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)
 
 @app.get("/logs/{agent_name}")
 async def get_agent_log(agent_name: str):
-    """Return the most recent log file for the given agent."""
+    """Return the most recent scheduled run for the given agent (Postgres primary, filesystem fallback)."""
     agent_name = agent_name.lower().strip()
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+
+    # ── Postgres primary ───────────────────────────────────────────────────────────────────
+    if DATABASE_URL:
+        try:
+            with _db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT content, log_type, run_date, created_at "
+                        "FROM agent_logs WHERE agent_name = %s "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (agent_name,),
+                    )
+                    row = cur.fetchone()
+            if row:
+                content, log_type, run_date, created_at = row
+                return PlainTextResponse(
+                    content=content,
+                    media_type="text/plain",
+                    headers={
+                        "X-Log-Type": log_type,
+                        "X-Run-Date": str(run_date),
+                        "X-Created-At": str(created_at),
+                    },
+                )
+        except Exception as e:
+            logging.error(f"[DB] get_agent_log query failed: {e}")
+            # fall through to filesystem
+
+    # ── Filesystem fallback ──────────────────────────────────────────────────────────────────
     pattern = os.path.join("logs", f"{agent_name}_*.log")
     matches = sorted(glob.glob(pattern), reverse=True)
     if not matches:
@@ -676,6 +762,41 @@ async def get_agent_log(agent_name: str):
     with open(matches[0], "r") as f:
         content = f.read()
     return PlainTextResponse(content=content, media_type="text/plain")
+
+
+@app.get("/logs/{agent_name}/history")
+async def get_agent_log_history(agent_name: str, limit: int = 30):
+    """Return metadata for the last N runs for the given agent (Postgres only)."""
+    agent_name = agent_name.lower().strip()
+    if agent_name not in AGENTS:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Postgres not configured.")
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, log_type, run_date, created_at, LEFT(content, 200) AS preview "
+                    "FROM agent_logs WHERE agent_name = %s "
+                    "ORDER BY created_at DESC LIMIT %s",
+                    (agent_name, limit),
+                )
+                rows = cur.fetchall()
+        return JSONResponse(content={
+            "agent": agent_name,
+            "runs": [
+                {
+                    "id": r[0],
+                    "log_type": r[1],
+                    "run_date": str(r[2]),
+                    "created_at": str(r[3]),
+                    "preview": r[4],
+                }
+                for r in rows
+            ],
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
 
 
 @app.get("/health")
@@ -689,7 +810,9 @@ async def health():
         })
     return {
         "status": "ok",
+        "version": "3.0.0",
         "scheduler": "running" if scheduler.running else "stopped",
         "jobs_registered": len(jobs_info),
+        "postgres": "connected" if DATABASE_URL else "not configured",
         "jobs": jobs_info,
     }
