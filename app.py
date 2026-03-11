@@ -11,7 +11,14 @@ from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
-import psycopg
+try:
+    import psycopg2 as psycopg   # psycopg2-binary: stable on Railway, API-compatible
+    _PSYCOPG_OK = True
+except ImportError as _psycopg_err:
+    import logging as _tmp_log
+    _tmp_log.warning(f"[DB] psycopg2 import failed — Postgres disabled: {_psycopg_err}")
+    psycopg = None  # type: ignore
+    _PSYCOPG_OK = False
 
 
 # ── Agent Imports ──────────────────────────────────────────────────────────────
@@ -37,7 +44,7 @@ from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
 
 
-# ── Config ───────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 
 CST = pytz.timezone("America/Chicago")
 
@@ -70,6 +77,8 @@ def _db():
     connect_timeout=5 ensures we fail fast if the DB socket isn't ready
     at boot time instead of hanging indefinitely and blocking the event loop.
     """
+    if psycopg is None:
+        raise RuntimeError("psycopg2 not available — Postgres disabled")
     conn = psycopg.connect(_db_url(), connect_timeout=5)
     try:
         yield conn
@@ -111,7 +120,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
     today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
     run_date = datetime.date.fromisoformat(today)
 
-    # ── Filesystem backup (always) ──────────────────────────────────────────────────────────
+    # ── Filesystem backup (always) ─────────────────────────────────────────────
     log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
     try:
         with open(log_path, "w") as f:
@@ -119,7 +128,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
     except Exception as e:
         logging.warning(f"[FS] Could not write {log_path}: {e}")
 
-    # ── Postgres primary ───────────────────────────────────────────────────────────────────
+    # ── Postgres primary ───────────────────────────────────────────────────────
     if not DATABASE_URL:
         return
     try:
@@ -135,7 +144,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
         logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
 
 
-# ── Agent Registry ─────────────────────────────────────────────────────────────────
+# ── Agent Registry ─────────────────────────────────────────────────────────────
 
 AGENTS = {
     # The AI Phone Guy
@@ -191,12 +200,12 @@ BUSINESSES = {
 }
 
 
-# ── Scheduler ───────────────────────────────────────────────────────────────────
+# ── Scheduler ──────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler()
 
 
-# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────────────
+# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ─────────────────────────────────────
 
 def run_alex_daily_briefing():
     try:
@@ -273,7 +282,7 @@ def run_michael_meta_daily_briefing():
         logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
 
 
-# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ──────────────────────────────────────────
+# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ─────────────────────────────────
 
 def run_tyler_prospecting():
     try:
@@ -353,7 +362,7 @@ def run_ryan_data_prospecting():
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
 
 
-# ── Marketing Content ── 9:00, 9:02, 9:04 CST ──────────────────────────────────────────
+# ── Marketing Content ── 9:00, 9:02, 9:04 CST ─────────────────────────────────
 
 def run_zoe_content():
     try:
@@ -441,7 +450,7 @@ def run_chase_content():
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
 
 
-# ── Client Success ── 9:30, 9:32 CST ──────────────────────────────────────────────────────
+# ── Client Success ── 9:30, 9:32 CST ──────────────────────────────────────────────
 
 def run_jennifer_retention():
     try:
