@@ -1,9 +1,15 @@
 import os
+import logging
+import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from typing import Optional
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 # --- The AI Phone Guy ---
 from agents.aiphoneguy.alex import alex
@@ -25,17 +31,20 @@ from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
 
-# -- Agent Registry ---
+# Agent Registry
 AGENTS = {
+    # The AI Phone Guy
     "alex":     alex,
     "tyler":    tyler,
     "zoe":      zoe,
     "jennifer": jennifer,
+    # Calling Digital
     "dek":      dek,
     "marcus":   marcus,
     "sofia":    sofia,
     "carlos":   carlos,
     "nova":     nova,
+    # Automotive Intelligence
     "michael-mata": michael_mata,
     "ryan-data":    ryan_data,
     "chase":        chase,
@@ -80,11 +89,103 @@ def get_agent_business(agent_id: str) -> str:
             return biz
     return None
 
-# -- FastAPI App ---
+# Daily Briefing Scheduler
+CST = pytz.timezone("America/Chicago")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+def run_alex_daily_briefing():
+    """
+    Alex's daily industry briefing - runs once at 8am CST.
+    Searches for AI receptionist news and DFW local business trends,
+    then logs the result to /logs/alex_briefing_YYYY-MM-DD.log.
+    """
+    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
+    timestamp = datetime.datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S %Z")
+    log_path = os.path.join("logs", f"alex_briefing_{today}.log")
+
+    logging.info(f"[Scheduler] Starting Alex daily briefing for {today}")
+
+    try:
+        briefing_task = Task(
+            description=(
+                "Search for today's most relevant news and developments across two areas:\n\n"
+                "1. AI receptionists, AI phone answering services, and conversational AI for "
+                "small and local businesses -- any new products, competitors, pricing moves, "
+                "or customer adoption stories.\n\n"
+                "2. Local service businesses in the Dallas-Fort Worth metroplex -- HVAC, "
+                "plumbing, roofing, dental practices, personal injury attorneys, and similar "
+                "trades. Look for growth trends, labor news, tech adoption, or consumer behavior shifts.\n\n"
+                "Search both topics thoroughly, then produce a structured morning briefing."
+            ),
+            expected_output=(
+                "A concise daily briefing with three clearly labeled sections:\n\n"
+                "AI RECEPTIONIST INDUSTRY NEWS\n"
+                "- 2-3 bullet points with headline, source context, and one business implication each\n\n"
+                "DFW LOCAL SERVICE BUSINESS TRENDS\n"
+                "- 2-3 bullet points with headline, source context, and one business implication each\n\n"
+                "STRATEGIC SUMMARY\n"
+                "One paragraph: what today's findings mean for The AI Phone Guy and any "
+                "immediate actions worth considering. Keep the whole brief under 400 words."
+            ),
+            agent=alex
+        )
+
+        crew = Crew(
+            agents=[alex],
+            tasks=[briefing_task],
+            process=Process.sequential,
+            memory=False,
+            verbose=False
+        )
+
+        result = crew.kickoff()
+
+        os.makedirs("logs", exist_ok=True)
+        with open(log_path, "w") as f:
+            f.write(f"=== Alex Daily Briefing -- {today} ===\n")
+            f.write(f"Generated: {timestamp}\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(str(result))
+            f.write("\n")
+
+        logging.info(f"[Scheduler] Alex briefing complete -> {log_path}")
+
+    except Exception as e:
+        logging.error(f"[Scheduler] Alex briefing failed: {type(e).__name__}: {e}")
+
+
+scheduler = BackgroundScheduler(timezone=CST)
+scheduler.add_job(
+    run_alex_daily_briefing,
+    CronTrigger(hour=8, minute=0, timezone=CST),
+    id="alex_daily_briefing",
+    name="Alex Daily Briefing",
+    replace_existing=True,
+    misfire_grace_time=3600
+)
+
+
+# FastAPI App
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    os.makedirs("logs", exist_ok=True)
+    scheduler.start()
+    logging.info("[Scheduler] Started -- Alex daily briefing scheduled at 8:00am CST")
+    yield
+    scheduler.shutdown(wait=False)
+    logging.info("[Scheduler] Stopped")
+
+
 app = FastAPI(
     title="Paperclip",
     description="AI Agent Infrastructure -- The AI Phone Guy | Calling Digital | Automotive Intelligence",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 class ChatRequest(BaseModel):
@@ -102,16 +203,21 @@ def get_business_for_agent(agent_id: str) -> str:
             return biz["name"]
     return "Unknown"
 
-# -- Routes ---
+# Routes
 
 @app.get("/health")
 def health():
+    job = scheduler.get_job("alex_daily_briefing")
     return {
         "status": "ok",
         "version": "2.0.0",
         "framework": "crewai",
         "total_agents": len(AGENTS),
-        "businesses": list(BUSINESSES.keys())
+        "businesses": list(BUSINESSES.keys()),
+        "scheduler": {
+            "running": scheduler.running,
+            "next_briefing": str(job.next_run_time) if job else None
+        }
     }
 
 class AuthRequest(BaseModel):
@@ -175,7 +281,7 @@ async def chat(agent_id: str, request: ChatRequest, x_access_key: Optional[str] 
         response=str(result)
     )
 
-# -- Entry Point ---
+# Entry Point
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
