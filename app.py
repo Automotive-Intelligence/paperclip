@@ -25,20 +25,17 @@ from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
 
-# ── Agent Registry ─────────────────────────────────────────────────────────────
+# -- Agent Registry ---
 AGENTS = {
-    # The AI Phone Guy
     "alex":     alex,
     "tyler":    tyler,
     "zoe":      zoe,
     "jennifer": jennifer,
-    # Calling Digital
     "dek":      dek,
     "marcus":   marcus,
     "sofia":    sofia,
     "carlos":   carlos,
     "nova":     nova,
-    # Automotive Intelligence
     "michael-mata": michael_mata,
     "ryan-data":    ryan_data,
     "chase":        chase,
@@ -47,6 +44,19 @@ AGENTS = {
 }
 
 BUSINESSES = {
+    "aiphoneguy": {
+        "name": "The AI Phone Guy",
+        "agents": ["alex", "tyler", "zoe", "jennifer"]
+    },
+    "callingdigital": {
+        "name": "Calling Digital",
+        "agents": ["dek", "marcus", "sofia", "carlos", "nova"]
+    },
+    "autointelligence": {
+        "name": "Automotive Intelligence",
+        "agents": ["michael-mata", "ryan-data", "chase", "atlas", "phoenix"]
+    },
+}
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "")
 RYAN_KEY = os.environ.get("RYAN_KEY", "")
@@ -69,25 +79,11 @@ def get_agent_business(agent_id: str) -> str:
         if agent_id in agents:
             return biz
     return None
-    
-    "aiphoneguy": {
-        "name": "The AI Phone Guy",
-        "agents": ["alex", "tyler", "zoe", "jennifer"]
-    },
-    "callingdigital": {
-        "name": "Calling Digital",
-        "agents": ["dek", "marcus", "sofia", "carlos", "nova"]
-    },
-    "autointelligence": {
-        "name": "Automotive Intelligence",
-        "agents": ["michael-mata", "ryan-data", "chase", "atlas", "phoenix"]
-    },
-}
 
-# ── FastAPI App ────────────────────────────────────────────────────────────────
+# -- FastAPI App ---
 app = FastAPI(
     title="Paperclip",
-    description="AI Agent Infrastructure — The AI Phone Guy | Calling Digital | Automotive Intelligence",
+    description="AI Agent Infrastructure -- The AI Phone Guy | Calling Digital | Automotive Intelligence",
     version="2.0.0"
 )
 
@@ -106,9 +102,17 @@ def get_business_for_agent(agent_id: str) -> str:
             return biz["name"]
     return "Unknown"
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
+# -- Routes ---
 
 @app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "framework": "crewai",
+        "total_agents": len(AGENTS),
+        "businesses": list(BUSINESSES.keys())
+    }
 
 class AuthRequest(BaseModel):
     key: str
@@ -119,15 +123,6 @@ def validate_key(request: AuthRequest):
     if businesses:
         return {"valid": True, "businesses": businesses}
     return {"valid": False, "businesses": []}
-
-def health():
-    return {
-        "status": "ok",
-        "version": "2.0.0",
-        "framework": "crewai",
-        "total_agents": len(AGENTS),
-        "businesses": list(BUSINESSES.keys())
-    }
 
 @app.get("/")
 def root():
@@ -149,7 +144,9 @@ async def chat(agent_id: str, request: ChatRequest, x_access_key: Optional[str] 
             raise HTTPException(status_code=401, detail="Invalid access key")
         if get_agent_business(agent_id) not in allowed:
             raise HTTPException(status_code=403, detail="Access denied to this agent")
-        )
+
+    if agent_id not in AGENTS:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
     agent = AGENTS[agent_id]
 
@@ -163,12 +160,12 @@ async def chat(agent_id: str, request: ChatRequest, x_access_key: Optional[str] 
     )
 
     crew = Crew(
-    agents=[agent],
-    tasks=[task],
-    process=Process.sequential,
-    memory=False,
-    verbose=False
-)
+        agents=[agent],
+        tasks=[task],
+        process=Process.sequential,
+        memory=False,
+        verbose=False
+    )
     result = crew.kickoff()
 
     return ChatResponse(
@@ -178,7 +175,7 @@ async def chat(agent_id: str, request: ChatRequest, x_access_key: Optional[str] 
         response=str(result)
     )
 
-# ── Entry Point ────────────────────────────────────────────────────────────────
+# -- Entry Point ---
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
