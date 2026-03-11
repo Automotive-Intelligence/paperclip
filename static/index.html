@@ -72,31 +72,40 @@
 </head>
 <body>
 
-<div class="header">
-    <div class="logo">📎 Paper<span>clip</span></div>
-    <div class="header-sub">AI Command Center</div>
+<div id="login" style="display:none; position:fixed; inset:0; background:#090909; z-index:100; flex-direction:column; align-items:center; justify-content:center; gap:20px;">
+    <div style="font-size:24px; font-weight:700;">📎 Paperclip</div>
+    <div style="color:#666; font-size:14px;">Enter your access key to continue</div>
+    <input id="key-input" type="password" placeholder="Access key..." onkeydown="handleKeyInput(event)"
+        style="background:#181818; border:1px solid #333; border-radius:10px; padding:12px 16px; color:#eee; font-size:15px; width:280px; outline:none;">
+    <button onclick="submitKey()" style="background:#00B4D8; color:#000; border:none; border-radius:10px; padding:12px 32px; font-size:15px; font-weight:600; cursor:pointer; width:280px;">Enter</button>
+    <div id="login-error" style="color:#ef4444; font-size:13px; height:16px;"></div>
 </div>
 
-<div class="business-bar">
-    <button class="biz-tab active" data-biz="aiphoneguy" onclick="selectBusiness('aiphoneguy')">📱 The AI Phone Guy</button>
-    <button class="biz-tab" data-biz="callingdigital" onclick="selectBusiness('callingdigital')">💻 Calling Digital</button>
-    <button class="biz-tab" data-biz="autointelligence" onclick="selectBusiness('autointelligence')">🚗 Automotive Intelligence</button>
-</div>
-
-<div class="main">
-    <div class="sidebar" id="sidebar"></div>
-    <div class="chat" id="chat">
-        <div class="messages" id="messages">
-            <div class="welcome">
-                <div class="welcome-icon">📎</div>
-                <h2>Paperclip Command Center</h2>
-                <p>Select an agent from the sidebar to start a conversation</p>
+<div id="app" style="display:none; flex-direction:column; flex:1; overflow:hidden;">
+    <div class="header">
+        <div class="logo">📎 Paper<span>clip</span></div>
+        <div class="header-sub">AI Command Center</div>
+    </div>
+    <div class="business-bar">
+        <button class="biz-tab" data-biz="aiphoneguy" onclick="selectBusiness('aiphoneguy')">📱 The AI Phone Guy</button>
+        <button class="biz-tab" data-biz="callingdigital" onclick="selectBusiness('callingdigital')">💻 Calling Digital</button>
+        <button class="biz-tab" data-biz="autointelligence" onclick="selectBusiness('autointelligence')">🚗 Automotive Intelligence</button>
+    </div>
+    <div class="main">
+        <div class="sidebar" id="sidebar"></div>
+        <div class="chat" id="chat">
+            <div class="messages" id="messages">
+                <div class="welcome">
+                    <div class="welcome-icon">📎</div>
+                    <h2>Paperclip Command Center</h2>
+                    <p>Select an agent from the sidebar to start a conversation</p>
+                </div>
             </div>
-        </div>
-        <div class="input-area" id="input-area" style="display:none">
-            <div class="input-row">
-                <textarea id="msg-input" placeholder="Message..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-                <button class="send-btn" id="send-btn" onclick="sendMessage()">↑</button>
+            <div class="input-area" id="input-area" style="display:none">
+                <div class="input-row">
+                    <textarea id="msg-input" placeholder="Message..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+                    <button class="send-btn" id="send-btn" onclick="sendMessage()">↑</button>
+                </div>
             </div>
         </div>
     </div>
@@ -135,18 +144,65 @@ const BUSINESSES = {
     }
 };
 
-let currentBiz = 'aiphoneguy', currentAgent = null, isLoading = false;
+let currentBiz = null, currentAgent = null, isLoading = false;
 let histories = {};
+let accessKey = sessionStorage.getItem('paperclip_key') || null;
+let allowedBusinesses = JSON.parse(sessionStorage.getItem('paperclip_businesses') || '[]');
 
 function setAccent(c, b) {
     document.documentElement.style.setProperty('--accent', c);
     document.documentElement.style.setProperty('--accent-bg', b);
 }
 
+function showLogin(error) {
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login').style.display = 'flex';
+    if (error) document.getElementById('login-error').textContent = error;
+}
+
+function showApp() {
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    document.querySelectorAll('.biz-tab').forEach(t => {
+        t.style.display = allowedBusinesses.includes(t.dataset.biz) ? 'block' : 'none';
+    });
+    selectBusiness(allowedBusinesses[0]);
+}
+
+async function submitKey() {
+    const key = document.getElementById('key-input').value.trim();
+    if (!key) return;
+    try {
+        const res = await fetch('/auth/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key })
+        });
+        const data = await res.json();
+        if (data.valid) {
+            accessKey = key;
+            allowedBusinesses = data.businesses;
+            sessionStorage.setItem('paperclip_key', key);
+            sessionStorage.setItem('paperclip_businesses', JSON.stringify(data.businesses));
+            showApp();
+        } else {
+            document.getElementById('login-error').textContent = 'Invalid access key. Try again.';
+        }
+    } catch(e) {
+        document.getElementById('login-error').textContent = 'Connection error. Try again.';
+    }
+}
+
+function handleKeyInput(e) {
+    if (e.key === 'Enter') submitKey();
+}
+
 function selectBusiness(biz) {
-    currentBiz = biz; currentAgent = null;
+    currentBiz = biz;
+    currentAgent = null;
     document.querySelectorAll('.biz-tab').forEach(t => t.classList.remove('active'));
-    document.querySelector(`[data-biz="${biz}"]`).classList.add('active');
+    const tab = document.querySelector(`[data-biz="${biz}"]`);
+    if (tab) tab.classList.add('active');
     const b = BUSINESSES[biz];
     setAccent(b.accent, b.accentBg);
     renderSidebar();
@@ -215,7 +271,14 @@ async function sendMessage() {
     msgs.scrollTop = msgs.scrollHeight;
     isLoading = true; document.getElementById('send-btn').disabled = true;
     try {
-        const res = await fetch(`/chat/${currentAgent}`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: text}) });
+        const res = await fetch(`/chat/${currentAgent}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Access-Key': accessKey || ''
+            },
+            body: JSON.stringify({ message: text })
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         document.getElementById(tid)?.remove();
@@ -234,8 +297,14 @@ async function sendMessage() {
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
 function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
 
-setAccent(BUSINESSES.aiphoneguy.accent, BUSINESSES.aiphoneguy.accentBg);
-renderSidebar();
+// Init
+if (accessKey && allowedBusinesses.length > 0) {
+    showApp();
+} else {
+    showLogin();
+}
 </script>
+
+</div>
 </body>
 </html>
