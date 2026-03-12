@@ -50,6 +50,166 @@ from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
 
 
+CST = pytz.timezone("America/Chicago")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+os.makedirs("logs", exist_ok=True)
+
+API_KEYS = set(filter(None, os.getenv("API_KEYS", "").split(",")))
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+# ── Database ─────────────────────────────────────────────────────────────────────────────
+
+def _db_url() -> str:
+    """Normalize Railway's postgres:// URL to postgresql:// for psycopg3."""
+    url = DATABASE_URL
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+@contextmanager
+def _db():
+    """Thread-safe single-use DB connection context manager.
+
+    connect_timeout=5 ensures we fail fast if the DB socket isn't ready
+    at boot time instead of hanging indefinitely and blocking the event loop.
+    """
+    if psycopg is None:
+        raise RuntimeError("psycopg2 not available — Postgres disabled")
+    conn = psycopg.connect(_db_url(), connect_timeout=5)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Create agent_logs table and index if they don't exist."""
+    if not DATABASE_URL:
+        logging.warning("[DB] DATABASE_URL not set — Postgres logging disabled, using filesystem.")
+        return
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_logs (
+                        id          SERIAL PRIMARY KEY,
+                        agent_name  TEXT        NOT NULL,
+                        log_type    TEXT        NOT NULL,
+                        run_date    DATE        NOT NULL,
+                        content     TEXT        NOT NULL,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_logs_lookup
+                        ON agent_logs (agent_name, created_at DESC);
+                """)
+        logging.info("[DB] agent_logs table ready.")
+    except Exception as e:
+        logging.error(f"[DB] init_db failed: {e}")
+
+
+def persist_log(agent_name: str, log_type: str, content: str):
+    """Write an agent run result to Postgres (primary) and filesystem (backup)."""
+    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
+    run_date = datetime.date.fromisoformat(today)
+
+    # ── Filesystem backup (always) ─────────────────────────────────────────────────────────────────────────────
+    log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
+    try:
+        with open(log_path, "w") as f:
+            f.write(content)
+    except Exception as e:
+        logging.warning(f"[FS] Could not write {log_path}: {e}")
+
+    # ── Postgres primary ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    if not DATABASE_URL:
+        return
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (agent_name, log_type, run_date, content),
+                )
+        logging.info(f"[DB] Persisted {agent_name}/{log_type} for {today}")
+    except Exception as e:
+        logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
+
+
+# ── Agent Registry ─────────────────────────────────────────────────────────────────────────────
+
+AGENTS = {
+    # The AI Phone Guy
+    "alex": alex,
+    "tyler": tyler,
+    "zoe": zoe,
+    "jennifer": jennifer,
+    # Calling Digital
+    "dek": dek,
+    "marcus": marcus,
+    "sofia": sofia,
+    "carlos": carlos,
+    "nova": nova,
+    # Automotive Intelligence
+    "michael_meta": michael_meta,
+    "ryan_data": ryan_data,
+    "chase": chase,
+    "atlas": atlas,
+    "phoenix": phoenix,
+}
+
+# Maps each agent to its log_type label (matches log file naming)
+LOG_TYPES = {
+    "alex":         "briefing",
+    "dek":          "briefing",
+    "michael_meta": "briefing",
+    "tyler":        "prospecting",
+    "marcus":       "prospecting",
+    "ryan_data":    "prospecting",
+    "zoe":          "content",
+    "sofia":        "content",
+    "chase":        "content",
+    "jennifer":     "retention",
+    "carlos":       "retention",
+    "nova":         "intelligence",
+    "atlas":        "intel",
+    "phoenix":      "delivery",
+}
+
+BUSINESSES = {
+    "aiphoneguy": {
+        "name": "The AI Phone Guy",
+        "agents": ["alex", "tyler", "zoe", "jennifer"],
+    },
+    "callingdigital": {
+        "name": "Calling Digital",
+        "agents": ["dek", "marcus", "sofia", "carlos", "nova"],
+    },
+    "autointelligence": {
+        "name": "Automotive Intelligence",
+        "agents": ["michael_meta", "ryan_data", "chase", "atlas", "phoenix"],
+    },
+}
+
+
+# ── Scheduler ───────────────────────────────────────────────────────────────────────────────────────
+
+scheduler = BackgroundScheduler()
+
+
+
 def run_tyler_prospecting():
     try:
         task = Task(
