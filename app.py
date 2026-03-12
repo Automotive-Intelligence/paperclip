@@ -689,7 +689,7 @@ async def lifespan(app: FastAPI):
     # ââ Scheduler â never crash startup if APScheduler misfires ââââââââââââââ
     try:
         scheduler.start()
-        logging.info("[Scheduler] Started â 13 agent jobs registered.")
+        logging.info(f"[Scheduler] Started ✅ {len(scheduler.get_jobs())} agent jobs registered.")
     except Exception as e:
         logging.error(f"[Scheduler] Failed to start: {e}")
 
