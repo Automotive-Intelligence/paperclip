@@ -16,18 +16,18 @@ try:
     _PSYCOPG_OK = True
 except ImportError as _psycopg_err:
     import logging as _tmp_log
-    _tmp_log.warning(f"[DB] psycopg2 import failed â Postgres disabled: {_psycopg_err}")
+    _tmp_log.warning(f"[DB] psycopg2 import failed â Postgres disabled: {_psycopg_err}")
     psycopg = None  # type: ignore
     _PSYCOPG_OK = False
 
 
-# ââ Tool Imports âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Tool Imports âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 from tools.prospect_parser import parse_tyler_prospects
 from tools.ghl import push_prospects_to_ghl
 
 
-# ââ Agent Imports ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Agent Imports ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 # The AI Phone Guy
 from agents.aiphoneguy.alex import alex
@@ -48,7 +48,7 @@ from agents.autointelligence.ryan_data import ryan_data
 from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
-âââââââââââââââââââââââââââââââââââ
+âââââââââââââââââââââââââââââââââââ
         if os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"):
             try:
                 prospects = parse_tyler_prospects(raw_output)
@@ -59,9 +59,9 @@ from agents.autointelligence.phoenix import phoenix
                 else:
                     logging.warning("[GHL] No prospects parsed from Tyler's output.")
             except Exception as ghl_err:
-                logging.error(f"[GHL] TylerâGHL push failed: {ghl_err}")
+                logging.error(f"[GHL] TylerâGHL push failed: {ghl_err}")
         else:
-            logging.info("[GHL] Skipping GHL push â GHL_API_KEY or GHL_LOCATION_ID not set.")
+            logging.info("[GHL] Skipping GHL push â GHL_API_KEY or GHL_LOCATION_ID not set.")
 
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
@@ -71,7 +71,7 @@ def run_marcus_prospecting():
     try:
         task = Task(
             description=(
-                "Search for small and mid-size businesses in Dallas that need digital marketing help â "
+                "Search for small and mid-size businesses in Dallas that need digital marketing help â "
                 "businesses with outdated websites, weak social presence, no Google reviews strategy, "
                 "or recent funding/expansion news. Look for buying signals: businesses posting about "
                 "marketing struggles, hiring marketing roles, or launching new services. "
@@ -119,7 +119,7 @@ def run_ryan_data_prospecting():
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
 
 
-# ââ Marketing Content ââ 9:00, 9:02, 9:04 CST âââââââââââââââââââââââââââââââââ
+# ââ Marketing Content ââ 9:00, 9:02, 9:04 CST âââââââââââââââââââââââââââââââââ
 
 def run_zoe_content():
     try:
@@ -127,7 +127,7 @@ def run_zoe_content():
             description=(
                 "Search for trending topics in local service business marketing, AI for small business, "
                 "and DFW small business news today. Search for competitor content from other AI receptionist "
-                "brands â what's performing well, what hooks are working. "
+                "brands â what's performing well, what hooks are working. "
                 "Design 3 content pieces across the full marketing funnel: "
                 "one AWARENESS piece (SEO blog or social), one CONSIDERATION piece (case study or "
                 "objection-handler), one CONVERSION piece (offer or CTA-focused). "
@@ -182,7 +182,7 @@ def run_chase_content():
     try:
         task = Task(
             description=(
-                "Search for trending AI and automotive retail news today â dealership technology stories, "
+                "Search for trending AI and automotive retail news today â dealership technology stories, "
                 "auto industry AI announcements, or DFW dealer news. "
                 "Search for what automotive thought leaders are publishing on LinkedIn and in newsletters. "
                 "Design 3 content pieces for Automotive Intelligence's full marketing funnel: "
@@ -192,8 +192,8 @@ def run_chase_content():
                 "For each: hook, key insight, format, and CTA."
             ),
             expected_output=(
-                "Daily content plan: (1) LinkedIn post ready to publish â hook, body, CTA. "
-                "(2) Newsletter section â topic, angle, 3 key points. "
+                "Daily content plan: (1) LinkedIn post ready to publish â hook, body, CTA. "
+                "(2) Newsletter section â topic, angle, 3 key points. "
                 "(3) Cold email subject line + opener for dealer outreach. "
                 "(4) SEO/AEO keyword opportunity in automotive AI space."
             ),
@@ -207,7 +207,7 @@ def run_chase_content():
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
 
 
-# ââ Client Success ââ 9:30, 9:32 CST ââââââââââââââââââââââââââââââââââââââââââ
+# ââ Client Success ââ 9:30, 9:32 CST ââââââââââââââââââââââââââââââââââââââââââ
 
 def run_jennifer_retention():
     try:
@@ -215,7 +215,7 @@ def run_jennifer_retention():
             description=(
                 "Search for current best practices in client retention for SaaS and AI subscription services. "
                 "Search for common objections and churn reasons for AI receptionist tools. "
-                "Identify upsell and expansion triggers â what behaviors indicate a Starter client "
+                "Identify upsell and expansion triggers â what behaviors indicate a Starter client "
                 "is ready for Growing, or a Growing client is ready for Premium. "
                 "Develop 3 proactive talking points for client check-in calls today: "
                 "one celebrating a quick win, one addressing a common concern, one introducing an upsell opportunity."
@@ -237,7 +237,7 @@ def run_jennifer_retention():
             expected_output=(
                 "Daily dealer intelligence report: (1) Top DFW dealership news and personnel changes. "
                 "(2) 3 target dealer briefs with name, signal, and outreach recommendation. "
-                "(3) Competitive activity â other AI vendors approaching DFW dealerships."
+                "(3) Competitive activity â other AI vendors approaching DFW dealerships."
             ),
             agent=atlas,
         )
@@ -275,9 +275,9 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
-# ââ Register All 13 Scheduler Jobs ââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Register All 13 Scheduler Jobs ââââââââââââââââââââââââââââââââââââââââââââ
 
-# CEOs â 8:00, 8:02, 8:04
+# CEOs â 8:00, 8:02, 8:04
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
@@ -290,7 +290,7 @@ scheduler.add_job(run_michael_meta_daily_briefing, CronTrigger(hour=8, minute=4,
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales â 8:30, 8:32, 8:34
+# Sales â 8:30, 8:32, 8:34
 scheduler.add_job(run_tyler_prospecting, CronTrigger(hour=8, minute=30, timezone=CST),
     id="tyler_daily_prospecting", name="Tyler Daily Prospecting",
     replace_existing=True, misfire_grace_time=3600)
@@ -303,7 +303,7 @@ scheduler.add_job(run_ryan_data_prospecting, CronTrigger(hour=8, minute=34, time
     id="ryan_data_daily_prospecting", name="Ryan Data Daily Prospecting",
     replace_existing=True, misfire_grace_time=3600)
 
-# Marketing â 9:00, 9:02, 9:04
+# Marketing â 9:00, 9:02, 9:04
 scheduler.add_job(run_zoe_content, CronTrigger(hour=9, minute=0, timezone=CST),
     id="zoe_daily_content", name="Zoe Daily Content",
     replace_existing=True, misfire_grace_time=3600)
@@ -316,7 +316,7 @@ scheduler.add_job(run_chase_content, CronTrigger(hour=9, minute=4, timezone=CST)
     id="chase_daily_content", name="Chase Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
-# Client Success â 9:30, 9:32
+# Client Success â 9:30, 9:32
 scheduler.add_job(run_jennifer_retention, CronTrigger(hour=9, minute=30, timezone=CST),
     id="jennifer_daily_retention", name="Jennifer Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
@@ -325,7 +325,7 @@ scheduler.add_job(run_carlos_retention, CronTrigger(hour=9, minute=32, timezone=
     id="carlos_daily_retention", name="Carlos Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-# Specialists â 10:00, 10:02, 10:04
+# Specialists â 10:00, 10:02, 10:04
 scheduler.add_job(run_nova_intelligence, CronTrigger(hour=10, minute=0, timezone=CST),
     id="nova_daily_intelligence", name="Nova Daily Intelligence",
     replace_existing=True, misfire_grace_time=3600)
@@ -339,28 +339,28 @@ scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=
     replace_existing=True, misfire_grace_time=3600)
 
 
-# ââ FastAPI App ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ FastAPI App ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ââ DB init â never crash startup if Postgres isn't ready âââââââââââââââââ
+    # ââ DB init â never crash startup if Postgres isn't ready âââââââââââââââââ
     try:
         init_db()
     except Exception as e:
         logging.warning(
-            f"[DB] Startup init failed â app will run without Postgres: {e}"
+            f"[DB] Startup init failed â app will run without Postgres: {e}"
         )
 
-    # ââ Scheduler â never crash startup if APScheduler misfires ââââââââââââââ
+    # ââ Scheduler â never crash startup if APScheduler misfires ââââââââââââââ
     try:
         scheduler.start()
-        logging.info("[Scheduler] Started â 13 agent jobs registered.")
+        logging.info("[Scheduler] Started â 13 agent jobs registered.")
     except Exception as e:
         logging.error(f"[Scheduler] Failed to start: {e}")
 
     yield
 
-    # ââ Shutdown âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ââ Shutdown âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     try:
         scheduler.shutdown(wait=False)
     except Exception:
@@ -379,7 +379,7 @@ app = FastAPI(
 )
 
 
-# ââ Auth âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Auth âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 class AuthRequest(BaseModel):
     agent_id: str
@@ -404,7 +404,7 @@ def get_agent_business(agent_id: str) -> str:
     return "Unknown Business"
 
 
-# ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.get("/")
 async def root():
@@ -449,7 +449,7 @@ async def get_agent_log(agent_name: str):
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-    # ââ Postgres primary ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ââ Postgres primary ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     if DATABASE_URL:
         try:
             with _db() as conn:
@@ -476,7 +476,7 @@ async def get_agent_log(agent_name: str):
             logging.error(f"[DB] get_agent_log query failed: {e}")
             # fall through to filesystem
 
-    # ââ Filesystem fallback ââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ââ Filesystem fallback ââââââââââââââââââââââââââââââââââââââââââââââââââââ
     pattern = os.path.join("logs", f"{agent_name}_*.log")
     matches = sorted(glob.glob(pattern), reverse=True)
     if not matches:
