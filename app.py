@@ -500,6 +500,63 @@ def run_jennifer_retention():
         logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
 
 
+def run_carlos_retention():
+    try:
+        task = Task(
+            description=(
+                "Search for current best practices in digital marketing agency client retention "
+                "and account management. Search for common reasons small businesses cancel marketing "
+                "retainers and what successful agencies do to prevent it. "
+                "Identify upsell triggers — what service results indicate a client is ready for "
+                "AI consulting or additional Calling Digital services. "
+                "Develop 3 proactive talking points for client check-ins today: "
+                "one celebrating measurable results, one proactively addressing a potential concern, "
+                "one positioning the AI consulting conversation."
+            ),
+            expected_output=(
+                "Daily retention brief: (1) 3 proactive talking points for client calls. "
+                "(2) GRR protection strategies and early warning signals. "
+                "(3) Upsell opportunities to flag to Marcus and Dek. "
+                "(4) One retention check-in message template ready to send."
+            ),
+            agent=carlos,
+        )
+        crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("carlos", "retention", str(result))
+        logging.info("[Scheduler] Carlos retention complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Carlos retention failed: {type(e).__name__}: {e}")
+
+
+# ── Specialists ── 10:00, 10:02, 10:04 CST ─────────────────────────────────────────────────────────────────────────────────────────
+
+def run_nova_intelligence():
+    try:
+        task = Task(
+            description=(
+                "Search for AI tools, platforms, and updates released or announced this week "
+                "relevant to small and mid-size businesses: automation tools, AI assistants, "
+                "workflow optimization, customer service AI, and marketing AI. "
+                "Identify 3 specific implementation opportunities for Calling Digital's SMB clients: "
+                "which tool, which type of client it's best for, what problem it solves, "
+                "and how Calling Digital can deliver it as a billable service."
+            ),
+            expected_output=(
+                "Weekly AI intelligence report: (1) Top 5 AI tool releases or updates relevant to SMBs. "
+                "(2) 3 implementation opportunities with tool, client profile, problem solved, and service approach. "
+                "(3) One AI trend that should inform Calling Digital's consulting offer this week."
+            ),
+            agent=nova,
+        )
+        crew = Crew(agents=[nova], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("nova", "intelligence", str(result))
+        logging.info("[Scheduler] Nova intelligence complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Nova intelligence failed: {type(e).__name__}: {e}")
+
+
 def run_atlas_intel():
     try:
         task = Task(
