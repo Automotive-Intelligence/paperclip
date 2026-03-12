@@ -48,7 +48,31 @@ from agents.autointelligence.ryan_data import ryan_data
 from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
-âââââââââââââââââââââââââââââââââââ
+
+
+def run_tyler_prospecting():
+    try:
+        task = Task(
+            description=(
+                "Search for local service businesses in Aubrey, Celina, Prosper, Pilot Point, "
+                "and Little Elm TX -- HVAC, plumbing, roofing, dental, and personal injury law. "
+                "Search for news about businesses expanding, opening new locations, or hiring. "
+                "Look for buying signals: Google reviews mentioning missed calls, slow response, "
+                "or after-hours availability issues. "
+                "Compile 5 high-priority outreach targets for today with a personalized SMS hook for each."
+            ),
+            expected_output=(
+                "Daily prospecting report: (1) 5 outreach targets with business name, type, city, "
+                "reason for targeting, and a personalized cold SMS opening hook. "
+                "(2) Any signals that make today a particularly good time to reach out."
+            ),
+            agent=tyler,
+        )
+        crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        raw_output = str(result)
+        persist_log("tyler", "prospecting", raw_output)
+        logging.info("[Scheduler] Tyler prospecting complete.")
         if os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"):
             try:
                 prospects = parse_tyler_prospects(raw_output)
@@ -59,10 +83,9 @@ from agents.autointelligence.phoenix import phoenix
                 else:
                     logging.warning("[GHL] No prospects parsed from Tyler's output.")
             except Exception as ghl_err:
-                logging.error(f"[GHL] TylerâGHL push failed: {ghl_err}")
+                logging.error(f"[GHL] Tyler->GHL push failed: {ghl_err}")
         else:
-            logging.info("[GHL] Skipping GHL push â GHL_API_KEY or GHL_LOCATION_ID not set.")
-
+            logging.info("[GHL] Skipping GHL push -- GHL_API_KEY or GHL_LOCATION_ID not set.")
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
 
@@ -120,6 +143,7 @@ def run_ryan_data_prospecting():
 
 
 # ââ Marketing Content ââ 9:00, 9:02, 9:04 CST âââââââââââââââââââââââââââââââââ
+
 
 def run_zoe_content():
     try:
@@ -208,6 +232,7 @@ def run_chase_content():
 
 
 # ââ Client Success ââ 9:30, 9:32 CST ââââââââââââââââââââââââââââââââââââââââââ
+
 
 def run_jennifer_retention():
     try:
