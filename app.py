@@ -249,7 +249,21 @@ def run_jennifer_retention():
                 "Daily retention brief: (1) 3 proactive talking points for client calls. "
                 "(2) Key objections to monitor and counter-messaging. "
                 "(3) Upsell signals to look for in the current client base. "
-                "(4) One retention message or e= Task(
+                "(4) One retention message or email template ready to send."
+            ),
+            agent=jennifer,
+        )
+        crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("jennifer", "retention", str(result))
+        logging.info("[Scheduler] Jennifer retention complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
+
+
+def run_atlas_intel():
+    try:
+        task = Task(
             description=(
                 "Search for DFW car dealership news today: new openings, closings, ownership changes, "
                 "expansions, and personnel changes (GM hires, marketing director changes). "
