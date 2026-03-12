@@ -16,12 +16,18 @@ try:
     _PSYCOPG_OK = True
 except ImportError as _psycopg_err:
     import logging as _tmp_log
-    _tmp_log.warning(f"[DB] psycopg2 import failed — Postgres disabled: {_psycopg_err}")
+    _tmp_log.warning(f"[DB] psycopg2 import failed â Postgres disabled: {_psycopg_err}")
     psycopg = None  # type: ignore
     _PSYCOPG_OK = False
 
 
-# ── Agent Imports ──────────────────────────────────────────────────────────────
+# ââ Tool Imports âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+from tools.prospect_parser import parse_tyler_prospects
+from tools.ghl import push_prospects_to_ghl
+
+
+# ââ Agent Imports ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 # The AI Phone Guy
 from agents.aiphoneguy.alex import alex
@@ -42,270 +48,21 @@ from agents.autointelligence.ryan_data import ryan_data
 from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
+âââââââââââââââââââââââââââââââââââ
+        if os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"):
+            try:
+                prospects = parse_tyler_prospects(raw_output)
+                if prospects:
+                    ghl_results = push_prospects_to_ghl(prospects)
+                    created = len([r for r in ghl_results if r.get("status") == "created"])
+                    logging.info(f"[GHL] Tyler pushed {created}/{len(prospects)} prospects to GoHighLevel.")
+                else:
+                    logging.warning("[GHL] No prospects parsed from Tyler's output.")
+            except Exception as ghl_err:
+                logging.error(f"[GHL] TylerâGHL push failed: {ghl_err}")
+        else:
+            logging.info("[GHL] Skipping GHL push â GHL_API_KEY or GHL_LOCATION_ID not set.")
 
-
-# ── Config ─────────────────────────────────────────────────────────────────────
-
-CST = pytz.timezone("America/Chicago")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-
-os.makedirs("logs", exist_ok=True)
-
-API_KEYS = set(filter(None, os.getenv("API_KEYS", "").split(",")))
-
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-
-
-# ── Database ───────────────────────────────────────────────────────────────────
-
-def _db_url() -> str:
-    """Normalize Railway's postgres:// URL to postgresql:// for psycopg3."""
-    url = DATABASE_URL
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
-    return url
-
-
-@contextmanager
-def _db():
-    """Thread-safe single-use DB connection context manager.
-
-    connect_timeout=5 ensures we fail fast if the DB socket isn't ready
-    at boot time instead of hanging indefinitely and blocking the event loop.
-    """
-    if psycopg is None:
-        raise RuntimeError("psycopg2 not available — Postgres disabled")
-    conn = psycopg.connect(_db_url(), connect_timeout=5)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def init_db():
-    """Create agent_logs table and index if they don't exist."""
-    if not DATABASE_URL:
-        logging.warning("[DB] DATABASE_URL not set — Postgres logging disabled, using filesystem.")
-        return
-    try:
-        with _db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS agent_logs (
-                        id          SERIAL PRIMARY KEY,
-                        agent_name  TEXT        NOT NULL,
-                        log_type    TEXT        NOT NULL,
-                        run_date    DATE        NOT NULL,
-                        content     TEXT        NOT NULL,
-                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_agent_logs_lookup
-                        ON agent_logs (agent_name, created_at DESC);
-                """)
-        logging.info("[DB] agent_logs table ready.")
-    except Exception as e:
-        logging.error(f"[DB] init_db failed: {e}")
-
-
-def persist_log(agent_name: str, log_type: str, content: str):
-    """Write an agent run result to Postgres (primary) and filesystem (backup)."""
-    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    run_date = datetime.date.fromisoformat(today)
-
-    # ── Filesystem backup (always) ─────────────────────────────────────────────
-    log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
-    try:
-        with open(log_path, "w") as f:
-            f.write(content)
-    except Exception as e:
-        logging.warning(f"[FS] Could not write {log_path}: {e}")
-
-    # ── Postgres primary ───────────────────────────────────────────────────────
-    if not DATABASE_URL:
-        return
-    try:
-        with _db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (agent_name, log_type, run_date, content),
-                )
-        logging.info(f"[DB] Persisted {agent_name}/{log_type} for {today}")
-    except Exception as e:
-        logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
-
-
-# ── Agent Registry ─────────────────────────────────────────────────────────────
-
-AGENTS = {
-    # The AI Phone Guy
-    "alex": alex,
-    "tyler": tyler,
-    "zoe": zoe,
-    "jennifer": jennifer,
-    # Calling Digital
-    "dek": dek,
-    "marcus": marcus,
-    "sofia": sofia,
-    "carlos": carlos,
-    "nova": nova,
-    # Automotive Intelligence
-    "michael_meta": michael_meta,
-    "ryan_data": ryan_data,
-    "chase": chase,
-    "atlas": atlas,
-    "phoenix": phoenix,
-}
-
-# Maps each agent to its log_type label (matches log file naming)
-LOG_TYPES = {
-    "alex":         "briefing",
-    "dek":          "briefing",
-    "michael_meta": "briefing",
-    "tyler":        "prospecting",
-    "marcus":       "prospecting",
-    "ryan_data":    "prospecting",
-    "zoe":          "content",
-    "sofia":        "content",
-    "chase":        "content",
-    "jennifer":     "retention",
-    "carlos":       "retention",
-    "nova":         "intelligence",
-    "atlas":        "intel",
-    "phoenix":      "delivery",
-}
-
-BUSINESSES = {
-    "aiphoneguy": {
-        "name": "The AI Phone Guy",
-        "agents": ["alex", "tyler", "zoe", "jennifer"],
-    },
-    "callingdigital": {
-        "name": "Calling Digital",
-        "agents": ["dek", "marcus", "sofia", "carlos", "nova"],
-    },
-    "autointelligence": {
-        "name": "Automotive Intelligence",
-        "agents": ["michael_meta", "ryan_data", "chase", "atlas", "phoenix"],
-    },
-}
-
-
-# ── Scheduler ──────────────────────────────────────────────────────────────────
-
-scheduler = BackgroundScheduler()
-
-
-# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ─────────────────────────────────────
-
-def run_alex_daily_briefing():
-    try:
-        task = Task(
-            description=(
-                "Search for today's top news on AI receptionist technology, voice AI for small business, "
-                "and DFW local service business trends. Search for competitor activity — any new launches, "
-                "pricing changes, or marketing pushes from competing AI answering services. "
-                "Identify the top 3 strategic opportunities or threats for The AI Phone Guy right now. "
-                "End with one specific action item for the team today."
-            ),
-            expected_output=(
-                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
-                "(2) Competitor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
-            ),
-            agent=alex,
-        )
-        crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("alex", "briefing", str(result))
-        logging.info("[Scheduler] Alex briefing complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Alex briefing failed: {type(e).__name__}: {e}")
-
-
-def run_dek_daily_briefing():
-    try:
-        task = Task(
-            description=(
-                "Search for today's top news on digital marketing agency trends, AI implementation "
-                "consulting, and small business tech adoption in Dallas. Search for competitor activity — "
-                "other Dallas agencies pivoting to AI, new AI consulting offers, pricing changes. "
-                "Identify the top 3 strategic opportunities or threats for Calling Digital right now. "
-                "End with one specific action item for the team today."
-            ),
-            expected_output=(
-                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
-                "(2) Competitor agency activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
-            ),
-            agent=dek,
-        )
-        crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("dek", "briefing", str(result))
-        logging.info("[Scheduler] Dek briefing complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Dek briefing failed: {type(e).__name__}: {e}")
-
-
-def run_michael_meta_daily_briefing():
-    try:
-        task = Task(
-            description=(
-                "Search for today's top news on AI in automotive retail, dealership technology trends, "
-                "and DFW auto market activity. Search for competitor activity — other AI consultants "
-                "or vendors targeting car dealerships. "
-                "Identify the top 3 strategic opportunities or threats for Automotive Intelligence right now. "
-                "End with one specific action item for the team today."
-            ),
-            expected_output=(
-                "CEO daily briefing: (1) Top 3 auto industry AI headlines with implications, "
-                "(2) Competitor vendor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
-            ),
-            agent=michael_meta,
-        )
-        crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("michael_meta", "briefing", str(result))
-        logging.info("[Scheduler] Michael Meta briefing complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
-
-
-# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ─────────────────────────────────
-
-def run_tyler_prospecting():
-    try:
-        task = Task(
-            description=(
-                "Search for local service businesses in Aubrey, Celina, Prosper, Pilot Point, "
-                "and Little Elm TX — HVAC, plumbing, roofing, dental, and personal injury law. "
-                "Search for news about businesses expanding, opening new locations, or hiring. "
-                "Look for buying signals: Google reviews mentioning missed calls, slow response, "
-                "or after-hours availability issues. "
-                "Compile 5 high-priority outreach targets for today with a personalized SMS hook for each."
-            ),
-            expected_output=(
-                "Daily prospecting report: (1) 5 outreach targets with business name, type, city, "
-                "reason for targeting, and a personalized cold SMS opening hook. "
-                "(2) Any signals that make today a particularly good time to reach out."
-            ),
-            agent=tyler,
-        )
-        crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("tyler", "prospecting", str(result))
-        logging.info("[Scheduler] Tyler prospecting complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
 
@@ -314,7 +71,7 @@ def run_marcus_prospecting():
     try:
         task = Task(
             description=(
-                "Search for small and mid-size businesses in Dallas that need digital marketing help — "
+                "Search for small and mid-size businesses in Dallas that need digital marketing help â "
                 "businesses with outdated websites, weak social presence, no Google reviews strategy, "
                 "or recent funding/expansion news. Look for buying signals: businesses posting about "
                 "marketing struggles, hiring marketing roles, or launching new services. "
@@ -362,7 +119,7 @@ def run_ryan_data_prospecting():
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
 
 
-# ── Marketing Content ── 9:00, 9:02, 9:04 CST ─────────────────────────────────
+# ââ Marketing Content ââ 9:00, 9:02, 9:04 CST âââââââââââââââââââââââââââââââââ
 
 def run_zoe_content():
     try:
@@ -370,7 +127,7 @@ def run_zoe_content():
             description=(
                 "Search for trending topics in local service business marketing, AI for small business, "
                 "and DFW small business news today. Search for competitor content from other AI receptionist "
-                "brands — what's performing well, what hooks are working. "
+                "brands â what's performing well, what hooks are working. "
                 "Design 3 content pieces across the full marketing funnel: "
                 "one AWARENESS piece (SEO blog or social), one CONSIDERATION piece (case study or "
                 "objection-handler), one CONVERSION piece (offer or CTA-focused). "
@@ -425,7 +182,7 @@ def run_chase_content():
     try:
         task = Task(
             description=(
-                "Search for trending AI and automotive retail news today — dealership technology stories, "
+                "Search for trending AI and automotive retail news today â dealership technology stories, "
                 "auto industry AI announcements, or DFW dealer news. "
                 "Search for what automotive thought leaders are publishing on LinkedIn and in newsletters. "
                 "Design 3 content pieces for Automotive Intelligence's full marketing funnel: "
@@ -435,8 +192,8 @@ def run_chase_content():
                 "For each: hook, key insight, format, and CTA."
             ),
             expected_output=(
-                "Daily content plan: (1) LinkedIn post ready to publish — hook, body, CTA. "
-                "(2) Newsletter section — topic, angle, 3 key points. "
+                "Daily content plan: (1) LinkedIn post ready to publish â hook, body, CTA. "
+                "(2) Newsletter section â topic, angle, 3 key points. "
                 "(3) Cold email subject line + opener for dealer outreach. "
                 "(4) SEO/AEO keyword opportunity in automotive AI space."
             ),
@@ -450,7 +207,7 @@ def run_chase_content():
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
 
 
-# ── Client Success ── 9:30, 9:32 CST ──────────────────────────────────────────────
+# ââ Client Success ââ 9:30, 9:32 CST ââââââââââââââââââââââââââââââââââââââââââ
 
 def run_jennifer_retention():
     try:
@@ -458,7 +215,7 @@ def run_jennifer_retention():
             description=(
                 "Search for current best practices in client retention for SaaS and AI subscription services. "
                 "Search for common objections and churn reasons for AI receptionist tools. "
-                "Identify upsell and expansion triggers — what behaviors indicate a Starter client "
+                "Identify upsell and expansion triggers â what behaviors indicate a Starter client "
                 "is ready for Growing, or a Growing client is ready for Premium. "
                 "Develop 3 proactive talking points for client check-in calls today: "
                 "one celebrating a quick win, one addressing a common concern, one introducing an upsell opportunity."
@@ -467,78 +224,7 @@ def run_jennifer_retention():
                 "Daily retention brief: (1) 3 proactive talking points for client calls. "
                 "(2) Key objections to monitor and counter-messaging. "
                 "(3) Upsell signals to look for in the current client base. "
-                "(4) One retention message or email template ready to send."
-            ),
-            agent=jennifer,
-        )
-        crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("jennifer", "retention", str(result))
-        logging.info("[Scheduler] Jennifer retention complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
-
-
-def run_carlos_retention():
-    try:
-        task = Task(
-            description=(
-                "Search for current best practices in digital marketing agency client retention "
-                "and account management. Search for common reasons small businesses cancel marketing "
-                "retainers and what successful agencies do to prevent it. "
-                "Identify upsell triggers — what service results indicate a client is ready for "
-                "AI consulting or additional Calling Digital services. "
-                "Develop 3 proactive talking points for client check-ins today: "
-                "one celebrating measurable results, one proactively addressing a potential concern, "
-                "one positioning the AI consulting conversation."
-            ),
-            expected_output=(
-                "Daily retention brief: (1) 3 proactive talking points for client calls. "
-                "(2) GRR protection strategies and early warning signals. "
-                "(3) Upsell opportunities to flag to Marcus and Dek. "
-                "(4) One retention check-in message template ready to send."
-            ),
-            agent=carlos,
-        )
-        crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("carlos", "retention", str(result))
-        logging.info("[Scheduler] Carlos retention complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Carlos retention failed: {type(e).__name__}: {e}")
-
-
-# ── Specialists ── 10:00, 10:02, 10:04 CST ────────────────────────────────────────────
-
-def run_nova_intelligence():
-    try:
-        task = Task(
-            description=(
-                "Search for AI tools, platforms, and updates released or announced this week "
-                "relevant to small and mid-size businesses: automation tools, AI assistants, "
-                "workflow optimization, customer service AI, and marketing AI. "
-                "Identify 3 specific implementation opportunities for Calling Digital's SMB clients: "
-                "which tool, which type of client it's best for, what problem it solves, "
-                "and how Calling Digital can deliver it as a billable service."
-            ),
-            expected_output=(
-                "Weekly AI intelligence report: (1) Top 5 AI tool releases or updates relevant to SMBs. "
-                "(2) 3 implementation opportunities with tool, client profile, problem solved, and service approach. "
-                "(3) One AI trend that should inform Calling Digital's consulting offer this week."
-            ),
-            agent=nova,
-        )
-        crew = Crew(agents=[nova], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        persist_log("nova", "intelligence", str(result))
-        logging.info("[Scheduler] Nova intelligence complete.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Nova intelligence failed: {type(e).__name__}: {e}")
-
-
-def run_atlas_intel():
-    try:
-        task = Task(
+                "(4) One retention message or e= Task(
             description=(
                 "Search for DFW car dealership news today: new openings, closings, ownership changes, "
                 "expansions, and personnel changes (GM hires, marketing director changes). "
@@ -551,7 +237,7 @@ def run_atlas_intel():
             expected_output=(
                 "Daily dealer intelligence report: (1) Top DFW dealership news and personnel changes. "
                 "(2) 3 target dealer briefs with name, signal, and outreach recommendation. "
-                "(3) Competitive activity — other AI vendors approaching DFW dealerships."
+                "(3) Competitive activity â other AI vendors approaching DFW dealerships."
             ),
             agent=atlas,
         )
@@ -589,9 +275,9 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
-# ── Register All 13 Scheduler Jobs ──────────────────────────────────────────────
+# ââ Register All 13 Scheduler Jobs ââââââââââââââââââââââââââââââââââââââââââââ
 
-# CEOs — 8:00, 8:02, 8:04
+# CEOs â 8:00, 8:02, 8:04
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
@@ -604,7 +290,7 @@ scheduler.add_job(run_michael_meta_daily_briefing, CronTrigger(hour=8, minute=4,
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales — 8:30, 8:32, 8:34
+# Sales â 8:30, 8:32, 8:34
 scheduler.add_job(run_tyler_prospecting, CronTrigger(hour=8, minute=30, timezone=CST),
     id="tyler_daily_prospecting", name="Tyler Daily Prospecting",
     replace_existing=True, misfire_grace_time=3600)
@@ -617,7 +303,7 @@ scheduler.add_job(run_ryan_data_prospecting, CronTrigger(hour=8, minute=34, time
     id="ryan_data_daily_prospecting", name="Ryan Data Daily Prospecting",
     replace_existing=True, misfire_grace_time=3600)
 
-# Marketing — 9:00, 9:02, 9:04
+# Marketing â 9:00, 9:02, 9:04
 scheduler.add_job(run_zoe_content, CronTrigger(hour=9, minute=0, timezone=CST),
     id="zoe_daily_content", name="Zoe Daily Content",
     replace_existing=True, misfire_grace_time=3600)
@@ -630,7 +316,7 @@ scheduler.add_job(run_chase_content, CronTrigger(hour=9, minute=4, timezone=CST)
     id="chase_daily_content", name="Chase Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
-# Client Success — 9:30, 9:32
+# Client Success â 9:30, 9:32
 scheduler.add_job(run_jennifer_retention, CronTrigger(hour=9, minute=30, timezone=CST),
     id="jennifer_daily_retention", name="Jennifer Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
@@ -639,7 +325,7 @@ scheduler.add_job(run_carlos_retention, CronTrigger(hour=9, minute=32, timezone=
     id="carlos_daily_retention", name="Carlos Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-# Specialists — 10:00, 10:02, 10:04
+# Specialists â 10:00, 10:02, 10:04
 scheduler.add_job(run_nova_intelligence, CronTrigger(hour=10, minute=0, timezone=CST),
     id="nova_daily_intelligence", name="Nova Daily Intelligence",
     replace_existing=True, misfire_grace_time=3600)
@@ -653,28 +339,28 @@ scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=
     replace_existing=True, misfire_grace_time=3600)
 
 
-# ── FastAPI App ──────────────────────────────────────────────────────────────────
+# ââ FastAPI App ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── DB init — never crash startup if Postgres isn't ready ─────────────────
+    # ââ DB init â never crash startup if Postgres isn't ready âââââââââââââââââ
     try:
         init_db()
     except Exception as e:
         logging.warning(
-            f"[DB] Startup init failed — app will run without Postgres: {e}"
+            f"[DB] Startup init failed â app will run without Postgres: {e}"
         )
 
-    # ── Scheduler — never crash startup if APScheduler misfires ──────────────────
+    # ââ Scheduler â never crash startup if APScheduler misfires ââââââââââââââ
     try:
         scheduler.start()
-        logging.info("[Scheduler] Started — 13 agent jobs registered.")
+        logging.info("[Scheduler] Started â 13 agent jobs registered.")
     except Exception as e:
         logging.error(f"[Scheduler] Failed to start: {e}")
 
     yield
 
-    # ── Shutdown ──────────────────────────────────────────────────────────────────
+    # ââ Shutdown âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     try:
         scheduler.shutdown(wait=False)
     except Exception:
@@ -693,7 +379,7 @@ app = FastAPI(
 )
 
 
-# ── Auth ─────────────────────────────────────────────────────────────────────────
+# ââ Auth âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 class AuthRequest(BaseModel):
     agent_id: str
@@ -718,7 +404,7 @@ def get_agent_business(agent_id: str) -> str:
     return "Unknown Business"
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
+# ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.get("/")
 async def root():
@@ -763,7 +449,7 @@ async def get_agent_log(agent_name: str):
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-    # ── Postgres primary ──────────────────────────────────────────────────────────────────
+    # ââ Postgres primary ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     if DATABASE_URL:
         try:
             with _db() as conn:
@@ -790,7 +476,7 @@ async def get_agent_log(agent_name: str):
             logging.error(f"[DB] get_agent_log query failed: {e}")
             # fall through to filesystem
 
-    # ── Filesystem fallback ────────────────────────────────────────────────────────────────────
+    # ââ Filesystem fallback ââââââââââââââââââââââââââââââââââââââââââââââââââââ
     pattern = os.path.join("logs", f"{agent_name}_*.log")
     matches = sorted(glob.glob(pattern), reverse=True)
     if not matches:
