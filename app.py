@@ -210,6 +210,85 @@ scheduler = BackgroundScheduler()
 
 
 
+# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ─────────────────────────────────────────────────────────────────────────────
+
+def run_alex_daily_briefing():
+    try:
+        task = Task(
+            description=(
+                "Search for today's top news on AI receptionist technology, voice AI for small business, "
+                "and DFW local service business trends. Search for competitor activity — any new launches, "
+                "pricing changes, or marketing pushes from competing AI answering services. "
+                "Identify the top 3 strategic opportunities or threats for The AI Phone Guy right now. "
+                "End with one specific action item for the team today."
+            ),
+            expected_output=(
+                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
+                "(2) Competitor activity summary, (3) Top opportunity or threat, "
+                "(4) One action item for today."
+            ),
+            agent=alex,
+        )
+        crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("alex", "briefing", str(result))
+        logging.info("[Scheduler] Alex briefing complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Alex briefing failed: {type(e).__name__}: {e}")
+
+
+def run_dek_daily_briefing():
+    try:
+        task = Task(
+            description=(
+                "Search for today's top news on digital marketing agency trends, AI implementation "
+                "consulting, and small business tech adoption in Dallas. Search for competitor activity — "
+                "other Dallas agencies pivoting to AI, new AI consulting offers, pricing changes. "
+                "Identify the top 3 strategic opportunities or threats for Calling Digital right now. "
+                "End with one specific action item for the team today."
+            ),
+            expected_output=(
+                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
+                "(2) Competitor agency activity summary, (3) Top opportunity or threat, "
+                "(4) One action item for today."
+            ),
+            agent=dek,
+        )
+        crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("dek", "briefing", str(result))
+        logging.info("[Scheduler] Dek briefing complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Dek briefing failed: {type(e).__name__}: {e}")
+
+
+def run_michael_meta_daily_briefing():
+    try:
+        task = Task(
+            description=(
+                "Search for today's top news on AI in automotive retail, dealership technology trends, "
+                "and DFW auto market activity. Search for competitor activity — other AI consultants "
+                "or vendors targeting car dealerships. "
+                "Identify the top 3 strategic opportunities or threats for Automotive Intelligence right now. "
+                "End with one specific action item for the team today."
+            ),
+            expected_output=(
+                "CEO daily briefing: (1) Top 3 auto industry AI headlines with implications, "
+                "(2) Competitor vendor activity summary, (3) Top opportunity or threat, "
+                "(4) One action item for today."
+            ),
+            agent=michael_meta,
+        )
+        crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+        result = crew.kickoff()
+        persist_log("michael_meta", "briefing", str(result))
+        logging.info("[Scheduler] Michael Meta briefing complete.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
+
+
+# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ───────────────────────────────────────────────────────────────────────────────────────
+
 def run_tyler_prospecting():
     try:
         task = Task(
