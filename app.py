@@ -293,15 +293,15 @@ def run_tyler_prospecting():
     try:
         task = Task(
             description=(
-                "Search for local service businesses in Aubrey, Celina, Prosper, Pilot Point, "
-                "and Little Elm TX -- HVAC, plumbing, roofing, dental, and personal injury law. "
-                "Search for news about businesses expanding, opening new locations, or hiring. "
+                "Search for plumbing companies in the 380 Corridor — Aubrey, Celina, Prosper, Pilot Point, "
+                "and Little Elm TX. "
+                "Search for news about plumbing businesses expanding, opening new locations, or hiring. "
                 "Look for buying signals: Google reviews mentioning missed calls, slow response, "
                 "or after-hours availability issues. "
-                "Compile 5 high-priority outreach targets for today with a personalized SMS hook for each."
+                "Compile 5 high-priority plumbing company outreach targets for today with a personalized SMS hook for each."
             ),
             expected_output=(
-                "Daily prospecting report: (1) 5 outreach targets with business name, type, city, "
+                "Daily prospecting report: (1) 5 plumbing company outreach targets with business name, city, "
                 "reason for targeting, and a personalized cold SMS opening hook. "
                 "(2) Any signals that make today a particularly good time to reach out."
             ),

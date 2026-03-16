@@ -38,7 +38,7 @@ def create_contact(
         raise ValueError("GHL_LOCATION_ID not set in environment variables.")
 
     if tags is None:
-        tags = ["tyler-prospect", "ai-phone-guy", business_type.lower().replace(" ", "-")]
+        tags = ["tyler-prospect-plumber", "ai-phone-guy", business_type.lower().replace(" ", "-")]
 
     payload = {
         "locationId": location_id,
