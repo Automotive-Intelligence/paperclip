@@ -24,7 +24,7 @@ except ImportError as _psycopg_err:
 # ââ Tool Imports âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 from tools.prospect_parser import parse_tyler_prospects
-from tools.ghl import push_prospects_to_ghl
+from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note
 
 
 # ââ Agent Imports ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
