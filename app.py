@@ -16,18 +16,24 @@ try:
     _PSYCOPG_OK = True
 except ImportError as _psycopg_err:
     import logging as _tmp_log
-    _tmp_log.warning(f"[DB] psycopg2 import failed â Postgres disabled: {_psycopg_err}")
+    _tmp_log.warning(f"[DB] psycopg2 import failed — Postgres disabled: {_psycopg_err}")
     psycopg = None  # type: ignore
     _PSYCOPG_OK = False
 
 
-# ââ Tool Imports âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ── Tool Imports ─────────────────────────────────────────────────────────────
 
 from tools.prospect_parser import parse_tyler_prospects
-from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note
+from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
+from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
+from tools.revenue_tracker import (
+    init_revenue_tracker, init_revenue_tables, track_event,
+    queue_content, get_content_queue, mark_content_published,
+    get_revenue_summary, get_daily_metrics,
+)
 
 
-# ââ Agent Imports ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ── Agent Imports ────────────────────────────────────────────────────────────
 
 # The AI Phone Guy
 from agents.aiphoneguy.alex import alex
@@ -64,7 +70,7 @@ API_KEYS = set(filter(None, os.getenv("API_KEYS", "").split(",")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
-# ── Database ─────────────────────────────────────────────────────────────────────────────
+# ── Database ─────────────────────────────────────────────────────────────────
 
 def _db_url() -> str:
     """Normalize Railway's postgres:// URL to postgresql:// for psycopg3."""
@@ -124,7 +130,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
     today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
     run_date = datetime.date.fromisoformat(today)
 
-    # ── Filesystem backup (always) ─────────────────────────────────────────────────────────────────────────────
+    # ── Filesystem backup (always)
     log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
     try:
         with open(log_path, "w") as f:
@@ -132,7 +138,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
     except Exception as e:
         logging.warning(f"[FS] Could not write {log_path}: {e}")
 
-    # ── Postgres primary ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Postgres primary
     if not DATABASE_URL:
         return
     try:
@@ -148,7 +154,7 @@ def persist_log(agent_name: str, log_type: str, content: str):
         logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
 
 
-# ── Agent Registry ─────────────────────────────────────────────────────────────────────────────
+# ── Agent Registry ───────────────────────────────────────────────────────────
 
 AGENTS = {
     # The AI Phone Guy
@@ -203,14 +209,151 @@ BUSINESSES = {
     },
 }
 
+# Maps agents to their business key for revenue tracking
+AGENT_BUSINESS_KEY = {}
+for biz_key, biz in BUSINESSES.items():
+    for agent_id in biz["agents"]:
+        AGENT_BUSINESS_KEY[agent_id] = biz_key
 
-# ── Scheduler ───────────────────────────────────────────────────────────────────────────────────────
+
+# ── GHL Configuration Check ─────────────────────────────────────────────────
+
+def _ghl_ready() -> bool:
+    """Check if GHL API credentials are configured."""
+    return bool(os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"))
+
+
+# ── Revenue Pipeline Helper ─────────────────────────────────────────────────
+
+def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str):
+    """
+    Universal sales pipeline executor. Takes any sales agent's output and:
+    1. Parses prospects with email engine
+    2. Pushes to GHL (creates contacts)
+    3. Sends first-touch cold emails
+    4. Creates pipeline opportunities
+    5. Tracks all revenue events
+    """
+    if not _ghl_ready():
+        logging.info(f"[Pipeline] Skipping GHL push for {agent_name} — credentials not set.")
+        return
+
+    try:
+        prospects = parse_prospects(raw_output, agent_name=agent_name)
+        if not prospects:
+            logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
+            return
+
+        ghl_results = push_prospects_to_ghl(
+            prospects,
+            source_agent=agent_name,
+            business_key=business_key,
+        )
+
+        created = 0
+        emails_sent = 0
+        for r in ghl_results:
+            if r.get("status") == "created":
+                created += 1
+                track_event(
+                    "prospect_created", business_key, agent_name,
+                    contact_id=r.get("contact_id", ""),
+                    monetary_value={"tyler": 482, "marcus": 2500, "ryan_data": 2500}.get(agent_name, 0),
+                    metadata={"business_name": r.get("business_name")},
+                )
+            if r.get("email_sent"):
+                emails_sent += 1
+                track_event(
+                    "email_sent", business_key, agent_name,
+                    contact_id=r.get("contact_id", ""),
+                    metadata={"business_name": r.get("business_name")},
+                )
+
+        logging.info(
+            f"[Pipeline] {agent_name}: {created}/{len(prospects)} contacts created, "
+            f"{emails_sent} emails sent to GHL."
+        )
+
+    except Exception as e:
+        logging.error(f"[Pipeline] {agent_name} pipeline failed: {e}")
+
+
+def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: str):
+    """
+    Content pipeline executor. Takes any content agent's output and:
+    1. Parses into publishable content pieces
+    2. Queues in content_queue table for publishing
+    3. Tracks content generation events
+    """
+    try:
+        pieces = parse_content_pieces(raw_output, agent_name=agent_name)
+        if not pieces:
+            logging.info(f"[Content] No publishable pieces parsed from {agent_name}.")
+            return
+
+        queued = queue_content(business_key, agent_name, pieces)
+        if queued:
+            track_event(
+                "content_queued", business_key, agent_name,
+                metadata={"pieces_queued": queued, "platforms": [p.get("platform") for p in pieces]},
+            )
+        logging.info(f"[Content] {agent_name}: {queued} pieces queued for publishing.")
+
+    except Exception as e:
+        logging.error(f"[Content] {agent_name} content pipeline failed: {e}")
+
+
+def _execute_retention_pipeline(agent_name: str, raw_output: str, business_key: str):
+    """
+    Retention pipeline executor. Takes retention agent output and:
+    1. Parses into actionable retention/upsell items
+    2. Tracks retention events
+    3. Logs structured actions for execution
+    """
+    try:
+        actions = parse_retention_actions(raw_output, agent_name=agent_name)
+        if not actions:
+            logging.info(f"[Retention] No actionable items parsed from {agent_name}.")
+            return
+
+        high_urgency = [a for a in actions if a.get("urgency") == "high"]
+        for action in actions:
+            track_event(
+                action.get("action_type", "retention_save"),
+                business_key,
+                agent_name,
+                metadata={
+                    "target": action.get("target_description", ""),
+                    "urgency": action.get("urgency", "medium"),
+                    "subject": action.get("subject", ""),
+                },
+            )
+
+        # Persist structured retention actions alongside raw log
+        today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
+        actions_path = os.path.join("logs", f"{agent_name}_actions_{today}.json")
+        try:
+            import json
+            with open(actions_path, "w") as f:
+                json.dump(actions, f, indent=2)
+        except Exception:
+            pass
+
+        logging.info(
+            f"[Retention] {agent_name}: {len(actions)} actions tracked "
+            f"({len(high_urgency)} high urgency)."
+        )
+
+    except Exception as e:
+        logging.error(f"[Retention] {agent_name} retention pipeline failed: {e}")
+
+
+# ── Scheduler ────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler()
 
 
-
-# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ─────────────────────────────────────────────────────────────────────────────
+# ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────
 
 def run_alex_daily_briefing():
     try:
@@ -287,7 +430,8 @@ def run_michael_meta_daily_briefing():
         logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
 
 
-# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ───────────────────────────────────────────────────────────────────────────────────────
+# ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ──────────────────────────────
+# NOW REVENUE-ACTIVE: Parse → GHL Contact → Send Email → Create Opportunity → Track
 
 def run_tyler_prospecting():
     try:
@@ -318,19 +462,10 @@ def run_tyler_prospecting():
         raw_output = str(result)
         persist_log("tyler", "prospecting", raw_output)
         logging.info("[Scheduler] Tyler prospecting complete.")
-        if os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"):
-            try:
-                prospects = parse_tyler_prospects(raw_output)
-                if prospects:
-                    ghl_results = push_prospects_to_ghl(prospects)
-                    created = len([r for r in ghl_results if r.get("status") == "created"])
-                    logging.info(f"[GHL] Tyler pushed {created}/{len(prospects)} prospects to GoHighLevel.")
-                else:
-                    logging.warning("[GHL] No prospects parsed from Tyler's output.")
-            except Exception as ghl_err:
-                logging.error(f"[GHL] Tyler->GHL push failed: {ghl_err}")
-        else:
-            logging.info("[GHL] Skipping GHL push -- GHL_API_KEY or GHL_LOCATION_ID not set.")
+
+        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
+        _execute_sales_pipeline("tyler", raw_output, "aiphoneguy")
+
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
 
@@ -339,24 +474,33 @@ def run_marcus_prospecting():
     try:
         task = Task(
             description=(
-                "Search for small and mid-size businesses in Dallas that need digital marketing help â "
+                "Search for small and mid-size businesses in Dallas that need digital marketing help — "
                 "businesses with outdated websites, weak social presence, no Google reviews strategy, "
                 "or recent funding/expansion news. Look for buying signals: businesses posting about "
                 "marketing struggles, hiring marketing roles, or launching new services. "
-                "Compile 5 high-priority outreach targets for today with a consultative opening approach. "
+                "Compile 5 high-priority outreach targets for today with a consultative cold email "
+                "for each — lead with their problem, not your service. Use an educational, diagnostic tone. "
+                "Subject lines should be consultative (e.g. 'quick audit for [business]', 'your website traffic'). "
+                "Include a follow-up email angle for each prospect. "
                 "Flag any that are also strong candidates for The AI Phone Guy bundle upsell."
             ),
             expected_output=(
-                "Daily prospecting report: (1) 5 outreach targets with company name, industry, "
-                "key pain point, and a consultative opening for outreach. "
-                "(2) Bundle opportunities flagged for Dek."
+                "Daily prospecting report: (1) 5 outreach targets with company name, industry, city, "
+                "key pain point, a cold email (subject + body), and a follow-up email angle. "
+                "(2) Bundle opportunities flagged for Dek. "
+                "IMPORTANT: All outreach is via cold email only."
             ),
             agent=marcus,
         )
         crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("marcus", "prospecting", str(result))
+        raw_output = str(result)
+        persist_log("marcus", "prospecting", raw_output)
         logging.info("[Scheduler] Marcus prospecting complete.")
+
+        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
+        _execute_sales_pipeline("marcus", raw_output, "callingdigital")
+
     except Exception as e:
         logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
 
@@ -369,25 +513,35 @@ def run_ryan_data_prospecting():
                 "job postings for digital transformation or BDC roles, news about expansion or new ownership, "
                 "Google reviews mentioning slow response times, or recent tech vendor changes. "
                 "Search for news about target dealership groups. "
-                "Identify 5 high-priority dealership targets for outreach today with personalized context "
-                "for the free AI Readiness Assessment offer."
+                "Identify 5 high-priority dealership targets for outreach today with personalized cold emails "
+                "positioning the free AI Readiness Assessment offer. "
+                "Subject lines should reference automotive/dealership context. "
+                "Body should position the free assessment as the entry point. "
+                "Include a follow-up email angle for each prospect."
             ),
             expected_output=(
-                "Daily prospecting report: (1) 5 dealership targets with name, group affiliation, "
-                "AI readiness signal found, and personalized assessment offer hook. "
-                "(2) Pipeline notes on any previously contacted dealers showing new activity."
+                "Daily prospecting report: (1) 5 dealership targets with name, group affiliation, city, "
+                "AI readiness signal found, a cold email (subject + body), and a follow-up email angle. "
+                "(2) Pipeline notes on any previously contacted dealers showing new activity. "
+                "IMPORTANT: All outreach is via cold email only."
             ),
             agent=ryan_data,
         )
         crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("ryan_data", "prospecting", str(result))
+        raw_output = str(result)
+        persist_log("ryan_data", "prospecting", raw_output)
         logging.info("[Scheduler] Ryan Data prospecting complete.")
+
+        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
+        _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
+
     except Exception as e:
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
 
 
-# ââ Marketing Content ââ 9:00, 9:02, 9:04 CST âââââââââââââââââââââââââââââââââ
+# ── Marketing Content ── 9:00, 9:02, 9:04 CST ──────────────────────────────
+# NOW REVENUE-ACTIVE: Parse → Content Queue → Ready to Publish → Track
 
 
 def run_zoe_content():
@@ -396,7 +550,7 @@ def run_zoe_content():
             description=(
                 "Search for trending topics in local service business marketing, AI for small business, "
                 "and DFW small business news today. Search for competitor content from other AI receptionist "
-                "brands â what's performing well, what hooks are working. "
+                "brands — what's performing well, what hooks are working. "
                 "Design 3 content pieces across the full marketing funnel: "
                 "one AWARENESS piece (SEO blog or social), one CONSIDERATION piece (case study or "
                 "objection-handler), one CONVERSION piece (offer or CTA-focused). "
@@ -412,8 +566,13 @@ def run_zoe_content():
         )
         crew = Crew(agents=[zoe], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("zoe", "content", str(result))
+        raw_output = str(result)
+        persist_log("zoe", "content", raw_output)
         logging.info("[Scheduler] Zoe content complete.")
+
+        # ── CONTENT PIPELINE: Parse → Queue → Track ──
+        _execute_content_pipeline("zoe", raw_output, "aiphoneguy")
+
     except Exception as e:
         logging.error(f"[Scheduler] Zoe content failed: {type(e).__name__}: {e}")
 
@@ -441,8 +600,13 @@ def run_sofia_content():
         )
         crew = Crew(agents=[sofia], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("sofia", "content", str(result))
+        raw_output = str(result)
+        persist_log("sofia", "content", raw_output)
         logging.info("[Scheduler] Sofia content complete.")
+
+        # ── CONTENT PIPELINE: Parse → Queue → Track ──
+        _execute_content_pipeline("sofia", raw_output, "callingdigital")
+
     except Exception as e:
         logging.error(f"[Scheduler] Sofia content failed: {type(e).__name__}: {e}")
 
@@ -451,7 +615,7 @@ def run_chase_content():
     try:
         task = Task(
             description=(
-                "Search for trending AI and automotive retail news today â dealership technology stories, "
+                "Search for trending AI and automotive retail news today — dealership technology stories, "
                 "auto industry AI announcements, or DFW dealer news. "
                 "Search for what automotive thought leaders are publishing on LinkedIn and in newsletters. "
                 "Design 3 content pieces for Automotive Intelligence's full marketing funnel: "
@@ -461,8 +625,8 @@ def run_chase_content():
                 "For each: hook, key insight, format, and CTA."
             ),
             expected_output=(
-                "Daily content plan: (1) LinkedIn post ready to publish â hook, body, CTA. "
-                "(2) Newsletter section â topic, angle, 3 key points. "
+                "Daily content plan: (1) LinkedIn post ready to publish — hook, body, CTA. "
+                "(2) Newsletter section — topic, angle, 3 key points. "
                 "(3) Cold email subject line + opener for dealer outreach. "
                 "(4) SEO/AEO keyword opportunity in automotive AI space."
             ),
@@ -470,13 +634,19 @@ def run_chase_content():
         )
         crew = Crew(agents=[chase], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("chase", "content", str(result))
+        raw_output = str(result)
+        persist_log("chase", "content", raw_output)
         logging.info("[Scheduler] Chase content complete.")
+
+        # ── CONTENT PIPELINE: Parse → Queue → Track ──
+        _execute_content_pipeline("chase", raw_output, "autointelligence")
+
     except Exception as e:
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
 
 
-# ââ Client Success ââ 9:30, 9:32 CST ââââââââââââââââââââââââââââââââââââââââââ
+# ── Client Success ── 9:30, 9:32 CST ────────────────────────────────────────
+# NOW REVENUE-ACTIVE: Parse → Structured Actions → Track Retention Events
 
 
 def run_jennifer_retention():
@@ -485,7 +655,7 @@ def run_jennifer_retention():
             description=(
                 "Search for current best practices in client retention for SaaS and AI subscription services. "
                 "Search for common objections and churn reasons for AI receptionist tools. "
-                "Identify upsell and expansion triggers â what behaviors indicate a Starter client "
+                "Identify upsell and expansion triggers — what behaviors indicate a Starter client "
                 "is ready for Growing, or a Growing client is ready for Premium. "
                 "Develop 3 proactive talking points for client check-in calls today: "
                 "one celebrating a quick win, one addressing a common concern, one introducing an upsell opportunity."
@@ -500,8 +670,13 @@ def run_jennifer_retention():
         )
         crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("jennifer", "retention", str(result))
+        raw_output = str(result)
+        persist_log("jennifer", "retention", raw_output)
         logging.info("[Scheduler] Jennifer retention complete.")
+
+        # ── RETENTION PIPELINE: Parse → Actions → Track ──
+        _execute_retention_pipeline("jennifer", raw_output, "aiphoneguy")
+
     except Exception as e:
         logging.error(f"[Scheduler] Jennifer retention failed: {type(e).__name__}: {e}")
 
@@ -529,13 +704,18 @@ def run_carlos_retention():
         )
         crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("carlos", "retention", str(result))
+        raw_output = str(result)
+        persist_log("carlos", "retention", raw_output)
         logging.info("[Scheduler] Carlos retention complete.")
+
+        # ── RETENTION PIPELINE: Parse → Actions → Track ──
+        _execute_retention_pipeline("carlos", raw_output, "callingdigital")
+
     except Exception as e:
         logging.error(f"[Scheduler] Carlos retention failed: {type(e).__name__}: {e}")
 
 
-# ── Specialists ── 10:00, 10:02, 10:04 CST ─────────────────────────────────────────────────────────────────────────────────────────
+# ── Specialists ── 10:00, 10:02, 10:04 CST ──────────────────────────────────
 
 def run_nova_intelligence():
     try:
@@ -578,7 +758,7 @@ def run_atlas_intel():
             expected_output=(
                 "Daily dealer intelligence report: (1) Top DFW dealership news and personnel changes. "
                 "(2) 3 target dealer briefs with name, signal, and outreach recommendation. "
-                "(3) Competitive activity â other AI vendors approaching DFW dealerships."
+                "(3) Competitive activity — other AI vendors approaching DFW dealerships."
             ),
             agent=atlas,
         )
@@ -616,9 +796,9 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
-# ââ Register All 13 Scheduler Jobs ââââââââââââââââââââââââââââââââââââââââââââ
+# ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
-# CEOs â 8:00, 8:02, 8:04
+# CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing)
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
@@ -631,20 +811,36 @@ scheduler.add_job(run_michael_meta_daily_briefing, CronTrigger(hour=8, minute=4,
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales â 8:30, 8:32, 8:34
-scheduler.add_job(run_tyler_prospecting, CronTrigger(hour=8, minute=30, timezone=CST),
-    id="tyler_daily_prospecting", name="Tyler Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
+# Sales — EVERY 2 HOURS from 8:30 to 16:30 CST (5 runs/day × 3 agents = 75 emails/day)
+# Tyler:     8:30, 10:30, 12:30, 14:30, 16:30
+# Marcus:    8:32, 10:32, 12:32, 14:32, 16:32
+# Ryan Data: 8:34, 10:34, 12:34, 14:34, 16:34
+SALES_HOURS = [8, 10, 12, 14, 16]
 
-scheduler.add_job(run_marcus_prospecting, CronTrigger(hour=8, minute=32, timezone=CST),
-    id="marcus_daily_prospecting", name="Marcus Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
+for hour in SALES_HOURS:
+    scheduler.add_job(
+        run_tyler_prospecting,
+        CronTrigger(hour=hour, minute=30, timezone=CST),
+        id=f"tyler_prospecting_{hour}30",
+        name=f"Tyler Prospecting {hour}:30",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_marcus_prospecting,
+        CronTrigger(hour=hour, minute=32, timezone=CST),
+        id=f"marcus_prospecting_{hour}32",
+        name=f"Marcus Prospecting {hour}:32",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_ryan_data_prospecting,
+        CronTrigger(hour=hour, minute=34, timezone=CST),
+        id=f"ryan_data_prospecting_{hour}34",
+        name=f"Ryan Data Prospecting {hour}:34",
+        replace_existing=True, misfire_grace_time=3600,
+    )
 
-scheduler.add_job(run_ryan_data_prospecting, CronTrigger(hour=8, minute=34, timezone=CST),
-    id="ryan_data_daily_prospecting", name="Ryan Data Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
-
-# Marketing â 9:00, 9:02, 9:04
+# Marketing — 9:00, 9:02, 9:04 (once daily — content planning)
 scheduler.add_job(run_zoe_content, CronTrigger(hour=9, minute=0, timezone=CST),
     id="zoe_daily_content", name="Zoe Daily Content",
     replace_existing=True, misfire_grace_time=3600)
@@ -657,7 +853,7 @@ scheduler.add_job(run_chase_content, CronTrigger(hour=9, minute=4, timezone=CST)
     id="chase_daily_content", name="Chase Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
-# Client Success â 9:30, 9:32
+# Client Success — 9:30, 9:32
 scheduler.add_job(run_jennifer_retention, CronTrigger(hour=9, minute=30, timezone=CST),
     id="jennifer_daily_retention", name="Jennifer Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
@@ -666,7 +862,7 @@ scheduler.add_job(run_carlos_retention, CronTrigger(hour=9, minute=32, timezone=
     id="carlos_daily_retention", name="Carlos Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-# Specialists â 10:00, 10:02, 10:04
+# Specialists — 10:00, 10:02, 10:04
 scheduler.add_job(run_nova_intelligence, CronTrigger(hour=10, minute=0, timezone=CST),
     id="nova_daily_intelligence", name="Nova Daily Intelligence",
     replace_existing=True, misfire_grace_time=3600)
@@ -680,28 +876,36 @@ scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=
     replace_existing=True, misfire_grace_time=3600)
 
 
-# ââ FastAPI App ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ── FastAPI App ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ââ DB init â never crash startup if Postgres isn't ready âââââââââââââââââ
+    # ── DB init — never crash startup if Postgres isn't ready
     try:
         init_db()
     except Exception as e:
         logging.warning(
-            f"[DB] Startup init failed â app will run without Postgres: {e}"
+            f"[DB] Startup init failed — app will run without Postgres: {e}"
         )
 
-    # ââ Scheduler â never crash startup if APScheduler misfires ââââââââââââââ
+    # ── Revenue tracker init
+    try:
+        init_revenue_tracker(_db, CST)
+        if DATABASE_URL:
+            init_revenue_tables()
+    except Exception as e:
+        logging.warning(f"[Revenue] Init failed — revenue tracking disabled: {e}")
+
+    # ── Scheduler — never crash startup if APScheduler misfires
     try:
         scheduler.start()
-        logging.info(f"[Scheduler] Started ✅ {len(scheduler.get_jobs())} agent jobs registered.")
+        logging.info(f"[Scheduler] Started {len(scheduler.get_jobs())} agent jobs registered.")
     except Exception as e:
         logging.error(f"[Scheduler] Failed to start: {e}")
 
     yield
 
-    # ââ Shutdown âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ── Shutdown
     try:
         scheduler.shutdown(wait=False)
     except Exception:
@@ -710,17 +914,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Paperclip Multi-Agent API",
+    title="Paperclip Multi-Agent Revenue Engine",
     description=(
-        "AI agent platform powering The AI Phone Guy, Calling Digital, "
-        "and Automotive Intelligence."
+        "AI-native revenue platform powering The AI Phone Guy, Calling Digital, "
+        "and Automotive Intelligence. Agents prospect, email, track pipeline, "
+        "queue content, and execute retention — autonomously."
     ),
-    version="3.0.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
 
-# ââ Auth âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ── Auth ─────────────────────────────────────────────────────────────────────
 
 class AuthRequest(BaseModel):
     agent_id: str
@@ -745,11 +950,11 @@ def get_agent_business(agent_id: str) -> str:
     return "Unknown Business"
 
 
-# ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
 async def root():
-    return {"status": "ok"}
+    return {"status": "ok", "engine": "revenue", "version": "4.0.0"}
 
 
 @app.post("/chat")
@@ -790,7 +995,7 @@ async def get_agent_log(agent_name: str):
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-    # ââ Postgres primary ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ── Postgres primary
     if DATABASE_URL:
         try:
             with _db() as conn:
@@ -817,7 +1022,7 @@ async def get_agent_log(agent_name: str):
             logging.error(f"[DB] get_agent_log query failed: {e}")
             # fall through to filesystem
 
-    # ââ Filesystem fallback ââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    # ── Filesystem fallback
     pattern = os.path.join("logs", f"{agent_name}_*.log")
     matches = sorted(glob.glob(pattern), reverse=True)
     if not matches:
@@ -862,6 +1067,76 @@ async def get_agent_log_history(agent_name: str, limit: int = 30):
         raise HTTPException(status_code=500, detail=f"DB error: {e}")
 
 
+# ── Revenue Dashboard Endpoints ─────────────────────────────────────────────
+
+
+@app.get("/revenue")
+async def revenue_dashboard(business: Optional[str] = None, days: int = 30):
+    """Revenue intelligence dashboard — pipeline value, conversion rates, agent performance."""
+    summary = get_revenue_summary(business_key=business, days=days)
+    return JSONResponse(content=summary)
+
+
+@app.get("/revenue/daily")
+async def revenue_daily(business: Optional[str] = None, days: int = 7):
+    """Daily revenue metrics for trend analysis."""
+    metrics = get_daily_metrics(business_key=business, days=days)
+    return JSONResponse(content={"days": days, "business": business or "all", "metrics": metrics})
+
+
+@app.get("/content/queue")
+async def content_queue_endpoint(business: Optional[str] = None, status: str = "queued", limit: int = 20):
+    """Content queue — view pending, queued, or published content pieces."""
+    items = get_content_queue(business_key=business, status=status, limit=limit)
+    return JSONResponse(content={"status": status, "count": len(items), "items": items})
+
+
+@app.post("/content/{content_id}/publish")
+async def publish_content(content_id: int, authorization: Optional[str] = Header(None)):
+    """Mark a content piece as published (after manual review and posting)."""
+    validate_key(authorization)
+    mark_content_published(content_id)
+    return {"status": "published", "content_id": content_id}
+
+
+@app.get("/pipeline")
+async def pipeline_overview():
+    """Quick pipeline overview — how many prospects, emails, opportunities across all businesses."""
+    summary = {}
+    for biz_key in BUSINESSES:
+        summary[biz_key] = get_revenue_summary(business_key=biz_key, days=30)
+    return JSONResponse(content=summary)
+
+
+# ── GHL Webhook Receiver ────────────────────────────────────────────────────
+
+
+@app.post("/webhooks/ghl")
+async def ghl_webhook(payload: dict):
+    """
+    Receive GHL webhooks for email opens, replies, and status changes.
+    This closes the feedback loop — agent outreach results flow back into the system.
+    """
+    event_type = payload.get("type", "")
+    contact_id = payload.get("contactId", payload.get("contact_id", ""))
+
+    if "email.opened" in event_type or "EmailOpened" in event_type:
+        track_event("email_opened", "unknown", "unknown", contact_id=contact_id)
+    elif "email.replied" in event_type or "InboundMessage" in event_type:
+        track_event("email_replied", "unknown", "unknown", contact_id=contact_id)
+    elif "opportunity.status_changed" in event_type:
+        new_status = payload.get("status", "")
+        monetary_value = float(payload.get("monetaryValue", 0))
+        if new_status == "won":
+            track_event("deal_closed", "unknown", "unknown",
+                        contact_id=contact_id, monetary_value=monetary_value)
+        elif new_status == "lost":
+            track_event("deal_lost", "unknown", "unknown",
+                        contact_id=contact_id, monetary_value=monetary_value)
+
+    return {"status": "received"}
+
+
 @app.get("/health")
 async def health():
     jobs_info = []
@@ -873,9 +1148,12 @@ async def health():
         })
     return {
         "status": "ok",
-        "version": "3.0.0",
+        "version": "4.0.0",
+        "engine": "revenue",
         "scheduler": "running" if scheduler.running else "stopped",
         "jobs_registered": len(jobs_info),
         "postgres": "connected" if DATABASE_URL else "not configured",
+        "ghl_configured": _ghl_ready(),
+        "revenue_tracking": bool(DATABASE_URL),
         "jobs": jobs_info,
     }
