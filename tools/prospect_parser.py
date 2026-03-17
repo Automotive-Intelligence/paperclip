@@ -16,7 +16,7 @@ def parse_tyler_prospects(raw_output: str) -> list:
     Uses a lightweight Claude call to parse the unstructured text reliably.
 
     Returns list of dicts with keys:
-        business_name, city, business_type, reason, sms_hook
+        business_name, city, business_type, reason, email_hook
     """
     if not raw_output or len(raw_output.strip()) < 50:
         logging.warning("[Parser] Tyler output too short to parse.")
@@ -32,10 +32,10 @@ Return ONLY a JSON array. No markdown, no explanation, just the raw JSON array.
 
 Each object must have exactly these keys:
 - business_name (string)
-- city (string) 
+- city (string)
 - business_type (string, e.g. "HVAC", "Plumbing", "Dental", "Roofing", "Law Firm")
 - reason (string, why they are being targeted)
-- sms_hook (string, the personalized SMS opening message)
+- email_hook (string, the personalized cold email subject line and opening line)
 
 If any field is missing, use an empty string.
 
