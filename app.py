@@ -25,6 +25,7 @@ except ImportError as _psycopg_err:
 
 from tools.prospect_parser import parse_tyler_prospects
 from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
+from tools.hubspot import push_prospects_to_hubspot, _hubspot_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
@@ -278,6 +279,74 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         logging.error(f"[Pipeline] {agent_name} pipeline failed: {e}")
 
 
+def _execute_hubspot_pipeline(agent_name: str, raw_output: str, business_key: str):
+    """
+    HubSpot sales pipeline for Automotive Intelligence (Ryan Data).
+    1. Parses prospects with email engine
+    2. Pushes to HubSpot (creates contacts + deals)
+    3. Tracks all revenue events
+    """
+    if not _hubspot_ready():
+        logging.info(f"[Pipeline] Skipping HubSpot push for {agent_name} — HUBSPOT_ACCESS_TOKEN not set.")
+        return
+
+    try:
+        prospects = parse_prospects(raw_output, agent_name=agent_name)
+        if not prospects:
+            logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
+            return
+
+        hs_results = push_prospects_to_hubspot(
+            prospects,
+            source_agent=agent_name,
+            business_key=business_key,
+        )
+
+        created = 0
+        for r in hs_results:
+            if r.get("status") == "created":
+                created += 1
+                track_event(
+                    "prospect_created", business_key, agent_name,
+                    contact_id=r.get("contact_id", ""),
+                    monetary_value=2500,
+                    metadata={"business_name": r.get("business_name"), "crm": "hubspot"},
+                )
+
+        logging.info(
+            f"[Pipeline] {agent_name}: {created}/{len(prospects)} contacts pushed to HubSpot."
+        )
+
+    except Exception as e:
+        logging.error(f"[Pipeline] {agent_name} HubSpot pipeline failed: {e}")
+
+
+def _execute_logonly_pipeline(agent_name: str, raw_output: str, business_key: str):
+    """
+    Log-only pipeline for businesses without a CRM (Calling Digital / Marcus).
+    Parses prospects and tracks revenue events but does not push to any CRM.
+    """
+    try:
+        prospects = parse_prospects(raw_output, agent_name=agent_name)
+        if not prospects:
+            logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
+            return
+
+        for p in prospects:
+            track_event(
+                "prospect_created", business_key, agent_name,
+                monetary_value=2500,
+                metadata={"business_name": p.get("business_name"), "crm": "none"},
+            )
+
+        logging.info(
+            f"[Pipeline] {agent_name}: {len(prospects)} prospects logged (no CRM push)."
+        )
+
+    except Exception as e:
+        logging.error(f"[Pipeline] {agent_name} log-only pipeline failed: {e}")
+
+
 def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: str):
     """
     Content pipeline executor. Takes any content agent's output and:
@@ -498,8 +567,8 @@ def run_marcus_prospecting():
         persist_log("marcus", "prospecting", raw_output)
         logging.info("[Scheduler] Marcus prospecting complete.")
 
-        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        _execute_sales_pipeline("marcus", raw_output, "callingdigital")
+        # ── REVENUE PIPELINE: Parse → Track (no CRM — Calling Digital has none) ──
+        _execute_logonly_pipeline("marcus", raw_output, "callingdigital")
 
     except Exception as e:
         logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
@@ -533,8 +602,8 @@ def run_ryan_data_prospecting():
         persist_log("ryan_data", "prospecting", raw_output)
         logging.info("[Scheduler] Ryan Data prospecting complete.")
 
-        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
+        # ── REVENUE PIPELINE: Parse → HubSpot → Track ──
+        _execute_hubspot_pipeline("ryan_data", raw_output, "autointelligence")
 
     except Exception as e:
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
