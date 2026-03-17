@@ -796,9 +796,9 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
-# ── Register All 14 Scheduler Jobs ──────────────────────────────────────────
+# ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
-# CEOs — 8:00, 8:02, 8:04
+# CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing)
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
@@ -811,20 +811,36 @@ scheduler.add_job(run_michael_meta_daily_briefing, CronTrigger(hour=8, minute=4,
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales — 8:30, 8:32, 8:34
-scheduler.add_job(run_tyler_prospecting, CronTrigger(hour=8, minute=30, timezone=CST),
-    id="tyler_daily_prospecting", name="Tyler Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
+# Sales — EVERY 2 HOURS from 8:30 to 16:30 CST (5 runs/day × 3 agents = 75 emails/day)
+# Tyler:     8:30, 10:30, 12:30, 14:30, 16:30
+# Marcus:    8:32, 10:32, 12:32, 14:32, 16:32
+# Ryan Data: 8:34, 10:34, 12:34, 14:34, 16:34
+SALES_HOURS = [8, 10, 12, 14, 16]
 
-scheduler.add_job(run_marcus_prospecting, CronTrigger(hour=8, minute=32, timezone=CST),
-    id="marcus_daily_prospecting", name="Marcus Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
+for hour in SALES_HOURS:
+    scheduler.add_job(
+        run_tyler_prospecting,
+        CronTrigger(hour=hour, minute=30, timezone=CST),
+        id=f"tyler_prospecting_{hour}30",
+        name=f"Tyler Prospecting {hour}:30",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_marcus_prospecting,
+        CronTrigger(hour=hour, minute=32, timezone=CST),
+        id=f"marcus_prospecting_{hour}32",
+        name=f"Marcus Prospecting {hour}:32",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_ryan_data_prospecting,
+        CronTrigger(hour=hour, minute=34, timezone=CST),
+        id=f"ryan_data_prospecting_{hour}34",
+        name=f"Ryan Data Prospecting {hour}:34",
+        replace_existing=True, misfire_grace_time=3600,
+    )
 
-scheduler.add_job(run_ryan_data_prospecting, CronTrigger(hour=8, minute=34, timezone=CST),
-    id="ryan_data_daily_prospecting", name="Ryan Data Daily Prospecting",
-    replace_existing=True, misfire_grace_time=3600)
-
-# Marketing — 9:00, 9:02, 9:04
+# Marketing — 9:00, 9:02, 9:04 (once daily — content planning)
 scheduler.add_job(run_zoe_content, CronTrigger(hour=9, minute=0, timezone=CST),
     id="zoe_daily_content", name="Zoe Daily Content",
     replace_existing=True, misfire_grace_time=3600)
