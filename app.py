@@ -26,6 +26,7 @@ except ImportError as _psycopg_err:
 from tools.prospect_parser import parse_tyler_prospects
 from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
 from tools.hubspot import push_prospects_to_hubspot, _hubspot_ready
+from tools.attio import push_prospects_to_attio, _attio_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
@@ -321,10 +322,13 @@ def _execute_hubspot_pipeline(agent_name: str, raw_output: str, business_key: st
         logging.error(f"[Pipeline] {agent_name} HubSpot pipeline failed: {e}")
 
 
-def _execute_logonly_pipeline(agent_name: str, raw_output: str, business_key: str):
+def _execute_attio_pipeline(agent_name: str, raw_output: str, business_key: str):
     """
-    Log-only pipeline for businesses without a CRM (Calling Digital / Marcus).
-    Parses prospects and tracks revenue events but does not push to any CRM.
+    Attio CRM pipeline for Calling Digital (Marcus).
+    1. Parses prospects with email engine
+    2. Pushes to Attio (creates companies, people, notes)
+    3. Tracks all revenue events
+    Falls back to log-only if ATTIO_API_KEY is not set.
     """
     try:
         prospects = parse_prospects(raw_output, agent_name=agent_name)
@@ -332,19 +336,39 @@ def _execute_logonly_pipeline(agent_name: str, raw_output: str, business_key: st
             logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
             return
 
-        for p in prospects:
-            track_event(
-                "prospect_created", business_key, agent_name,
-                monetary_value=2500,
-                metadata={"business_name": p.get("business_name"), "crm": "none"},
-            )
+        if not _attio_ready():
+            logging.info(f"[Pipeline] ATTIO_API_KEY not set — logging {len(prospects)} prospects without CRM push.")
+            for p in prospects:
+                track_event(
+                    "prospect_created", business_key, agent_name,
+                    monetary_value=2500,
+                    metadata={"business_name": p.get("business_name"), "crm": "none"},
+                )
+            return
+
+        attio_results = push_prospects_to_attio(
+            prospects,
+            source_agent=agent_name,
+            business_key=business_key,
+        )
+
+        created = 0
+        for r in attio_results:
+            if r.get("status") == "created":
+                created += 1
+                track_event(
+                    "prospect_created", business_key, agent_name,
+                    contact_id=r.get("record_id", ""),
+                    monetary_value=2500,
+                    metadata={"business_name": r.get("business_name"), "crm": "attio"},
+                )
 
         logging.info(
-            f"[Pipeline] {agent_name}: {len(prospects)} prospects logged (no CRM push)."
+            f"[Pipeline] {agent_name}: {created}/{len(prospects)} contacts pushed to Attio."
         )
 
     except Exception as e:
-        logging.error(f"[Pipeline] {agent_name} log-only pipeline failed: {e}")
+        logging.error(f"[Pipeline] {agent_name} Attio pipeline failed: {e}")
 
 
 def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: str):
@@ -567,8 +591,8 @@ def run_marcus_prospecting():
         persist_log("marcus", "prospecting", raw_output)
         logging.info("[Scheduler] Marcus prospecting complete.")
 
-        # ── REVENUE PIPELINE: Parse → Track (no CRM — Calling Digital has none) ──
-        _execute_logonly_pipeline("marcus", raw_output, "callingdigital")
+        # ── REVENUE PIPELINE: Parse → Attio → Track ──
+        _execute_attio_pipeline("marcus", raw_output, "callingdigital")
 
     except Exception as e:
         logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
