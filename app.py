@@ -298,12 +298,18 @@ def run_tyler_prospecting():
                 "Search for news about businesses expanding, opening new locations, or hiring. "
                 "Look for buying signals: Google reviews mentioning missed calls, slow response, "
                 "or after-hours availability issues. "
-                "Compile 5 high-priority outreach targets for today with a personalized SMS hook for each."
+                "Compile 5 high-priority outreach targets for today with a personalized COLD EMAIL "
+                "for each — NOT SMS. Use the Observation > Problem > Proof > Ask framework. "
+                "Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', "
+                "'after-hours voicemail'). Opening line should reference a specific observation about "
+                "the business. CTA should be interest-based ('Worth a quick look?'), not a meeting request. "
+                "Also draft one follow-up email angle for each prospect (different value angle for touch 2)."
             ),
             expected_output=(
                 "Daily prospecting report: (1) 5 outreach targets with business name, type, city, "
-                "reason for targeting, and a personalized cold SMS opening hook. "
-                "(2) Any signals that make today a particularly good time to reach out."
+                "reason for targeting, a cold email (subject + body), and a follow-up angle for touch 2. "
+                "(2) Any signals that make today a particularly good time to reach out. "
+                "IMPORTANT: All outreach is via cold email only. No SMS to non-opted-in contacts."
             ),
             agent=tyler,
         )

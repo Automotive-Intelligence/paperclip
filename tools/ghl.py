@@ -24,7 +24,7 @@ def create_contact(
     business_name: str,
     city: str,
     business_type: str,
-    sms_hook: str,
+    email_hook: str,
     reason: str,
     source_agent: str = "tyler",
     tags: Optional[list] = None,
@@ -38,20 +38,21 @@ def create_contact(
         raise ValueError("GHL_LOCATION_ID not set in environment variables.")
 
     if tags is None:
-        tags = ["tyler-prospect", "ai-phone-guy", business_type.lower().replace(" ", "-")]
+        tags = ["tyler-prospect", "ai-phone-guy", "cold-email", business_type.lower().replace(" ", "-")]
 
     payload = {
         "locationId": location_id,
         "name": business_name,
         "companyName": business_name,
         "city": city,
-        "source": "Tyler AI Prospecting",
+        "source": "Tyler AI Prospecting - Cold Email",
         "tags": tags,
         "customFields": [
             {"key": "business_type", "value": business_type},
             {"key": "outreach_reason", "value": reason},
-            {"key": "sms_hook", "value": sms_hook},
+            {"key": "email_hook", "value": email_hook},
             {"key": "source_agent", "value": source_agent},
+            {"key": "outreach_channel", "value": "cold-email"},
         ],
     }
 
@@ -96,17 +97,19 @@ def push_prospects_to_ghl(prospects: list) -> list:
                 business_name=p.get("business_name", "Unknown"),
                 city=p.get("city", ""),
                 business_type=p.get("business_type", ""),
-                sms_hook=p.get("sms_hook", ""),
+                email_hook=p.get("email_hook", p.get("sms_hook", "")),
                 reason=p.get("reason", ""),
             )
             contact_id = contact.get("id")
 
-            # Add SMS hook as a note so it's visible in the contact record
-            if contact_id and p.get("sms_hook"):
+            # Add email hook as a note so it's visible in the contact record
+            hook = p.get("email_hook", p.get("sms_hook", ""))
+            if contact_id and hook:
                 add_contact_note(
                     contact_id,
-                    f"ð± Tyler's SMS Hook:\n{p['sms_hook']}\n\n"
-                    f"ð¯ Targeting Reason:\n{p['reason']}",
+                    f"Tyler's Cold Email Hook:\n{hook}\n\n"
+                    f"Targeting Reason:\n{p['reason']}\n\n"
+                    f"Channel: Cold Email (no SMS - no opt-in consent)",
                 )
 
             results.append({
