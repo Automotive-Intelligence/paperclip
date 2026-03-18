@@ -270,10 +270,10 @@ JSON array:"""
 
     except json.JSONDecodeError as e:
         logging.error(f"[Parser] JSON parse failed for {agent_name}: {e}")
-        return []
+        return _heuristic_parse_prospects(raw_output)
     except Exception as e:
         logging.error(f"[Parser] Prospect parsing failed for {agent_name}: {e}")
-        return []
+        return _heuristic_parse_prospects(raw_output)
 
 
 def parse_retention_actions(raw_output: str, agent_name: str = "jennifer") -> list:
@@ -397,4 +397,4 @@ JSON array:"""
         return pieces
     except Exception as e:
         logging.error(f"[Parser] Content parsing failed for {agent_name}: {e}")
-        return []
+        return _heuristic_parse_content(raw_output)
