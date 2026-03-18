@@ -133,21 +133,15 @@ def init_db():
 
 
 def persist_log(agent_name: str, log_type: str, content: str):
-    """Write an agent run result to Postgres (primary) and filesystem (backup)."""
+    """Write an agent run result to Postgres (primary). Filesystem writes skipped on Railway."""
     today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
     run_date = datetime.date.fromisoformat(today)
 
-    # ── Filesystem backup (always)
-    log_path = os.path.join("logs", f"{agent_name}_{log_type}_{today}.log")
-    try:
-        with open(log_path, "w") as f:
-            f.write(content)
-    except Exception as e:
-        logging.warning(f"[FS] Could not write {log_path}: {e}")
-
-    # ── Postgres primary
+    # ── Postgres primary (Railway does not support persistent file writes)
     if not DATABASE_URL:
+        logging.warning(f"[DB] DATABASE_URL not set — cannot persist logs for {agent_name}")
         return
+    
     try:
         with _db() as conn:
             with conn.cursor() as cur:
@@ -156,9 +150,9 @@ def persist_log(agent_name: str, log_type: str, content: str):
                     "VALUES (%s, %s, %s, %s)",
                     (agent_name, log_type, run_date, content),
                 )
-        logging.info(f"[DB] Persisted {agent_name}/{log_type} for {today}")
+        logging.info(f"[DB] ✓ Persisted {agent_name}/{log_type} to Postgres ({len(content)} chars)")
     except Exception as e:
-        logging.error(f"[DB] persist_log failed for {agent_name}: {e}")
+        logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {type(e).__name__}: {e}")
 
 
 # ── Agent Registry ───────────────────────────────────────────────────────────
