@@ -1468,11 +1468,11 @@ async def get_agent_logs_by_date(agent_name: str):
 @app.get("/dashboard")
 async def get_dashboard():
     """Serve the dashboard HTML."""
-    dashboard_path = Path("static/dashboard.html")
+    dashboard_path = Path(__file__).parent / "static" / "dashboard.html"
     if dashboard_path.exists():
-        return FileResponse(dashboard_path, media_type="text/html")
+        return FileResponse(str(dashboard_path), media_type="text/html")
     else:
-        return {"error": "Dashboard not found"}
+        return {"error": f"Dashboard not found at {dashboard_path}"}
 
 
 @app.get("/health")
