@@ -1,5 +1,4 @@
 crewai==1.10.1
-litellm
 psycopg2-binary
 fastapi
 uvicorn
@@ -8,3 +7,4 @@ apscheduler>=3.10.4
 pytz
 requests
 anthropic
+python-dotenv

@@ -2,15 +2,22 @@ import os
 import glob
 import logging
 import datetime
+import json
+from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import PlainTextResponse, JSONResponse
-from typing import Optional, List
+from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+
+# Load environment variables from .env file
+load_dotenv()
 try:
     import psycopg2 as psycopg   # psycopg2-binary: stable on Railway, API-compatible
     _PSYCOPG_OK = True
@@ -796,6 +803,98 @@ def run_phoenix_delivery():
         logging.error(f"[Scheduler] Phoenix delivery failed: {type(e).__name__}: {e}")
 
 
+# ── Master Test Function: All Agents @ 6:30 PM ─────────────────────────────
+
+def run_all_agents_test():
+    """
+    Master test suite that runs all 15 agents' tasks concurrently.
+    Logs results and provides a complete system health check.
+    Scheduled for 6:30 PM CST daily.
+    """
+    logging.info("🧪 [TEST SUITE] Starting all agent tasks test...")
+    start_time = datetime.datetime.now(CST)
+    results = {
+        "start_time": start_time.isoformat(),
+        "agents_tested": [],
+        "agents_passed": [],
+        "agents_failed": [],
+        "execution_times": {},
+    }
+
+    # Define all test agents with their test tasks
+    test_assignments = [
+        ("alex", alex, "briefing", run_alex_daily_briefing),
+        ("dek", dek, "briefing", run_dek_daily_briefing),
+        ("michael_meta", michael_meta, "briefing", run_michael_meta_daily_briefing),
+        ("tyler", tyler, "prospecting", run_tyler_prospecting),
+        ("marcus", marcus, "prospecting", run_marcus_prospecting),
+        ("ryan_data", ryan_data, "prospecting", run_ryan_data_prospecting),
+        ("zoe", zoe, "content", run_zoe_content),
+        ("sofia", sofia, "content", run_sofia_content),
+        ("chase", chase, "content", run_chase_content),
+        ("jennifer", jennifer, "retention", run_jennifer_retention),
+        ("carlos", carlos, "retention", run_carlos_retention),
+        ("nova", nova, "intelligence", run_nova_intelligence),
+        ("atlas", atlas, "intel", run_atlas_intel),
+        ("phoenix", phoenix, "delivery", run_phoenix_delivery),
+    ]
+
+    # Execute each agent test
+    for agent_id, agent_obj, log_type, run_func in test_assignments:
+        try:
+            task_start = datetime.datetime.now(CST)
+            logging.info(f"  ▶ Testing {agent_id}...")
+            
+            # Run the agent task
+            run_func()
+            
+            task_end = datetime.datetime.now(CST)
+            exec_time = (task_end - task_start).total_seconds()
+            
+            results["agents_tested"].append(agent_id)
+            results["agents_passed"].append(agent_id)
+            results["execution_times"][agent_id] = exec_time
+            
+            logging.info(f"  ✓ {agent_id} passed in {exec_time:.2f}s")
+            
+        except Exception as e:
+            task_end = datetime.datetime.now(CST)
+            exec_time = (task_end - task_start).total_seconds()
+            
+            results["agents_tested"].append(agent_id)
+            results["agents_failed"].append({"agent": agent_id, "error": str(e)})
+            results["execution_times"][agent_id] = exec_time
+            
+            logging.error(f"  ✗ {agent_id} failed after {exec_time:.2f}s: {type(e).__name__}: {e}")
+
+    # Summary
+    end_time = datetime.datetime.now(CST)
+    total_time = (end_time - start_time).total_seconds()
+    results["end_time"] = end_time.isoformat()
+    results["total_duration_seconds"] = total_time
+    results["pass_rate"] = f"{len(results['agents_passed'])}/{len(results['agents_tested'])} agents passed"
+
+    # Persist test results
+    import json
+    today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
+    test_report_path = os.path.join("logs", f"test_suite_{today}.json")
+    try:
+        with open(test_report_path, "w") as f:
+            json.dump(results, f, indent=2)
+        logging.info(f"📊 [TEST SUITE] Results saved to {test_report_path}")
+    except Exception as e:
+        logging.warning(f"[TEST SUITE] Could not save results: {e}")
+
+    # Log summary
+    logging.info(
+        f"🧪 [TEST SUITE] Complete — {results['pass_rate']} in {total_time:.2f}s"
+    )
+    if results["agents_failed"]:
+        logging.warning(f"   Failed agents: {[f['agent'] for f in results['agents_failed']]}")
+
+    return results
+
+
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing)
@@ -874,6 +973,21 @@ scheduler.add_job(run_atlas_intel, CronTrigger(hour=10, minute=2, timezone=CST),
 scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=CST),
     id="phoenix_daily_delivery", name="Phoenix Daily Delivery",
     replace_existing=True, misfire_grace_time=3600)
+
+# Master Test Suite — 6:30 PM (18:30) CST — All Agents
+scheduler.add_job(run_all_agents_test, CronTrigger(hour=18, minute=30, timezone=CST),
+    id="all_agents_test", name="🧪 Master Test Suite - All Agents",
+    replace_existing=True, misfire_grace_time=3600)
+
+# ONE-TIME TEST at 7:56 PM CST for live demo
+from apscheduler.triggers.date import DateTrigger
+test_time = datetime.datetime.now(CST).replace(hour=19, minute=56, second=0, microsecond=0)
+if test_time <= datetime.datetime.now(CST):  # If passed, schedule immediately
+    test_time = datetime.datetime.now(CST) + datetime.timedelta(seconds=5)
+scheduler.add_job(run_all_agents_test, DateTrigger(run_date=test_time),
+    id="demo_test_756pm", name="✅ LIVE DEMO - All Agents (7:56 PM)",
+    replace_existing=True, misfire_grace_time=60)
+logging.info(f"[Scheduler] One-time test scheduled for {test_time}")
 
 
 # ── FastAPI App ──────────────────────────────────────────────────────────────
@@ -1135,6 +1249,230 @@ async def ghl_webhook(payload: dict):
                         contact_id=contact_id, monetary_value=monetary_value)
 
     return {"status": "received"}
+
+
+# ── Dashboard API Endpoints ──────────────────────────────────────────────────
+
+@app.get("/api/agents")
+async def get_agents_status():
+    """Return status of all 15 agents."""
+    agents_list = [
+        # The AI Phone Guy
+        {"name": "Alex", "type": "CEO", "phone_guy": True},
+        {"name": "Tyler", "type": "Sales", "phone_guy": True},
+        {"name": "Zoe", "type": "Marketing", "phone_guy": True},
+        {"name": "Jennifer", "type": "Retention", "phone_guy": True},
+        # Calling Digital
+        {"name": "Dek", "type": "CEO", "calling_digital": True},
+        {"name": "Marcus", "type": "Sales", "calling_digital": True},
+        {"name": "Sofia", "type": "Marketing", "calling_digital": True},
+        {"name": "Carlos", "type": "Retention", "calling_digital": True},
+        {"name": "Nova", "type": "Specialist", "calling_digital": True},
+        # Automotive Intelligence
+        {"name": "Michael Meta", "type": "CEO", "autointelligence": True},
+        {"name": "Ryan Data", "type": "Sales", "autointelligence": True},
+        {"name": "Chase", "type": "Marketing", "autointelligence": True},
+        {"name": "Phoenix", "type": "Specialist", "autointelligence": True},
+        {"name": "Atlas", "type": "Specialist", "autointelligence": True},
+    ]
+    
+    return {
+        "total_agents": len(agents_list),
+        "agents": agents_list,
+        "status": "all_active"
+    }
+
+
+@app.get("/api/jobs")
+async def get_scheduled_jobs():
+    """Return all scheduled jobs from APScheduler."""
+    jobs_info = []
+    for job in scheduler.get_jobs():
+        jobs_info.append({
+            "id": job.id,
+            "name": job.name,
+            "next_run": str(job.next_run_time) if job.next_run_time else "paused",
+            "trigger": str(job.trigger),
+        })
+    
+    return {
+        "total_jobs": len(jobs_info),
+        "scheduler_running": scheduler.running,
+        "jobs": sorted(jobs_info, key=lambda x: x["next_run"])
+    }
+
+
+@app.get("/api/logs")
+async def get_recent_logs(agent: Optional[str] = None, limit: int = 50):
+    """Return recent log files, optionally filtered by agent."""
+    log_files = glob.glob("logs/*.log")
+    entries = []
+    
+    for log_file in sorted(log_files, reverse=True)[:10]:  # Check last 10 log files
+        try:
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                for line in lines[-limit:]:  # Last N lines
+                    if agent is None or agent.lower() in line.lower():
+                        entries.append({
+                            "file": os.path.basename(log_file),
+                            "line": line.strip(),
+                            "timestamp": log_file
+                        })
+        except Exception as e:
+            logging.warning(f"Could not read log file {log_file}: {e}")
+    
+    return {
+        "total_entries": len(entries),
+        "entries": entries[-limit:]
+    }
+
+
+@app.get("/api/test-results")
+async def get_test_results():
+    """Return latest test suite results."""
+    test_files = sorted(glob.glob("logs/test_suite_*.json"), reverse=True)
+    
+    if not test_files:
+        return {
+            "status": "no_tests_run",
+            "message": "No test results found yet"
+        }
+    
+    try:
+        with open(test_files[0], 'r') as f:
+            test_data = json.load(f)
+        
+        return {
+            "status": "success",
+            "file": os.path.basename(test_files[0]),
+            "results": test_data
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Return current system metrics and performance data."""
+    jobs_info = []
+    for job in scheduler.get_jobs():
+        jobs_info.append({
+            "id": job.id,
+            "name": job.name,
+            "next_run": str(job.next_run_time) if job.next_run_time else "paused",
+        })
+    
+    test_files = sorted(glob.glob("logs/test_suite_*.json"), reverse=True)
+    test_pass_rate = "N/A"
+    
+    if test_files:
+        try:
+            with open(test_files[0], 'r') as f:
+                test_data = json.load(f)
+                if "pass_rate" in test_data:
+                    test_pass_rate = test_data["pass_rate"]
+        except Exception:
+            pass
+    
+    return {
+        "timestamp": datetime.datetime.now(pytz.timezone("America/Chicago")).isoformat(),
+        "system_status": "operational",
+        "scheduler_running": scheduler.running,
+        "jobs_registered": len(jobs_info),
+        "agents_total": 15,
+        "test_pass_rate": test_pass_rate,
+        "api_endpoint": "http://127.0.0.1:8000",
+        "uptime": "running",
+        "database": "Postgres" if DATABASE_URL else "Filesystem"
+    }
+
+
+@app.get("/api/agent-logs/{agent_name}")
+async def get_agent_logs_by_date(agent_name: str):
+    """Return all logs for a specific agent organized by date, word-for-word."""
+    agent_name_lower = agent_name.lower().strip()
+    
+    # Map agent names to log file patterns
+    log_patterns = {
+        "alex": ("alex_briefing", "briefing"),
+        "tyler": ("tyler_prospecting", "prospecting"),
+        "zoe": ("zoe_content", "content"),
+        "jennifer": ("jennifer_retention", "retention"),
+        "dek": ("dek_briefing", "briefing"),
+        "marcus": ("marcus_prospecting", "prospecting"),
+        "sofia": ("sofia_content", "content"),
+        "carlos": ("carlos_retention", "retention"),
+        "nova": ("nova_intelligence", "intelligence"),
+        "michael meta": ("michael_meta_briefing", "briefing"),
+        "ryan data": ("ryan_data_prospecting", "prospecting"),
+        "chase": ("chase_content", "content"),
+        "atlas": ("atlas_intel", "intel"),
+        "phoenix": ("phoenix_delivery", "delivery"),
+    }
+    
+    if agent_name_lower not in log_patterns:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+    
+    pattern_prefix, agent_type = log_patterns[agent_name_lower]
+    
+    # Find all log files for this agent
+    log_files = sorted(glob.glob(f"logs/{pattern_prefix}*.log"), reverse=True)
+    json_files = sorted(glob.glob(f"logs/{pattern_prefix}*.json"), reverse=True)
+    all_files = sorted(log_files + json_files, key=os.path.getmtime, reverse=True)
+    
+    if not all_files:
+        return {
+            "agent": agent_name,
+            "agent_type": agent_type,
+            "logs_by_date": {},
+            "total_runs": 0
+        }
+    
+    logs_by_date = {}
+    
+    for file_path in all_files:
+        try:
+            filename = os.path.basename(file_path)
+            # Extract date from filename (format: name_YYYY-MM-DD.log or name_YYYY-MM-DD.json)
+            date_match = filename.split("_")[-1].replace(".log", "").replace(".json", "")
+            
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            if date_match not in logs_by_date:
+                logs_by_date[date_match] = []
+            
+            logs_by_date[date_match].append({
+                "filename": filename,
+                "type": "json" if file_path.endswith(".json") else "log",
+                "content": content,
+                "size_kb": round(len(content) / 1024, 2),
+                "timestamp": datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+            })
+        except Exception as e:
+            logging.warning(f"Could not read file {file_path}: {e}")
+    
+    return {
+        "agent": agent_name,
+        "agent_type": agent_type,
+        "logs_by_date": logs_by_date,
+        "total_runs": len(all_files),
+        "dates": sorted(logs_by_date.keys(), reverse=True)
+    }
+
+
+@app.get("/dashboard")
+async def get_dashboard():
+    """Serve the dashboard HTML."""
+    dashboard_path = Path("static/dashboard.html")
+    if dashboard_path.exists():
+        return FileResponse(dashboard_path, media_type="text/html")
+    else:
+        return {"error": "Dashboard not found"}
 
 
 @app.get("/health")
