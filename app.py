@@ -294,13 +294,26 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
     """
     if not _ghl_ready():
         logging.info(f"[Pipeline] Skipping GHL push for {agent_name} — credentials not set.")
-        return
+        return {
+            "status": "skipped",
+            "reason": "ghl_not_configured",
+            "parsed_prospects": 0,
+            "ghl_created": 0,
+            "emails_sent": 0,
+            "failed": 0,
+        }
 
     try:
         prospects = parse_prospects(raw_output, agent_name=agent_name)
         if not prospects:
             logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
-            return
+            return {
+                "status": "ok",
+                "parsed_prospects": 0,
+                "ghl_created": 0,
+                "emails_sent": 0,
+                "failed": 0,
+            }
 
         ghl_results = push_prospects_to_ghl(
             prospects,
@@ -310,6 +323,8 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
 
         created = 0
         emails_sent = 0
+        failed = 0
+        failure_samples = []
         for r in ghl_results:
             if r.get("status") == "created":
                 created += 1
@@ -326,14 +341,39 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     contact_id=r.get("contact_id", ""),
                     metadata={"business_name": r.get("business_name")},
                 )
+            if r.get("status") == "failed":
+                failed += 1
+                if len(failure_samples) < 3:
+                    failure_samples.append(
+                        {
+                            "business_name": r.get("business_name", ""),
+                            "error": r.get("error", ""),
+                        }
+                    )
 
         logging.info(
             f"[Pipeline] {agent_name}: {created}/{len(prospects)} contacts created, "
             f"{emails_sent} emails sent to GHL."
         )
+        return {
+            "status": "ok",
+            "parsed_prospects": len(prospects),
+            "ghl_created": created,
+            "emails_sent": emails_sent,
+            "failed": failed,
+            "failure_samples": failure_samples,
+        }
 
     except Exception as e:
         logging.error(f"[Pipeline] {agent_name} pipeline failed: {e}")
+        return {
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}",
+            "parsed_prospects": 0,
+            "ghl_created": 0,
+            "emails_sent": 0,
+            "failed": 0,
+        }
 
 
 def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: str):
@@ -347,7 +387,11 @@ def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: st
         pieces = parse_content_pieces(raw_output, agent_name=agent_name)
         if not pieces:
             logging.info(f"[Content] No publishable pieces parsed from {agent_name}.")
-            return
+            return {
+                "status": "ok",
+                "parsed_pieces": 0,
+                "queued": 0,
+            }
 
         queued = queue_content(business_key, agent_name, pieces)
         if queued:
@@ -356,9 +400,20 @@ def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: st
                 metadata={"pieces_queued": queued, "platforms": [p.get("platform") for p in pieces]},
             )
         logging.info(f"[Content] {agent_name}: {queued} pieces queued for publishing.")
+        return {
+            "status": "ok",
+            "parsed_pieces": len(pieces),
+            "queued": queued,
+        }
 
     except Exception as e:
         logging.error(f"[Content] {agent_name} content pipeline failed: {e}")
+        return {
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}",
+            "parsed_pieces": 0,
+            "queued": 0,
+        }
 
 
 def _execute_retention_pipeline(agent_name: str, raw_output: str, business_key: str):
@@ -564,10 +619,12 @@ def run_tyler_prospecting():
         logging.info("[Scheduler] Tyler prospecting complete.")
 
         # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        _execute_sales_pipeline("tyler", raw_output, "aiphoneguy")
+        pipeline_result = _execute_sales_pipeline("tyler", raw_output, "aiphoneguy")
+        return {"agent": "tyler", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
+        return {"agent": "tyler", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 def run_marcus_prospecting():
@@ -599,10 +656,12 @@ def run_marcus_prospecting():
         logging.info("[Scheduler] Marcus prospecting complete.")
 
         # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        _execute_sales_pipeline("marcus", raw_output, "callingdigital")
+        pipeline_result = _execute_sales_pipeline("marcus", raw_output, "callingdigital")
+        return {"agent": "marcus", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
+        return {"agent": "marcus", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 def run_ryan_data_prospecting():
@@ -634,10 +693,12 @@ def run_ryan_data_prospecting():
         logging.info("[Scheduler] Ryan Data prospecting complete.")
 
         # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
+        pipeline_result = _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
+        return {"agent": "ryan_data", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
+        return {"agent": "ryan_data", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 # ── Marketing Content ── 9:00, 9:02, 9:04 CST ──────────────────────────────
@@ -671,10 +732,12 @@ def run_zoe_content():
         logging.info("[Scheduler] Zoe content complete.")
 
         # ── CONTENT PIPELINE: Parse → Queue → Track ──
-        _execute_content_pipeline("zoe", raw_output, "aiphoneguy")
+        pipeline_result = _execute_content_pipeline("zoe", raw_output, "aiphoneguy")
+        return {"agent": "zoe", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Zoe content failed: {type(e).__name__}: {e}")
+        return {"agent": "zoe", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 def run_sofia_content():
@@ -705,10 +768,12 @@ def run_sofia_content():
         logging.info("[Scheduler] Sofia content complete.")
 
         # ── CONTENT PIPELINE: Parse → Queue → Track ──
-        _execute_content_pipeline("sofia", raw_output, "callingdigital")
+        pipeline_result = _execute_content_pipeline("sofia", raw_output, "callingdigital")
+        return {"agent": "sofia", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Sofia content failed: {type(e).__name__}: {e}")
+        return {"agent": "sofia", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 def run_chase_content():
@@ -739,10 +804,12 @@ def run_chase_content():
         logging.info("[Scheduler] Chase content complete.")
 
         # ── CONTENT PIPELINE: Parse → Queue → Track ──
-        _execute_content_pipeline("chase", raw_output, "autointelligence")
+        pipeline_result = _execute_content_pipeline("chase", raw_output, "autointelligence")
+        return {"agent": "chase", "pipeline": pipeline_result}
 
     except Exception as e:
         logging.error(f"[Scheduler] Chase content failed: {type(e).__name__}: {e}")
+        return {"agent": "chase", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 # ── Client Success ── 9:30, 9:32 CST ────────────────────────────────────────
@@ -1371,7 +1438,11 @@ async def pipeline_overview():
 
 
 @app.post("/admin/run-now")
-async def run_now(scope: str = "sales", authorization: Optional[str] = Header(None)):
+async def run_now(
+    scope: str = "sales",
+    debug: bool = False,
+    authorization: Optional[str] = Header(None),
+):
     """Trigger scheduled jobs immediately (authenticated)."""
     validate_key(authorization)
 
@@ -1388,8 +1459,11 @@ async def run_now(scope: str = "sales", authorization: Optional[str] = Header(No
 
     for job_name, fn in jobs:
         try:
-            fn()
-            results.append({"job": job_name, "status": "ok"})
+            fn_result = fn()
+            row = {"job": job_name, "status": "ok"}
+            if debug and isinstance(fn_result, dict):
+                row["debug"] = fn_result
+            results.append(row)
         except Exception as e:
             logging.error(f"[RunNow] {job_name} failed: {type(e).__name__}: {e}")
             results.append({"job": job_name, "status": "error", "error": f"{type(e).__name__}: {e}"})
