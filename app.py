@@ -1157,6 +1157,15 @@ def get_agent_business(agent_id: str) -> str:
     return "Unknown Business"
 
 
+def normalize_agent_id(agent_name: str) -> str:
+    """Accept display names (e.g., 'Michael Meta') and normalize to agent ids."""
+    normalized = agent_name.lower().strip()
+    if normalized in AGENTS:
+        return normalized
+    normalized = normalized.replace(" ", "_")
+    return normalized
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -1167,7 +1176,7 @@ async def root():
 @app.post("/chat")
 async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)):
     validate_key(authorization)
-    agent_id = request.agent_id.lower().strip()
+    agent_id = normalize_agent_id(request.agent_id)
     if agent_id not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
     agent = AGENTS[agent_id]
@@ -1186,6 +1195,8 @@ async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)
             verbose=False,
         )
         result = crew.kickoff()
+        # Persist interactive output so it is part of historical logs.
+        persist_log(agent_id, "chat", str(result))
         return {
             "agent": agent_id,
             "business": business_name,
@@ -1198,7 +1209,7 @@ async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)
 @app.get("/logs/{agent_name}")
 async def get_agent_log(agent_name: str):
     """Return the most recent scheduled run for the given agent (Postgres primary, filesystem fallback)."""
-    agent_name = agent_name.lower().strip()
+    agent_name = normalize_agent_id(agent_name)
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
@@ -1242,7 +1253,7 @@ async def get_agent_log(agent_name: str):
 @app.get("/logs/{agent_name}/history")
 async def get_agent_log_history(agent_name: str, limit: int = 30):
     """Return metadata for the last N runs for the given agent (Postgres only)."""
-    agent_name = agent_name.lower().strip()
+    agent_name = normalize_agent_id(agent_name)
     if agent_name not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
     if not DATABASE_URL:
@@ -1397,28 +1408,63 @@ async def get_scheduled_jobs():
 
 @app.get("/api/logs")
 async def get_recent_logs(agent: Optional[str] = None, limit: int = 50):
-    """Return recent log files, optionally filtered by agent."""
+    """Return recent log entries, backed by Postgres history (Railway-safe)."""
+    if DATABASE_URL:
+        try:
+            with _db() as conn:
+                with conn.cursor() as cur:
+                    if agent:
+                        agent_id = normalize_agent_id(agent)
+                        cur.execute(
+                            "SELECT agent_name, log_type, run_date, created_at, content "
+                            "FROM agent_logs WHERE agent_name = %s "
+                            "ORDER BY created_at DESC LIMIT %s",
+                            (agent_id, limit),
+                        )
+                    else:
+                        cur.execute(
+                            "SELECT agent_name, log_type, run_date, created_at, content "
+                            "FROM agent_logs ORDER BY created_at DESC LIMIT %s",
+                            (limit,),
+                        )
+                    rows = cur.fetchall()
+
+            entries = []
+            for r in rows:
+                agent_name, log_type, run_date, created_at, content = r
+                preview_line = (content or "").strip().splitlines()[0] if content else ""
+                entries.append({
+                    "file": f"{agent_name}_{log_type}_{run_date}.log",
+                    "line": preview_line[:220],
+                    "timestamp": str(created_at),
+                })
+
+            return {
+                "total_entries": len(entries),
+                "entries": entries,
+            }
+        except Exception as e:
+            logging.error(f"[DB] /api/logs failed, falling back to files: {e}")
+
+    # Filesystem fallback for local/dev only.
     log_files = glob.glob("logs/*.log")
     entries = []
-    
-    for log_file in sorted(log_files, reverse=True)[:10]:  # Check last 10 log files
+    for log_file in sorted(log_files, reverse=True)[:10]:
         try:
-            with open(log_file, 'r') as f:
+            with open(log_file, "r") as f:
                 lines = f.readlines()
-                for line in lines[-limit:]:  # Last N lines
-                    if agent is None or agent.lower() in line.lower():
-                        entries.append({
+            for line in lines[-limit:]:
+                if agent is None or agent.lower() in line.lower():
+                    entries.append(
+                        {
                             "file": os.path.basename(log_file),
                             "line": line.strip(),
-                            "timestamp": log_file
-                        })
+                            "timestamp": log_file,
+                        }
+                    )
         except Exception as e:
             logging.warning(f"Could not read log file {log_file}: {e}")
-    
-    return {
-        "total_entries": len(entries),
-        "entries": entries[-limit:]
-    }
+    return {"total_entries": len(entries), "entries": entries[-limit:]}
 
 
 @app.get("/api/test-results")
@@ -1487,74 +1533,86 @@ async def get_metrics():
 @app.get("/api/agent-logs/{agent_name}")
 async def get_agent_logs_by_date(agent_name: str):
     """Return all logs for a specific agent organized by date, word-for-word."""
-    agent_name_lower = agent_name.lower().strip()
-    
-    # Map agent names to log file patterns
-    log_patterns = {
-        "alex": ("alex_briefing", "briefing"),
-        "tyler": ("tyler_prospecting", "prospecting"),
-        "zoe": ("zoe_content", "content"),
-        "jennifer": ("jennifer_retention", "retention"),
-        "dek": ("dek_briefing", "briefing"),
-        "marcus": ("marcus_prospecting", "prospecting"),
-        "sofia": ("sofia_content", "content"),
-        "carlos": ("carlos_retention", "retention"),
-        "nova": ("nova_intelligence", "intelligence"),
-        "michael meta": ("michael_meta_briefing", "briefing"),
-        "ryan data": ("ryan_data_prospecting", "prospecting"),
-        "chase": ("chase_content", "content"),
-        "atlas": ("atlas_intel", "intel"),
-        "phoenix": ("phoenix_delivery", "delivery"),
-    }
-    
-    if agent_name_lower not in log_patterns:
+    agent_id = normalize_agent_id(agent_name)
+    if agent_id not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
-    
-    pattern_prefix, agent_type = log_patterns[agent_name_lower]
-    
-    # Find all log files for this agent
-    log_files = sorted(glob.glob(f"logs/{pattern_prefix}*.log"), reverse=True)
-    json_files = sorted(glob.glob(f"logs/{pattern_prefix}*.json"), reverse=True)
-    all_files = sorted(log_files + json_files, key=os.path.getmtime, reverse=True)
-    
-    if not all_files:
+
+    agent_type = AGENT_TYPES.get(agent_id, "unknown")
+
+    if DATABASE_URL:
+        try:
+            with _db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT run_date, log_type, content, created_at "
+                        "FROM agent_logs WHERE agent_name = %s "
+                        "ORDER BY created_at DESC",
+                        (agent_id,),
+                    )
+                    rows = cur.fetchall()
+
+            logs_by_date = {}
+            for run_date, log_type, content, created_at in rows:
+                date_key = str(run_date)
+                if date_key not in logs_by_date:
+                    logs_by_date[date_key] = []
+                logs_by_date[date_key].append(
+                    {
+                        "filename": f"{agent_id}_{log_type}_{run_date}.log",
+                        "type": "log",
+                        "content": content,
+                        "size_kb": round(len(content or "") / 1024, 2),
+                        "timestamp": str(created_at),
+                    }
+                )
+
+            return {
+                "agent": agent_name,
+                "agent_type": agent_type,
+                "logs_by_date": logs_by_date,
+                "total_runs": len(rows),
+                "dates": sorted(logs_by_date.keys(), reverse=True),
+            }
+        except Exception as e:
+            logging.error(f"[DB] /api/agent-logs failed, falling back to files: {e}")
+
+    # Filesystem fallback for local/dev only.
+    pattern = os.path.join("logs", f"{agent_id}_*.log")
+    file_logs = sorted(glob.glob(pattern), reverse=True)
+    if not file_logs:
         return {
             "agent": agent_name,
             "agent_type": agent_type,
             "logs_by_date": {},
-            "total_runs": 0
+            "total_runs": 0,
+            "dates": [],
         }
-    
+
     logs_by_date = {}
-    
-    for file_path in all_files:
+    for file_path in file_logs:
         try:
             filename = os.path.basename(file_path)
-            # Extract date from filename (format: name_YYYY-MM-DD.log or name_YYYY-MM-DD.json)
-            date_match = filename.split("_")[-1].replace(".log", "").replace(".json", "")
-            
-            with open(file_path, 'r') as f:
+            date_key = filename.split("_")[-1].replace(".log", "")
+            with open(file_path, "r") as f:
                 content = f.read()
-            
-            if date_match not in logs_by_date:
-                logs_by_date[date_match] = []
-            
-            logs_by_date[date_match].append({
-                "filename": filename,
-                "type": "json" if file_path.endswith(".json") else "log",
-                "content": content,
-                "size_kb": round(len(content) / 1024, 2),
-                "timestamp": datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
-            })
+            logs_by_date.setdefault(date_key, []).append(
+                {
+                    "filename": filename,
+                    "type": "log",
+                    "content": content,
+                    "size_kb": round(len(content) / 1024, 2),
+                    "timestamp": datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                }
+            )
         except Exception as e:
             logging.warning(f"Could not read file {file_path}: {e}")
-    
+
     return {
         "agent": agent_name,
         "agent_type": agent_type,
         "logs_by_date": logs_by_date,
-        "total_runs": len(all_files),
-        "dates": sorted(logs_by_date.keys(), reverse=True)
+        "total_runs": len(file_logs),
+        "dates": sorted(logs_by_date.keys(), reverse=True),
     }
 
 
