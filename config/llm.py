@@ -15,9 +15,11 @@ def get_llm():
         groq_api_key = "placeholder-key-set-in-railway-variables"
     
     # Use litellm provider format: "groq/model-name".
-    # mixtral-8x7b-32768 was decommissioned by Groq.
+    # Default to a lower-cost model to avoid daily token cap stalls.
+    model_name = os.getenv("GROQ_MODEL", "groq/llama-3.1-8b-instant")
     return LLM(
-        model="groq/llama-3.3-70b-versatile",
+        model=model_name,
         provider="litellm",
         api_key=groq_api_key,
+        max_tokens=1200,
     )
