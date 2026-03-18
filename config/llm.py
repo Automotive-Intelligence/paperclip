@@ -14,9 +14,10 @@ def get_llm():
         print("⚠️  WARNING: GROQ_API_KEY not set in environment", file=sys.stderr)
         groq_api_key = "placeholder-key-set-in-railway-variables"
     
-    # Use litellm provider format: "groq/model-name"
+    # Use litellm provider format: "groq/model-name".
+    # mixtral-8x7b-32768 was decommissioned by Groq.
     return LLM(
-        model="groq/mixtral-8x7b-32768",
+        model="groq/llama-3.3-70b-versatile",
         provider="litellm",
         api_key=groq_api_key,
     )
