@@ -3,6 +3,7 @@ import glob
 import logging
 import datetime
 import json
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
@@ -153,6 +154,31 @@ def persist_log(agent_name: str, log_type: str, content: str):
         logging.info(f"[DB] ✓ Persisted {agent_name}/{log_type} to Postgres ({len(content)} chars)")
     except Exception as e:
         logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {type(e).__name__}: {e}")
+
+
+def _enforce_briefing_verification(agent_name: str, output_text: str) -> str:
+    """Reject unverifiable briefings to prevent fabricated headlines.
+
+    A valid briefing must include source URLs or explicitly report insufficient evidence.
+    """
+    urls = re.findall(r"https?://[^\s)\]>]+", output_text or "")
+    has_insufficient_notice = "insufficient evidence" in (output_text or "").lower()
+
+    if len(urls) >= 3 or has_insufficient_notice:
+        return output_text
+
+    logging.error(
+        f"[Guardrail] {agent_name} briefing rejected: missing verifiable sources "
+        f"(urls_found={len(urls)})."
+    )
+    return (
+        "VERIFICATION FAILURE: Briefing blocked because it did not include verifiable sources.\n\n"
+        "Reason: Fewer than 3 source URLs were provided and no insufficient-evidence notice was included.\n\n"
+        "Required format for future runs:\n"
+        "1) Each reported headline must include a Source URL\n"
+        "2) If reliable sources are unavailable, return 'INSUFFICIENT EVIDENCE' instead of guessing\n"
+        "3) Do not fabricate competitor activity, pricing, or statistics\n"
+    )
 
 
 # ── Agent Registry ───────────────────────────────────────────────────────────
@@ -364,18 +390,24 @@ def run_alex_daily_briefing():
                 "and DFW local service business trends. Search for competitor activity — any new launches, "
                 "pricing changes, or marketing pushes from competing AI answering services. "
                 "Identify the top 3 strategic opportunities or threats for The AI Phone Guy right now. "
-                "End with one specific action item for the team today."
+                "End with one specific action item for the team today. "
+                "You must use web search before writing the briefing. "
+                "For every headline and competitor claim, include a Source URL and publication/date context. "
+                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
             ),
             expected_output=(
                 "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
                 "(2) Competitor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
+                "(4) One action item for today. "
+                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
+                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
             ),
             agent=alex,
         )
         crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("alex", "briefing", str(result))
+        guarded_output = _enforce_briefing_verification("alex", str(result))
+        persist_log("alex", "briefing", guarded_output)
         logging.info("[Scheduler] Alex briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Alex briefing failed: {type(e).__name__}: {e}")
@@ -389,18 +421,24 @@ def run_dek_daily_briefing():
                 "consulting, and small business tech adoption in Dallas. Search for competitor activity — "
                 "other Dallas agencies pivoting to AI, new AI consulting offers, pricing changes. "
                 "Identify the top 3 strategic opportunities or threats for Calling Digital right now. "
-                "End with one specific action item for the team today."
+                "End with one specific action item for the team today. "
+                "You must use web search before writing the briefing. "
+                "For every headline and competitor claim, include a Source URL and publication/date context. "
+                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
             ),
             expected_output=(
                 "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
                 "(2) Competitor agency activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
+                "(4) One action item for today. "
+                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
+                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
             ),
             agent=dek,
         )
         crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("dek", "briefing", str(result))
+        guarded_output = _enforce_briefing_verification("dek", str(result))
+        persist_log("dek", "briefing", guarded_output)
         logging.info("[Scheduler] Dek briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Dek briefing failed: {type(e).__name__}: {e}")
@@ -414,18 +452,24 @@ def run_michael_meta_daily_briefing():
                 "and DFW auto market activity. Search for competitor activity — other AI consultants "
                 "or vendors targeting car dealerships. "
                 "Identify the top 3 strategic opportunities or threats for Automotive Intelligence right now. "
-                "End with one specific action item for the team today."
+                "End with one specific action item for the team today. "
+                "You must use web search before writing the briefing. "
+                "For every headline and competitor claim, include a Source URL and publication/date context. "
+                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
             ),
             expected_output=(
                 "CEO daily briefing: (1) Top 3 auto industry AI headlines with implications, "
                 "(2) Competitor vendor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today."
+                "(4) One action item for today. "
+                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
+                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
             ),
             agent=michael_meta,
         )
         crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        persist_log("michael_meta", "briefing", str(result))
+        guarded_output = _enforce_briefing_verification("michael_meta", str(result))
+        persist_log("michael_meta", "briefing", guarded_output)
         logging.info("[Scheduler] Michael Meta briefing complete.")
     except Exception as e:
         logging.error(f"[Scheduler] Michael Meta briefing failed: {type(e).__name__}: {e}")
