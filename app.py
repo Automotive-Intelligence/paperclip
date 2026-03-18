@@ -3,7 +3,6 @@ import glob
 import logging
 import datetime
 import json
-import re
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
@@ -156,28 +155,56 @@ def persist_log(agent_name: str, log_type: str, content: str):
         logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {type(e).__name__}: {e}")
 
 
-def _enforce_briefing_verification(agent_name: str, output_text: str) -> str:
-    """Reject unverifiable briefings to prevent fabricated headlines.
+def _build_ceo_kpi_context(business_key: str) -> str:
+    """Build a deterministic KPI snapshot for CEO operating briefs."""
+    try:
+        summary_30 = get_revenue_summary(business_key=business_key, days=30)
+        daily_7 = get_daily_metrics(business_key=business_key, days=7)
+        context = {
+            "business_key": business_key,
+            "summary_30d": summary_30,
+            "daily_metrics_7d": daily_7,
+        }
+        return json.dumps(context, indent=2)
+    except Exception as e:
+        logging.error(f"[Guardrail] KPI context build failed for {business_key}: {e}")
+        return json.dumps({"business_key": business_key, "error": str(e)}, indent=2)
 
-    A valid briefing must include source URLs or explicitly report insufficient evidence.
+
+def _enforce_ceo_operating_brief(agent_name: str, output_text: str) -> str:
+    """Reject briefs that are not CEO operating scorecards.
+
+    We require business-operating sections to prevent generic industry-news briefs.
     """
-    urls = re.findall(r"https?://[^\s)\]>]+", output_text or "")
-    has_insufficient_notice = "insufficient evidence" in (output_text or "").lower()
+    lower = (output_text or "").lower()
+    required_signals = [
+        "revenue",
+        "pipeline",
+        "customer",
+        "team",
+        "brand",
+        "priority",
+        "today",
+    ]
+    missing = [token for token in required_signals if token not in lower]
 
-    if len(urls) >= 3 or has_insufficient_notice:
+    if not missing:
         return output_text
 
     logging.error(
-        f"[Guardrail] {agent_name} briefing rejected: missing verifiable sources "
-        f"(urls_found={len(urls)})."
+        f"[Guardrail] {agent_name} briefing rejected: missing operating sections {missing}."
     )
     return (
-        "VERIFICATION FAILURE: Briefing blocked because it did not include verifiable sources.\n\n"
-        "Reason: Fewer than 3 source URLs were provided and no insufficient-evidence notice was included.\n\n"
-        "Required format for future runs:\n"
-        "1) Each reported headline must include a Source URL\n"
-        "2) If reliable sources are unavailable, return 'INSUFFICIENT EVIDENCE' instead of guessing\n"
-        "3) Do not fabricate competitor activity, pricing, or statistics\n"
+        "OPERATING BRIEF FAILURE: Briefing blocked because it was not CEO-operations focused.\n\n"
+        f"Missing sections: {', '.join(missing)}\n\n"
+        "Required sections for future runs:\n"
+        "1) Revenue and cash-impact actions\n"
+        "2) Pipeline build + conversion blockers\n"
+        "3) Customer satisfaction + retention actions\n"
+        "4) Team execution + accountability\n"
+        "5) Brand awareness/consideration/conversion actions\n"
+        "6) Top 3 priorities for today with owners and deadlines\n"
+        "Do not default to generic industry headlines.\n"
     )
 
 
@@ -384,29 +411,33 @@ scheduler = BackgroundScheduler()
 
 def run_alex_daily_briefing():
     try:
+        kpi_context = _build_ceo_kpi_context("aiphoneguy")
         task = Task(
             description=(
-                "Search for today's top news on AI receptionist technology, voice AI for small business, "
-                "and DFW local service business trends. Search for competitor activity — any new launches, "
-                "pricing changes, or marketing pushes from competing AI answering services. "
-                "Identify the top 3 strategic opportunities or threats for The AI Phone Guy right now. "
-                "End with one specific action item for the team today. "
-                "You must use web search before writing the briefing. "
-                "For every headline and competitor claim, include a Source URL and publication/date context. "
-                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
+                "Create a CEO OPERATING BRIEF for today for The AI Phone Guy. "
+                "Focus on execution, revenue, team accountability, customer outcomes, and pipeline growth. "
+                "Do NOT produce an industry-news briefing unless it directly affects today's execution plan. "
+                "Use the internal KPI snapshot below as the source of truth for metrics and trends. "
+                "If a metric is missing, say 'DATA NOT AVAILABLE' instead of guessing.\n\n"
+                f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
+                "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
+                "team execution status, brand funnel actions (awareness/consideration/conversion), "
+                "and top 3 priorities for today with owner + deadline + expected outcome."
             ),
             expected_output=(
-                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
-                "(2) Competitor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today. "
-                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
-                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
+                "CEO Operating Brief: "
+                "(1) Revenue Scorecard (current numbers + target gap), "
+                "(2) Pipeline Scorecard (new prospects, outreach volume, conversion blockers), "
+                "(3) Customer Health (retention/churn risk/actions), "
+                "(4) Team Execution (who owns what today), "
+                "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
             ),
             agent=alex,
         )
         crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        guarded_output = _enforce_briefing_verification("alex", str(result))
+        guarded_output = _enforce_ceo_operating_brief("alex", str(result))
         persist_log("alex", "briefing", guarded_output)
         logging.info("[Scheduler] Alex briefing complete.")
     except Exception as e:
@@ -415,29 +446,33 @@ def run_alex_daily_briefing():
 
 def run_dek_daily_briefing():
     try:
+        kpi_context = _build_ceo_kpi_context("callingdigital")
         task = Task(
             description=(
-                "Search for today's top news on digital marketing agency trends, AI implementation "
-                "consulting, and small business tech adoption in Dallas. Search for competitor activity — "
-                "other Dallas agencies pivoting to AI, new AI consulting offers, pricing changes. "
-                "Identify the top 3 strategic opportunities or threats for Calling Digital right now. "
-                "End with one specific action item for the team today. "
-                "You must use web search before writing the briefing. "
-                "For every headline and competitor claim, include a Source URL and publication/date context. "
-                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
+                "Create a CEO OPERATING BRIEF for today for Calling Digital. "
+                "Focus on execution, revenue, team accountability, customer outcomes, and pipeline growth. "
+                "Do NOT produce an industry-news briefing unless it directly affects today's execution plan. "
+                "Use the internal KPI snapshot below as the source of truth for metrics and trends. "
+                "If a metric is missing, say 'DATA NOT AVAILABLE' instead of guessing.\n\n"
+                f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
+                "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
+                "team execution status, brand funnel actions (awareness/consideration/conversion), "
+                "and top 3 priorities for today with owner + deadline + expected outcome."
             ),
             expected_output=(
-                "CEO daily briefing: (1) Top 3 industry headlines with strategic implications, "
-                "(2) Competitor agency activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today. "
-                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
-                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
+                "CEO Operating Brief: "
+                "(1) Revenue Scorecard (current numbers + target gap), "
+                "(2) Pipeline Scorecard (new prospects, outreach volume, conversion blockers), "
+                "(3) Customer Health (retention/churn risk/actions), "
+                "(4) Team Execution (who owns what today), "
+                "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
             ),
             agent=dek,
         )
         crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        guarded_output = _enforce_briefing_verification("dek", str(result))
+        guarded_output = _enforce_ceo_operating_brief("dek", str(result))
         persist_log("dek", "briefing", guarded_output)
         logging.info("[Scheduler] Dek briefing complete.")
     except Exception as e:
@@ -446,29 +481,33 @@ def run_dek_daily_briefing():
 
 def run_michael_meta_daily_briefing():
     try:
+        kpi_context = _build_ceo_kpi_context("autointelligence")
         task = Task(
             description=(
-                "Search for today's top news on AI in automotive retail, dealership technology trends, "
-                "and DFW auto market activity. Search for competitor activity — other AI consultants "
-                "or vendors targeting car dealerships. "
-                "Identify the top 3 strategic opportunities or threats for Automotive Intelligence right now. "
-                "End with one specific action item for the team today. "
-                "You must use web search before writing the briefing. "
-                "For every headline and competitor claim, include a Source URL and publication/date context. "
-                "If you cannot verify a claim from search results, write 'INSUFFICIENT EVIDENCE' and do not guess."
+                "Create a CEO OPERATING BRIEF for today for Automotive Intelligence. "
+                "Focus on execution, revenue, team accountability, customer outcomes, and pipeline growth. "
+                "Do NOT produce an industry-news briefing unless it directly affects today's execution plan. "
+                "Use the internal KPI snapshot below as the source of truth for metrics and trends. "
+                "If a metric is missing, say 'DATA NOT AVAILABLE' instead of guessing.\n\n"
+                f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
+                "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
+                "team execution status, brand funnel actions (awareness/consideration/conversion), "
+                "and top 3 priorities for today with owner + deadline + expected outcome."
             ),
             expected_output=(
-                "CEO daily briefing: (1) Top 3 auto industry AI headlines with implications, "
-                "(2) Competitor vendor activity summary, (3) Top opportunity or threat, "
-                "(4) One action item for today. "
-                "MANDATORY: Include at least 3 source URLs total, tied to specific claims. "
-                "If fewer than 3 reliable sources are found, output must begin with 'INSUFFICIENT EVIDENCE'."
+                "CEO Operating Brief: "
+                "(1) Revenue Scorecard (current numbers + target gap), "
+                "(2) Pipeline Scorecard (new prospects, outreach volume, conversion blockers), "
+                "(3) Customer Health (retention/churn risk/actions), "
+                "(4) Team Execution (who owns what today), "
+                "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
             ),
             agent=michael_meta,
         )
         crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
         result = crew.kickoff()
-        guarded_output = _enforce_briefing_verification("michael_meta", str(result))
+        guarded_output = _enforce_ceo_operating_brief("michael_meta", str(result))
         persist_log("michael_meta", "briefing", guarded_output)
         logging.info("[Scheduler] Michael Meta briefing complete.")
     except Exception as e:
