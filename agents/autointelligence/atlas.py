@@ -38,7 +38,7 @@ atlas = Agent(
         "\n\nPERSONALITY TAGS: researcher | profiler | intel-engine | intelligence-oracle | dealer-profiler"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

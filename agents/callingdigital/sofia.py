@@ -41,7 +41,7 @@ sofia = Agent(
         "\n\nPERSONALITY TAGS: multi-channel | lead-magnet | brand-voice | authority-builder | content-machine"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

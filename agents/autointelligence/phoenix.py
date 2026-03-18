@@ -39,7 +39,7 @@ phoenix = Agent(
         "delivery-legend | sop-builder"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

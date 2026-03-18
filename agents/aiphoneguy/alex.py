@@ -33,7 +33,7 @@ alex = Agent(
         "\n\nPERSONALITY TAGS: strategist | closer | vision-holder | urgency-driver | market-owner"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

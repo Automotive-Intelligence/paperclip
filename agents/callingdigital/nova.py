@@ -42,7 +42,7 @@ nova = Agent(
         "ai-whisperer | complexity-translator"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

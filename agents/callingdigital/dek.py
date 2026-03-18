@@ -38,7 +38,7 @@ dek = Agent(
         "\n\nPERSONALITY TAGS: integrator | bundle-strategist | operator | pivot-master | category-creator"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

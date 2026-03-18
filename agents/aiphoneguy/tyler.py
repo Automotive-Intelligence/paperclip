@@ -54,7 +54,7 @@ tyler = Agent(
         "follow-up-machine | pipeline-predator | compliance-first"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

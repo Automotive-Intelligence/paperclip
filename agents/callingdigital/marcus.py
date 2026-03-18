@@ -37,7 +37,7 @@ marcus = Agent(
         "\n\nPERSONALITY TAGS: auditor | proposal-builder | follow-up-machine | bundle-closer | diagnostician"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

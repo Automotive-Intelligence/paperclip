@@ -39,7 +39,7 @@ michael_meta = Agent(
         "\n\nPERSONALITY TAGS: educator | closer | vision-holder | dealership-decoder | trust-builder"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

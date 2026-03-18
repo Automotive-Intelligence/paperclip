@@ -41,7 +41,7 @@ jennifer = Agent(
         "retention-fortress | loyalty-engineer"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

@@ -40,7 +40,7 @@ ryan_data = Agent(
         "revenue-machine | pipeline-architect"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )

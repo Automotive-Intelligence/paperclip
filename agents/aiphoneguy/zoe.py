@@ -45,7 +45,7 @@ zoe = Agent(
         "brand-alchemist | inbound-magnet"
     ),
     llm=get_llm(),
-    memory=True,
+    memory=False,
     tools=[web_search_tool],
     verbose=True
 )
