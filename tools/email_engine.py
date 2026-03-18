@@ -11,6 +11,142 @@ import json
 import requests
 
 
+def _strip_markdown_fences(text: str) -> str:
+    text = re.sub(r"^```json\s*", "", text or "")
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _extract_json_array(text: str):
+    """Best-effort JSON array extraction from raw model output."""
+    if not text:
+        return None
+    cleaned = _strip_markdown_fences(text)
+
+    # Direct parse first
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        pass
+
+    # Try first [...] block
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(cleaned[start:end + 1])
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            return None
+    return None
+
+
+def _heuristic_parse_prospects(raw_output: str) -> list:
+    """Fallback parser for prospecting output when external parser LLM is unavailable."""
+    prospects = []
+    current = None
+
+    key_map = {
+        "business name": "business_name",
+        "city": "city",
+        "business type": "business_type",
+        "reason": "reason",
+        "email hook": "email_hook",
+        "subject": "subject",
+        "body": "body",
+        "follow_up_subject": "follow_up_subject",
+        "follow-up subject": "follow_up_subject",
+        "follow_up_body": "follow_up_body",
+        "follow-up body": "follow_up_body",
+        "email": "email",
+    }
+
+    for raw_line in (raw_output or "").splitlines():
+        line = raw_line.strip().lstrip("-*0123456789. ").strip()
+        if not line or ":" not in line:
+            continue
+
+        left, right = line.split(":", 1)
+        key = left.strip().lower()
+        val = right.strip().strip("*")
+        mapped = key_map.get(key)
+        if not mapped:
+            continue
+
+        if mapped == "business_name":
+            if current and current.get("business_name"):
+                prospects.append(current)
+            current = {
+                "business_name": val,
+                "city": "",
+                "business_type": "",
+                "reason": "",
+                "email_hook": "",
+                "subject": "",
+                "body": "",
+                "follow_up_subject": "",
+                "follow_up_body": "",
+                "email": "",
+            }
+            continue
+
+        if current is None:
+            continue
+        current[mapped] = val
+
+    if current and current.get("business_name"):
+        prospects.append(current)
+
+    # Fill defaults for sendable cold email fields
+    for p in prospects:
+        bname = p.get("business_name", "there")
+        reason = p.get("reason", "")
+        if not p.get("subject"):
+            p["subject"] = "quick thought"
+        if not p.get("body"):
+            p["body"] = (
+                f"Hi {bname},\n\n"
+                f"Noticed {reason or 'a potential growth opportunity in your local market'}. "
+                "Worth a quick look?\n\n"
+                "If you'd rather not hear from us, just reply 'stop' and we'll remove you immediately."
+            )
+        if not p.get("email_hook"):
+            p["email_hook"] = reason or "Potential growth opportunity identified."
+        if not p.get("follow_up_subject"):
+            p["follow_up_subject"] = "following up"
+        if not p.get("follow_up_body"):
+            p["follow_up_body"] = (
+                f"Circling back on {reason or 'the opportunity I mentioned earlier'}. "
+                "Happy to share details if useful."
+            )
+
+    return prospects
+
+
+def _heuristic_parse_content(raw_output: str) -> list:
+    """Fallback content parser for Groq-only deployments."""
+    text = (raw_output or "").strip()
+    if len(text) < 30:
+        return []
+
+    first_line = text.splitlines()[0][:120].strip() or "Daily content draft"
+    return [
+        {
+            "platform": "linkedin",
+            "content_type": "post",
+            "title": first_line,
+            "body": text[:3000],
+            "hashtags": "",
+            "cta": "Reply if you want this adapted for your business.",
+            "funnel_stage": "awareness",
+        }
+    ]
+
+
 # ── Agent-specific parsing prompts ───────────────────────────────────────────
 
 PARSE_PROMPTS = {
@@ -74,8 +210,8 @@ def parse_prospects(raw_output: str, agent_name: str = "tyler") -> list:
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
-        logging.error("[Parser] ANTHROPIC_API_KEY not set — cannot parse prospects.")
-        return []
+        logging.warning("[Parser] ANTHROPIC_API_KEY not set — using heuristic prospect parser.")
+        return _heuristic_parse_prospects(raw_output)
 
     agent_config = PARSE_PROMPTS.get(agent_name, PARSE_PROMPTS["tyler"])
 
@@ -126,11 +262,9 @@ JSON array:"""
         resp.raise_for_status()
         content = resp.json()["content"][0]["text"].strip()
 
-        # Strip any accidental markdown fences
-        content = re.sub(r"^```json\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-
-        prospects = json.loads(content)
+        prospects = _extract_json_array(content)
+        if prospects is None:
+            raise ValueError("No parseable JSON array in parser response")
         logging.info(f"[Parser] Extracted {len(prospects)} prospects from {agent_name}'s output.")
         return prospects
 
@@ -194,9 +328,9 @@ JSON array:"""
         )
         resp.raise_for_status()
         content = resp.json()["content"][0]["text"].strip()
-        content = re.sub(r"^```json\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-        actions = json.loads(content)
+        actions = _extract_json_array(content)
+        if actions is None:
+            raise ValueError("No parseable JSON array in parser response")
         logging.info(f"[Parser] Extracted {len(actions)} retention actions from {agent_name}.")
         return actions
     except Exception as e:
@@ -216,7 +350,8 @@ def parse_content_pieces(raw_output: str, agent_name: str = "zoe") -> list:
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return []
+        logging.warning("[Parser] ANTHROPIC_API_KEY not set — using heuristic content parser.")
+        return _heuristic_parse_content(raw_output)
 
     prompt = f"""Extract publishable content pieces from this content marketing report.
 Return ONLY a JSON array. No markdown, no explanation.
@@ -255,9 +390,9 @@ JSON array:"""
         )
         resp.raise_for_status()
         content = resp.json()["content"][0]["text"].strip()
-        content = re.sub(r"^```json\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-        pieces = json.loads(content)
+        pieces = _extract_json_array(content)
+        if pieces is None:
+            raise ValueError("No parseable JSON array in parser response")
         logging.info(f"[Parser] Extracted {len(pieces)} content pieces from {agent_name}.")
         return pieces
     except Exception as e:
