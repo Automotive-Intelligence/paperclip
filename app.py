@@ -185,6 +185,8 @@ def _enforce_ceo_operating_brief(agent_name: str, output_text: str) -> str:
         "brand",
         "priority",
         "today",
+        "message to founder",
+        "physical-world",
     ]
     missing = [token for token in required_signals if token not in lower]
 
@@ -204,6 +206,8 @@ def _enforce_ceo_operating_brief(agent_name: str, output_text: str) -> str:
         "4) Team execution + accountability\n"
         "5) Brand awareness/consideration/conversion actions\n"
         "6) Top 3 priorities for today with owners and deadlines\n"
+        "7) Message to Founder (plain-English update + decisions needed)\n"
+        "8) Physical-world CEO actions (in-person, events, partnerships, recruiting, client visits)\n"
         "Do not default to generic industry headlines.\n"
     )
 
@@ -422,7 +426,9 @@ def run_alex_daily_briefing():
                 f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
                 "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
                 "team execution status, brand funnel actions (awareness/consideration/conversion), "
-                "and top 3 priorities for today with owner + deadline + expected outcome."
+                "top 3 priorities for today with owner + deadline + expected outcome, "
+                "a section titled 'Message to Founder' written directly to Michael, "
+                "and a section titled 'Physical-World CEO Actions' with concrete in-person actions for today."
             ),
             expected_output=(
                 "CEO Operating Brief: "
@@ -431,7 +437,9 @@ def run_alex_daily_briefing():
                 "(3) Customer Health (retention/churn risk/actions), "
                 "(4) Team Execution (who owns what today), "
                 "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
-                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact, "
+                "(7) Message to Founder (directly to Michael), "
+                "(8) Physical-World CEO Actions (in-person meetings/events/partnerships/recruiting/client visits)."
             ),
             agent=alex,
         )
@@ -457,7 +465,9 @@ def run_dek_daily_briefing():
                 f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
                 "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
                 "team execution status, brand funnel actions (awareness/consideration/conversion), "
-                "and top 3 priorities for today with owner + deadline + expected outcome."
+                "top 3 priorities for today with owner + deadline + expected outcome, "
+                "a section titled 'Message to Founder' written directly to Michael, "
+                "and a section titled 'Physical-World CEO Actions' with concrete in-person actions for today."
             ),
             expected_output=(
                 "CEO Operating Brief: "
@@ -466,7 +476,9 @@ def run_dek_daily_briefing():
                 "(3) Customer Health (retention/churn risk/actions), "
                 "(4) Team Execution (who owns what today), "
                 "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
-                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact, "
+                "(7) Message to Founder (directly to Michael), "
+                "(8) Physical-World CEO Actions (in-person meetings/events/partnerships/recruiting/client visits)."
             ),
             agent=dek,
         )
@@ -492,7 +504,9 @@ def run_michael_meta_daily_briefing():
                 f"INTERNAL KPI SNAPSHOT:\n{kpi_context}\n\n"
                 "Output must include: revenue status, pipeline status, customer satisfaction/retention status, "
                 "team execution status, brand funnel actions (awareness/consideration/conversion), "
-                "and top 3 priorities for today with owner + deadline + expected outcome."
+                "top 3 priorities for today with owner + deadline + expected outcome, "
+                "a section titled 'Message to Founder' written directly to Michael, "
+                "and a section titled 'Physical-World CEO Actions' with concrete in-person actions for today."
             ),
             expected_output=(
                 "CEO Operating Brief: "
@@ -501,7 +515,9 @@ def run_michael_meta_daily_briefing():
                 "(3) Customer Health (retention/churn risk/actions), "
                 "(4) Team Execution (who owns what today), "
                 "(5) Brand Funnel Plan (awareness, consideration, conversion actions today), "
-                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact."
+                "(6) Top 3 CEO priorities for today with owner, deadline, and expected business impact, "
+                "(7) Message to Founder (directly to Michael), "
+                "(8) Physical-World CEO Actions (in-person meetings/events/partnerships/recruiting/client visits)."
             ),
             agent=michael_meta,
         )

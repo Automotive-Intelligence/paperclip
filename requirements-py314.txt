@@ -1,0 +1,8 @@
+fastapi>=0.100.0
+uvicorn>=0.24.0
+litellm>=0.1.0
+tavily-python
+requests
+anthropic
+pytz
+apscheduler>=3.10.4
