@@ -48,6 +48,58 @@ def _extract_json_array(text: str):
 def _heuristic_parse_prospects(raw_output: str) -> list:
     """Fallback parser for prospecting output when external parser LLM is unavailable."""
     prospects = []
+
+    # Pattern for lines like:
+    # 1. Business Name: X, Type: HVAC, City: Aubrey, Reason for targeting: Y
+    inline_pattern = re.compile(
+        r"Business\s*Name:\s*(?P<business_name>[^,\n]+),\s*"
+        r"Type:\s*(?P<business_type>[^,\n]+),\s*"
+        r"City:\s*(?P<city>[^,\n]+),\s*"
+        r"Reason(?:\s*for\s*targeting)?:\s*(?P<reason>[^\n]+)",
+        re.IGNORECASE,
+    )
+
+    inline_matches = list(inline_pattern.finditer(raw_output or ""))
+    if inline_matches:
+        lines = (raw_output or "").splitlines()
+        for idx, m in enumerate(inline_matches):
+            p = {
+                "business_name": m.group("business_name").strip(),
+                "city": m.group("city").strip(),
+                "business_type": m.group("business_type").strip(),
+                "reason": m.group("reason").strip(),
+                "email_hook": "",
+                "subject": "",
+                "body": "",
+                "follow_up_subject": "",
+                "follow_up_body": "",
+                "email": "",
+            }
+
+            # Search nearby lines for subject/body/follow-up
+            start_line = 0
+            for i, line in enumerate(lines):
+                if m.group("business_name") in line:
+                    start_line = i
+                    break
+            window = "\n".join(lines[start_line:start_line + 8])
+
+            subject_match = re.search(r"Subject:\s*(.+)", window, re.IGNORECASE)
+            body_match = re.search(r"Body:\s*(.+)", window, re.IGNORECASE)
+            follow_match = re.search(
+                r"Follow-up\s*angle\s*for\s*touch\s*2:\s*(.+)",
+                window,
+                re.IGNORECASE,
+            )
+
+            if subject_match:
+                p["subject"] = subject_match.group(1).strip()
+            if body_match:
+                p["body"] = body_match.group(1).strip()
+            if follow_match:
+                p["follow_up_body"] = follow_match.group(1).strip()
+
+            prospects.append(p)
     current = None
 
     key_map = {
@@ -265,6 +317,9 @@ JSON array:"""
         prospects = _extract_json_array(content)
         if prospects is None:
             raise ValueError("No parseable JSON array in parser response")
+        if not prospects:
+            logging.warning(f"[Parser] Parsed 0 prospects from {agent_name}; using heuristic fallback.")
+            return _heuristic_parse_prospects(raw_output)
         logging.info(f"[Parser] Extracted {len(prospects)} prospects from {agent_name}'s output.")
         return prospects
 
@@ -393,6 +448,9 @@ JSON array:"""
         pieces = _extract_json_array(content)
         if pieces is None:
             raise ValueError("No parseable JSON array in parser response")
+        if not pieces:
+            logging.warning(f"[Parser] Parsed 0 content pieces from {agent_name}; using heuristic fallback.")
+            return _heuristic_parse_content(raw_output)
         logging.info(f"[Parser] Extracted {len(pieces)} content pieces from {agent_name}.")
         return pieces
     except Exception as e:
