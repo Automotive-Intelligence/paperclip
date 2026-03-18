@@ -1083,6 +1083,50 @@ scheduler.add_job(run_all_agents_test, DateTrigger(run_date=test_time),
 logging.info(f"[Scheduler] One-time test scheduled for {test_time}")
 
 
+RUN_NOW_SCOPES = {
+    "ceo": [
+        ("alex_daily_briefing", run_alex_daily_briefing),
+        ("dek_daily_briefing", run_dek_daily_briefing),
+        ("michael_meta_daily_briefing", run_michael_meta_daily_briefing),
+    ],
+    "sales": [
+        ("tyler_prospecting", run_tyler_prospecting),
+        ("marcus_prospecting", run_marcus_prospecting),
+        ("ryan_data_prospecting", run_ryan_data_prospecting),
+    ],
+    "content": [
+        ("zoe_content", run_zoe_content),
+        ("sofia_content", run_sofia_content),
+        ("chase_content", run_chase_content),
+    ],
+    "retention": [
+        ("jennifer_retention", run_jennifer_retention),
+        ("carlos_retention", run_carlos_retention),
+    ],
+    "specialists": [
+        ("nova_intelligence", run_nova_intelligence),
+        ("atlas_intel", run_atlas_intel),
+        ("phoenix_delivery", run_phoenix_delivery),
+    ],
+    "all": [
+        ("alex_daily_briefing", run_alex_daily_briefing),
+        ("dek_daily_briefing", run_dek_daily_briefing),
+        ("michael_meta_daily_briefing", run_michael_meta_daily_briefing),
+        ("tyler_prospecting", run_tyler_prospecting),
+        ("marcus_prospecting", run_marcus_prospecting),
+        ("ryan_data_prospecting", run_ryan_data_prospecting),
+        ("zoe_content", run_zoe_content),
+        ("sofia_content", run_sofia_content),
+        ("chase_content", run_chase_content),
+        ("jennifer_retention", run_jennifer_retention),
+        ("carlos_retention", run_carlos_retention),
+        ("nova_intelligence", run_nova_intelligence),
+        ("atlas_intel", run_atlas_intel),
+        ("phoenix_delivery", run_phoenix_delivery),
+    ],
+}
+
+
 # ── FastAPI App ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -1324,6 +1368,44 @@ async def pipeline_overview():
     for biz_key in BUSINESSES:
         summary[biz_key] = get_revenue_summary(business_key=biz_key, days=30)
     return JSONResponse(content=summary)
+
+
+@app.post("/admin/run-now")
+async def run_now(scope: str = "sales", authorization: Optional[str] = Header(None)):
+    """Trigger scheduled jobs immediately (authenticated)."""
+    validate_key(authorization)
+
+    scope = scope.lower().strip()
+    jobs = RUN_NOW_SCOPES.get(scope)
+    if not jobs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid scope '{scope}'. Valid scopes: {', '.join(sorted(RUN_NOW_SCOPES.keys()))}",
+        )
+
+    started_at = datetime.datetime.now(CST).isoformat()
+    results = []
+
+    for job_name, fn in jobs:
+        try:
+            fn()
+            results.append({"job": job_name, "status": "ok"})
+        except Exception as e:
+            logging.error(f"[RunNow] {job_name} failed: {type(e).__name__}: {e}")
+            results.append({"job": job_name, "status": "error", "error": f"{type(e).__name__}: {e}"})
+
+    return JSONResponse(
+        content={
+            "status": "completed",
+            "scope": scope,
+            "started_at": started_at,
+            "finished_at": datetime.datetime.now(CST).isoformat(),
+            "total": len(results),
+            "ok": len([r for r in results if r["status"] == "ok"]),
+            "errors": len([r for r in results if r["status"] == "error"]),
+            "results": results,
+        }
+    )
 
 
 # ── GHL Webhook Receiver ────────────────────────────────────────────────────
