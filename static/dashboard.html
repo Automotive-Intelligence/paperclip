@@ -196,7 +196,10 @@
     </div>
 
     <script>
-        const API_BASE = 'http://127.0.0.1:8000';
+        // Use the current page's origin so this works on Railway and locally
+        const API_BASE = window.location.origin === 'null' || window.location.origin === 'file://' 
+            ? 'http://127.0.0.1:8000' 
+            : window.location.origin;
         const agents = [
             { name: "Alex", type: "CEO - Briefing" },
             { name: "Tyler", type: "Sales - Prospecting" },
