@@ -16,6 +16,7 @@ from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+from config.runtime import get_settings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -73,19 +74,16 @@ logging.basicConfig(
 
 os.makedirs("logs", exist_ok=True)
 
-API_KEYS = set(filter(None, os.getenv("API_KEYS", "").split(",")))
-
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+SETTINGS = get_settings()
+API_KEYS = set(SETTINGS.api_keys)
+DATABASE_URL = SETTINGS.database_url
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
 def _db_url() -> str:
-    """Normalize Railway's postgres:// URL to postgresql:// for psycopg3."""
-    url = DATABASE_URL
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
-    return url
+    """Return normalized Postgres URL from centralized runtime settings."""
+    return DATABASE_URL
 
 
 @contextmanager
@@ -279,7 +277,7 @@ for biz_key, biz in BUSINESSES.items():
 
 def _ghl_ready() -> bool:
     """Check if GHL API credentials are configured."""
-    return bool(os.getenv("GHL_API_KEY") and os.getenv("GHL_LOCATION_ID"))
+    return SETTINGS.ghl_ready
 
 
 # ── Revenue Pipeline Helper ─────────────────────────────────────────────────
@@ -468,6 +466,12 @@ def _execute_retention_pipeline(agent_name: str, raw_output: str, business_key: 
 # ── Scheduler ────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler()
+
+
+def _job_next_run_str(job) -> str:
+    """Safely serialize job next-run time across APScheduler versions."""
+    next_run = getattr(job, "next_run_time", None)
+    return str(next_run) if next_run else "paused"
 
 
 # ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────
@@ -1205,6 +1209,24 @@ RUN_NOW_SCOPES = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Startup configuration checks
+    logging.info(
+        "[Startup] env=%s strict=%s postgres=%s ghl=%s llm_model=%s llm_key=%s",
+        SETTINGS.environment,
+        SETTINGS.strict_startup,
+        SETTINGS.postgres_enabled,
+        SETTINGS.ghl_ready,
+        SETTINGS.llm_model,
+        SETTINGS.llm_api_key_present,
+    )
+    for warning in SETTINGS.startup_warnings():
+        logging.warning(f"[Startup] {warning}")
+    fatals = SETTINGS.startup_fatals()
+    if fatals:
+        for msg in fatals:
+            logging.error(f"[Startup] {msg}")
+        raise RuntimeError("; ".join(fatals))
+
     # ── DB init — never crash startup if Postgres isn't ready
     try:
         init_db()
@@ -1245,7 +1267,7 @@ app = FastAPI(
         "and Automotive Intelligence. Agents prospect, email, track pipeline, "
         "queue content, and execute retention — autonomously."
     ),
-    version="4.0.0",
+    version=SETTINGS.app_version,
     lifespan=lifespan,
 )
 
@@ -1288,7 +1310,7 @@ def normalize_agent_id(agent_name: str) -> str:
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "engine": "revenue", "version": "4.0.0"}
+    return {"status": "ok", "engine": "revenue", "version": SETTINGS.app_version}
 
 
 @app.post("/chat")
@@ -1559,7 +1581,7 @@ async def get_scheduled_jobs():
         jobs_info.append({
             "id": job.id,
             "name": job.name,
-            "next_run": str(job.next_run_time) if job.next_run_time else "paused",
+            "next_run": _job_next_run_str(job),
             "trigger": str(job.trigger),
         })
     
@@ -1666,7 +1688,7 @@ async def get_metrics():
         jobs_info.append({
             "id": job.id,
             "name": job.name,
-            "next_run": str(job.next_run_time) if job.next_run_time else "paused",
+            "next_run": _job_next_run_str(job),
         })
     
     test_files = sorted(glob.glob("logs/test_suite_*.json"), reverse=True)
@@ -1682,14 +1704,19 @@ async def get_metrics():
             pass
     
     return {
-        "timestamp": datetime.datetime.now(pytz.timezone("America/Chicago")).isoformat(),
+        "timestamp": datetime.datetime.now(pytz.timezone(SETTINGS.timezone)).isoformat(),
         "system_status": "operational",
         "scheduler_running": scheduler.running,
         "jobs_registered": len(jobs_info),
         "agents_total": 15,
         "test_pass_rate": test_pass_rate,
         "uptime": "running",
-        "database": "Postgres" if DATABASE_URL else "Filesystem"
+        "database": "Postgres" if SETTINGS.postgres_enabled else "Filesystem",
+        "environment": SETTINGS.environment,
+        "strict_startup": SETTINGS.strict_startup,
+        "ghl_ready": SETTINGS.ghl_ready,
+        "llm_model": SETTINGS.llm_model,
+        "llm_ready": SETTINGS.llm_ready,
     }
 
 
@@ -1796,16 +1823,39 @@ async def health():
         jobs_info.append({
             "id": job.id,
             "name": job.name,
-            "next_run": str(job.next_run_time) if job.next_run_time else "paused",
+            "next_run": _job_next_run_str(job),
         })
     return {
         "status": "ok",
-        "version": "4.0.0",
+        "version": SETTINGS.app_version,
         "engine": "revenue",
         "scheduler": "running" if scheduler.running else "stopped",
         "jobs_registered": len(jobs_info),
-        "postgres": "connected" if DATABASE_URL else "not configured",
+        "postgres": "connected" if SETTINGS.postgres_enabled else "not configured",
         "ghl_configured": _ghl_ready(),
-        "revenue_tracking": bool(DATABASE_URL),
+        "revenue_tracking": SETTINGS.postgres_enabled,
+        "environment": SETTINGS.environment,
+        "strict_startup": SETTINGS.strict_startup,
+        "llm_model": SETTINGS.llm_model,
+        "llm_ready": SETTINGS.llm_ready,
         "jobs": jobs_info,
     }
+
+
+@app.get("/health/ready")
+async def readiness():
+    """Readiness endpoint for production probes and deployment gates."""
+    warnings = SETTINGS.startup_warnings()
+    fatals = SETTINGS.startup_fatals()
+    is_ready = scheduler.running and (len(fatals) == 0)
+    payload = {
+        "ready": is_ready,
+        "scheduler_running": scheduler.running,
+        "environment": SETTINGS.environment,
+        "strict_startup": SETTINGS.strict_startup,
+        "warnings": warnings,
+        "fatals": fatals,
+    }
+    if is_ready:
+        return payload
+    return JSONResponse(status_code=503, content=payload)

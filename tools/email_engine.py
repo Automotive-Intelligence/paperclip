@@ -10,21 +10,12 @@ import logging
 import json
 import requests
 import litellm
+from config.runtime import resolve_llm_model_and_key
 
 
 def _call_parser_llm(prompt: str, max_tokens: int = 3000) -> str:
     """Call the configured LLM via LiteLLM for parsing tasks. No separate API key needed."""
-    model = os.getenv("LLM_MODEL") or os.getenv("GROQ_MODEL") or "groq/llama-3.1-8b-instant"
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        if model.startswith("groq/"):
-            api_key = os.getenv("GROQ_API_KEY")
-        elif model.startswith("openrouter/"):
-            api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-        elif model.startswith("deepseek/"):
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-        else:
-            api_key = os.getenv("OPENAI_API_KEY")
+    model, api_key = resolve_llm_model_and_key()
     response = litellm.completion(
         model=model,
         api_key=api_key,
