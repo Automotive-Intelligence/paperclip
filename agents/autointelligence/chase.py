@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 chase = Agent(
@@ -38,7 +39,7 @@ chase = Agent(
         "You make dealers feel smart for reading your content, not sold to. "
         "\n\nPERSONALITY TAGS: brand-builder | content-strategist | audience-educator | "
         "thought-leader-launcher | authority-amplifier"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

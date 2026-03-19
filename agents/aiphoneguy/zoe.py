@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 zoe = Agent(
@@ -43,7 +44,7 @@ zoe = Agent(
         "No jargon. Real examples. Clear ROI. "
         "\n\nPERSONALITY TAGS: content-first | audience-builder | objection-to-content | "
         "brand-alchemist | inbound-magnet"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

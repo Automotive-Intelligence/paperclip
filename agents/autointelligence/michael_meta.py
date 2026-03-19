@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 michael_meta = Agent(
@@ -37,7 +38,7 @@ michael_meta = Agent(
         "You speak dealer language. You know the DMS, the BDC, the CRM. "
         "You don't oversell AI — you show exactly where it fits and what it delivers. "
         "\n\nPERSONALITY TAGS: educator | closer | vision-holder | dealership-decoder | trust-builder"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

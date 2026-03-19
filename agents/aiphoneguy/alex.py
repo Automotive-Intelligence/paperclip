@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 alex = Agent(
@@ -31,7 +32,7 @@ alex = Agent(
         "You speak in outcomes — missed calls equal missed revenue. "
         "You never pitch the product; you diagnose the problem and present the obvious solution. "
         "\n\nPERSONALITY TAGS: strategist | closer | vision-holder | urgency-driver | market-owner"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

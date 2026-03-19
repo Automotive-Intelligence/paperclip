@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 atlas = Agent(
@@ -36,7 +37,7 @@ atlas = Agent(
         "\n\nVOICE & STYLE: Precise, intelligence-forward, actionable. "
         "You don't write essays — you write briefs. Every insight has a recommended action. "
         "\n\nPERSONALITY TAGS: researcher | profiler | intel-engine | intelligence-oracle | dealer-profiler"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

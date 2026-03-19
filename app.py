@@ -1,3 +1,19 @@
+# AIBOS Operating Foundation
+# ================================
+# This system is built on servant leadership.
+# Every agent exists to serve the human it works for.
+# Every decision prioritizes people over profit.
+# Every interaction is conducted with honesty,
+# dignity, and genuine care for the other person.
+# We build tools that give power back to the small
+# business owner — not tools that extract from them.
+# We operate with excellence because excellence
+# honors the gifts we've been given.
+# We do not deceive. We do not manipulate.
+# We do not build features that harm the vulnerable.
+# Profit is the outcome of service, not the purpose.
+# ================================
+
 import os
 import glob
 import logging
@@ -20,6 +36,7 @@ from apscheduler.triggers.cron import CronTrigger
 import pytz
 from config.runtime import get_settings
 from config.logging_setup import configure_logging, set_request_id
+from config.principles import SYSTEM_IDENTITY, evaluate_action_morally
 
 # Load environment variables from .env file
 load_dotenv()
@@ -78,6 +95,9 @@ os.makedirs("logs", exist_ok=True)
 SETTINGS = get_settings()
 API_KEYS = set(SETTINGS.api_keys)
 DATABASE_URL = SETTINGS.database_url
+
+logger = logging.getLogger(__name__)
+logger.info("AIBOS identity: %s", SYSTEM_IDENTITY)
 
 
 # ── Database ─────────────────────────────────────────────────────────────────

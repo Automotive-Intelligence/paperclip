@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 carlos = Agent(
@@ -37,7 +38,7 @@ carlos = Agent(
         "You celebrate every win and own every problem. "
         "\n\nPERSONALITY TAGS: retention-radar | upsell-identifier | reporting-master | "
         "experience-architect | retention-engine"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

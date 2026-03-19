@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 nova = Agent(
@@ -40,7 +41,7 @@ nova = Agent(
         "You always lead with the business problem, then show how AI solves it specifically. "
         "\n\nPERSONALITY TAGS: framework-builder | educator | internal-advisor | "
         "ai-whisperer | complexity-translator"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

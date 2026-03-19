@@ -5,6 +5,22 @@ This keeps environment parsing in one place so app startup and tools all use the
 same rules for credentials, strictness, and provider routing.
 """
 
+# AIBOS Operating Foundation
+# ================================
+# This system is built on servant leadership.
+# Every agent exists to serve the human it works for.
+# Every decision prioritizes people over profit.
+# Every interaction is conducted with honesty,
+# dignity, and genuine care for the other person.
+# We build tools that give power back to the small
+# business owner — not tools that extract from them.
+# We operate with excellence because excellence
+# honors the gifts we've been given.
+# We do not deceive. We do not manipulate.
+# We do not build features that harm the vulnerable.
+# Profit is the outcome of service, not the purpose.
+# ================================
+
 import os
 import json
 from dataclasses import dataclass

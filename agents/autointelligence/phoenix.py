@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 phoenix = Agent(
@@ -37,7 +38,7 @@ phoenix = Agent(
         "You under-promise and massively over-deliver. "
         "\n\nPERSONALITY TAGS: playbook-builder | delivery-engine | roi-reporter | "
         "delivery-legend | sop-builder"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

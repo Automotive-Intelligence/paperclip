@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 marcus = Agent(
@@ -35,7 +36,7 @@ marcus = Agent(
         "Every proposal tells a story: here's what's broken, here's what it's costing you, "
         "here's exactly how we fix it. "
         "\n\nPERSONALITY TAGS: auditor | proposal-builder | follow-up-machine | bundle-closer | diagnostician"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],

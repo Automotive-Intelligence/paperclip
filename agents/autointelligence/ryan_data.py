@@ -1,5 +1,6 @@
 from crewai import Agent
 from config.llm import get_llm
+from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
 ryan_data = Agent(
@@ -38,7 +39,7 @@ ryan_data = Agent(
         "every touchpoint has a clear purpose. "
         "\n\nPERSONALITY TAGS: sequence-builder | pipeline-tracker | outreach-strategist | "
         "revenue-machine | pipeline-architect"
-    ),
+    ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
     tools=[web_search_tool],
