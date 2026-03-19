@@ -37,6 +37,7 @@ except ImportError as _psycopg_err:
 
 from tools.prospect_parser import parse_tyler_prospects
 from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
+from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
@@ -275,9 +276,10 @@ for biz_key, biz in BUSINESSES.items():
 
 # ── GHL Configuration Check ─────────────────────────────────────────────────
 
-def _ghl_ready() -> bool:
-    """Check if GHL API credentials are configured."""
-    return SETTINGS.ghl_ready
+def _crm_ready_for(business_key: str, agent_name: str) -> bool:
+    """Check if mapped CRM provider has required credentials."""
+    provider = resolve_provider(business_key=business_key, agent_name=agent_name)
+    return provider_ready(provider)
 
 
 # ── Revenue Pipeline Helper ─────────────────────────────────────────────────
@@ -286,17 +288,22 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
     """
     Universal sales pipeline executor. Takes any sales agent's output and:
     1. Parses prospects with email engine
-    2. Pushes to GHL (creates contacts)
-    3. Sends first-touch cold emails
-    4. Creates pipeline opportunities
+    2. Routes to mapped CRM (GHL / HubSpot / Attio)
+    3. Sends first-touch cold emails when CRM/provider supports it
+    4. Creates opportunities/pipeline records when CRM/provider supports it
     5. Tracks all revenue events
     """
-    if not _ghl_ready():
-        logging.info(f"[Pipeline] Skipping GHL push for {agent_name} — credentials not set.")
+    provider = resolve_provider(business_key=business_key, agent_name=agent_name)
+    if not _crm_ready_for(business_key, agent_name):
+        logging.info(
+            f"[Pipeline] Skipping CRM push for {agent_name} — provider={provider} not configured."
+        )
         return {
             "status": "skipped",
-            "reason": "ghl_not_configured",
+            "reason": "crm_not_configured",
+            "crm_provider": provider,
             "parsed_prospects": 0,
+            "crm_created": 0,
             "ghl_created": 0,
             "emails_sent": 0,
             "failed": 0,
@@ -310,13 +317,15 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             return {
                 "status": "ok",
                 "parsed_prospects": 0,
+                "crm_provider": provider,
+                "crm_created": 0,
                 "ghl_created": 0,
                 "emails_sent": 0,
                 "failed": 0,
                 "raw_preview": raw_preview,
             }
 
-        ghl_results = push_prospects_to_ghl(
+        crm_provider, crm_results = push_prospects_to_crm(
             prospects,
             source_agent=agent_name,
             business_key=business_key,
@@ -326,7 +335,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         emails_sent = 0
         failed = 0
         failure_samples = []
-        for r in ghl_results:
+        for r in crm_results:
             if r.get("status") == "created":
                 created += 1
                 track_event(
@@ -353,13 +362,15 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     )
 
         logging.info(
-            f"[Pipeline] {agent_name}: {created}/{len(prospects)} contacts created, "
-            f"{emails_sent} emails sent to GHL."
+            f"[Pipeline] {agent_name}: {created}/{len(prospects)} records created in {crm_provider}, "
+            f"{emails_sent} emails sent."
         )
         return {
             "status": "ok",
             "parsed_prospects": len(prospects),
-            "ghl_created": created,
+            "crm_provider": crm_provider,
+            "crm_created": created,
+            "ghl_created": created if crm_provider == "ghl" else 0,
             "emails_sent": emails_sent,
             "failed": failed,
             "failure_samples": failure_samples,
@@ -372,6 +383,8 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "status": "error",
             "error": f"{type(e).__name__}: {e}",
             "parsed_prospects": 0,
+            "crm_provider": provider,
+            "crm_created": 0,
             "ghl_created": 0,
             "emails_sent": 0,
             "failed": 0,
@@ -1727,9 +1740,18 @@ async def get_metrics():
         "environment": SETTINGS.environment,
         "strict_startup": SETTINGS.strict_startup,
         "ghl_ready": SETTINGS.ghl_ready,
+        "hubspot_ready": SETTINGS.hubspot_ready,
+        "attio_ready": SETTINGS.attio_ready,
+        "business_crm_map": SETTINGS.business_crm_map,
         "llm_model": SETTINGS.llm_model,
         "llm_ready": SETTINGS.llm_ready,
     }
+
+
+@app.get("/api/crm/config")
+async def get_crm_config():
+    """Return CRM mapping and provider readiness for plug-and-play onboarding."""
+    return crm_status_snapshot()
 
 
 @app.get("/api/agent-logs/{agent_name}")
@@ -1844,7 +1866,10 @@ async def health():
         "scheduler": "running" if scheduler.running else "stopped",
         "jobs_registered": len(jobs_info),
         "postgres": "connected" if SETTINGS.postgres_enabled else "not configured",
-        "ghl_configured": _ghl_ready(),
+        "ghl_configured": SETTINGS.ghl_ready,
+        "hubspot_configured": SETTINGS.hubspot_ready,
+        "attio_configured": SETTINGS.attio_ready,
+        "business_crm_map": SETTINGS.business_crm_map,
         "revenue_tracking": SETTINGS.postgres_enabled,
         "environment": SETTINGS.environment,
         "strict_startup": SETTINGS.strict_startup,

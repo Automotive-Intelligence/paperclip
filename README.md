@@ -14,6 +14,29 @@ This project now includes centralized runtime settings and startup validation in
 - `LOG_JSON`: structured JSON logs on/off (default: `true`)
 - `LOG_LEVEL`: logger level (default: `INFO`)
 
+### Multi-CRM Plug And Play
+
+Paperclip supports per-company CRM routing with optional per-agent override.
+
+- `BUSINESS_CRM_MAP` (JSON map): default business to CRM provider mapping
+- `AGENT_CRM_MAP` (JSON map): optional agent to CRM provider overrides
+
+Default mapping:
+
+- `aiphoneguy` -> `ghl`
+- `callingdigital` -> `attio`
+- `autointelligence` -> `hubspot`
+
+Provider credentials:
+
+- GHL: `GHL_API_KEY`, `GHL_LOCATION_ID`
+- HubSpot: `HUBSPOT_API_KEY` (or `HUBSPOT_ACCESS_TOKEN`)
+- Attio: `ATTIO_API_KEY`
+
+Useful endpoint:
+
+- `GET /api/crm/config` returns active mapping and provider readiness.
+
 ### Runtime Checks
 
 Startup now logs a single configuration summary and warning/fatal checks for:

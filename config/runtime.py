@@ -6,9 +6,10 @@ same rules for credentials, strictness, and provider routing.
 """
 
 import os
+import json
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 def _parse_csv(raw: str) -> Tuple[str, ...]:
@@ -21,6 +22,24 @@ def _normalize_database_url(url: str) -> str:
     if url.startswith("postgres://"):
         return "postgresql://" + url[len("postgres://"):]
     return url
+
+
+def _parse_json_map(raw: str, default: Dict[str, str]) -> Dict[str, str]:
+    if not raw:
+        return dict(default)
+    try:
+        loaded = json.loads(raw)
+        if not isinstance(loaded, dict):
+            return dict(default)
+        parsed: Dict[str, str] = {}
+        for k, v in loaded.items():
+            key = str(k).strip().lower()
+            value = str(v).strip().lower()
+            if key and value:
+                parsed[key] = value
+        return parsed or dict(default)
+    except Exception:
+        return dict(default)
 
 
 def resolve_llm_model_and_key() -> Tuple[str, Optional[str]]:
@@ -51,8 +70,12 @@ class RuntimeSettings:
     database_url: str
     llm_model: str
     llm_api_key_present: bool
+    business_crm_map: Dict[str, str]
+    agent_crm_map: Dict[str, str]
     ghl_api_key_present: bool
     ghl_location_id_present: bool
+    hubspot_api_key_present: bool
+    attio_api_key_present: bool
 
     @property
     def postgres_enabled(self) -> bool:
@@ -66,6 +89,31 @@ class RuntimeSettings:
     def llm_ready(self) -> bool:
         return self.llm_api_key_present
 
+    @property
+    def hubspot_ready(self) -> bool:
+        return self.hubspot_api_key_present
+
+    @property
+    def attio_ready(self) -> bool:
+        return self.attio_api_key_present
+
+    def crm_provider_ready(self, provider: str) -> bool:
+        p = (provider or "").strip().lower()
+        if p == "ghl":
+            return self.ghl_ready
+        if p == "hubspot":
+            return self.hubspot_ready
+        if p == "attio":
+            return self.attio_ready
+        return False
+
+    def resolve_crm_provider(self, business_key: str, agent_id: Optional[str] = None) -> str:
+        agent_key = (agent_id or "").strip().lower()
+        if agent_key and agent_key in self.agent_crm_map:
+            return self.agent_crm_map[agent_key]
+        biz_key = (business_key or "").strip().lower()
+        return self.business_crm_map.get(biz_key, "ghl")
+
     def startup_warnings(self) -> List[str]:
         warnings: List[str] = []
         if not self.api_keys:
@@ -76,6 +124,11 @@ class RuntimeSettings:
             warnings.append("No LLM API key resolved for configured model.")
         if not self.ghl_ready:
             warnings.append("GHL not fully configured: sales push to CRM is disabled.")
+        for business, provider in self.business_crm_map.items():
+            if not self.crm_provider_ready(provider):
+                warnings.append(
+                    f"CRM provider '{provider}' is mapped to '{business}' but missing credentials."
+                )
         return warnings
 
     def startup_fatals(self) -> List[str]:
@@ -85,12 +138,25 @@ class RuntimeSettings:
         fatals: List[str] = []
         if self.strict_startup and not self.llm_ready:
             fatals.append("STRICT_STARTUP is enabled but LLM credentials are missing.")
+        if self.strict_startup:
+            for business, provider in self.business_crm_map.items():
+                if not self.crm_provider_ready(provider):
+                    fatals.append(
+                        f"STRICT_STARTUP is enabled but CRM provider '{provider}' for '{business}' is not configured."
+                    )
         return fatals
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> RuntimeSettings:
     model, api_key = resolve_llm_model_and_key()
+    default_business_crm_map = {
+        "aiphoneguy": "ghl",
+        "callingdigital": "attio",
+        "autointelligence": "hubspot",
+    }
+    business_crm_map = _parse_json_map(os.getenv("BUSINESS_CRM_MAP", ""), default_business_crm_map)
+    agent_crm_map = _parse_json_map(os.getenv("AGENT_CRM_MAP", ""), {})
     return RuntimeSettings(
         environment=(os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").strip().lower(),
         strict_startup=(os.getenv("STRICT_STARTUP", "false").strip().lower() in {"1", "true", "yes", "on"}),
@@ -100,6 +166,10 @@ def get_settings() -> RuntimeSettings:
         database_url=_normalize_database_url((os.getenv("DATABASE_URL") or "").strip()),
         llm_model=model,
         llm_api_key_present=bool(api_key),
+        business_crm_map=business_crm_map,
+        agent_crm_map=agent_crm_map,
         ghl_api_key_present=bool((os.getenv("GHL_API_KEY") or "").strip()),
         ghl_location_id_present=bool((os.getenv("GHL_LOCATION_ID") or "").strip()),
+        hubspot_api_key_present=bool((os.getenv("HUBSPOT_API_KEY") or os.getenv("HUBSPOT_ACCESS_TOKEN") or "").strip()),
+        attio_api_key_present=bool((os.getenv("ATTIO_API_KEY") or "").strip()),
     )
