@@ -1701,7 +1701,7 @@ async def get_agent_logs_by_date(agent_name: str):
     if agent_id not in AGENTS:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-    agent_type = AGENT_TYPES.get(agent_id, "unknown")
+    agent_type = LOG_TYPES.get(agent_id, "unknown")
 
     if DATABASE_URL:
         try:
