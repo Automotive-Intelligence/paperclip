@@ -4,19 +4,22 @@ import logging
 import datetime
 import json
 import asyncio
+import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 from config.runtime import get_settings
+from config.logging_setup import configure_logging, set_request_id
 
 # Load environment variables from .env file
 load_dotenv()
@@ -67,10 +70,7 @@ from agents.autointelligence.phoenix import phoenix
 
 CST = pytz.timezone("America/Chicago")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+configure_logging()
 
 os.makedirs("logs", exist_ok=True)
 
@@ -1270,6 +1270,18 @@ app = FastAPI(
     version=SETTINGS.app_version,
     lifespan=lifespan,
 )
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        set_request_id(request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+app.add_middleware(RequestContextMiddleware)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────

@@ -6,8 +6,9 @@ workflow triggers, and pipeline tracking across all 3 businesses.
 
 import os
 import logging
-import requests
 from typing import Optional
+from services.errors import ServiceCallError
+from services.http_client import request_with_retry
 
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
 
@@ -19,6 +20,34 @@ def _get_headers() -> dict:
         "Content-Type": "application/json",
         "Version": "2021-07-28",
     }
+
+
+def _ghl_request(
+    operation: str,
+    method: str,
+    path: str,
+    *,
+    params: Optional[dict] = None,
+    json_body: Optional[dict] = None,
+    timeout: int = 15,
+) -> dict:
+    response = request_with_retry(
+        provider="ghl",
+        operation=operation,
+        method=method,
+        url=f"{GHL_BASE_URL}{path}",
+        headers=_get_headers(),
+        params=params,
+        json_body=json_body,
+        timeout=timeout,
+        max_attempts=3,
+        backoff_seconds=0.7,
+    )
+    if response.ok:
+        return response.data or {}
+    if response.error is None:
+        raise RuntimeError(f"ghl.{operation} failed with unknown error")
+    raise ServiceCallError(response.error)
 
 
 # ── Contact Management ───────────────────────────────────────────────────────
@@ -81,14 +110,8 @@ def create_contact(
     if phone:
         payload["phone"] = phone
 
-    resp = requests.post(
-        f"{GHL_BASE_URL}/contacts/",
-        headers=_get_headers(),
-        json=payload,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    contact = resp.json().get("contact", {})
+    data = _ghl_request("create_contact", "POST", "/contacts/", json_body=payload, timeout=15)
+    contact = data.get("contact", {})
     logging.info(f"[GHL] Created contact: {business_name} ({city}) — ID: {contact.get('id')}")
     return contact
 
@@ -106,14 +129,8 @@ def search_contact(email: Optional[str] = None, name: Optional[str] = None) -> O
         params["query"] = name
 
     try:
-        resp = requests.get(
-            f"{GHL_BASE_URL}/contacts/",
-            headers=_get_headers(),
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        contacts = resp.json().get("contacts", [])
+        data = _ghl_request("search_contact", "GET", "/contacts/", params=params, timeout=15)
+        contacts = data.get("contacts", [])
         return contacts[0] if contacts else None
     except Exception as e:
         logging.warning(f"[GHL] Contact search failed: {e}")
@@ -122,27 +139,25 @@ def search_contact(email: Optional[str] = None, name: Optional[str] = None) -> O
 
 def update_contact_tags(contact_id: str, tags: list) -> dict:
     """Add tags to an existing contact."""
-    resp = requests.put(
-        f"{GHL_BASE_URL}/contacts/{contact_id}",
-        headers=_get_headers(),
-        json={"tags": tags},
+    return _ghl_request(
+        "update_contact_tags",
+        "PUT",
+        f"/contacts/{contact_id}",
+        json_body={"tags": tags},
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
 def add_contact_note(contact_id: str, note: str) -> dict:
     """Add a note to an existing GHL contact."""
     location_id = os.getenv("GHL_LOCATION_ID", "")
-    resp = requests.post(
-        f"{GHL_BASE_URL}/contacts/{contact_id}/notes",
-        headers=_get_headers(),
-        json={"body": note, "locationId": location_id},
+    return _ghl_request(
+        "add_contact_note",
+        "POST",
+        f"/contacts/{contact_id}/notes",
+        json_body={"body": note, "locationId": location_id},
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
 # ── Email Sending ────────────────────────────────────────────────────────────
@@ -174,14 +189,13 @@ def send_email(
     if from_email:
         payload["emailFrom"] = from_email
 
-    resp = requests.post(
-        f"{GHL_BASE_URL}/conversations/messages",
-        headers=_get_headers(),
-        json=payload,
+    result = _ghl_request(
+        "send_email",
+        "POST",
+        "/conversations/messages",
+        json_body=payload,
         timeout=15,
     )
-    resp.raise_for_status()
-    result = resp.json()
     logging.info(f"[GHL] Email sent to contact {contact_id}: '{subject}'")
     return result
 
@@ -253,45 +267,34 @@ def create_opportunity(
         "source": f"{source_agent} AI Prospecting",
     }
 
-    resp = requests.post(
-        f"{GHL_BASE_URL}/opportunities/",
-        headers=_get_headers(),
-        json=payload,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    opp = resp.json()
+    opp = _ghl_request("create_opportunity", "POST", "/opportunities/", json_body=payload, timeout=15)
     logging.info(f"[GHL] Created opportunity: {name} — ${monetary_value}")
     return opp
 
 
 def update_opportunity_stage(opportunity_id: str, stage_id: str) -> dict:
     """Move an opportunity to a different pipeline stage."""
-    resp = requests.put(
-        f"{GHL_BASE_URL}/opportunities/{opportunity_id}",
-        headers=_get_headers(),
-        json={"pipelineStageId": stage_id},
+    return _ghl_request(
+        "update_opportunity_stage",
+        "PUT",
+        f"/opportunities/{opportunity_id}",
+        json_body={"pipelineStageId": stage_id},
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
 def get_pipeline_opportunities(pipeline_id: str) -> list:
     """Get all opportunities in a pipeline for revenue tracking."""
     location_id = os.getenv("GHL_LOCATION_ID", "")
     try:
-        resp = requests.get(
-            f"{GHL_BASE_URL}/opportunities/search",
-            headers=_get_headers(),
-            params={
-                "location_id": location_id,
-                "pipeline_id": pipeline_id,
-            },
+        data = _ghl_request(
+            "get_pipeline_opportunities",
+            "GET",
+            "/opportunities/search",
+            params={"location_id": location_id, "pipeline_id": pipeline_id},
             timeout=15,
         )
-        resp.raise_for_status()
-        return resp.json().get("opportunities", [])
+        return data.get("opportunities", [])
     except Exception as e:
         logging.error(f"[GHL] Pipeline fetch failed: {e}")
         return []
@@ -302,27 +305,25 @@ def get_pipeline_opportunities(pipeline_id: str) -> list:
 
 def add_to_workflow(contact_id: str, workflow_id: str) -> dict:
     """Add a contact to a GHL workflow (automation sequence)."""
-    resp = requests.post(
-        f"{GHL_BASE_URL}/contacts/{contact_id}/workflow/{workflow_id}",
-        headers=_get_headers(),
-        json={},
+    result = _ghl_request(
+        "add_to_workflow",
+        "POST",
+        f"/contacts/{contact_id}/workflow/{workflow_id}",
+        json_body={},
         timeout=15,
     )
-    resp.raise_for_status()
-    result = resp.json()
     logging.info(f"[GHL] Contact {contact_id} added to workflow {workflow_id}")
     return result
 
 
 def remove_from_workflow(contact_id: str, workflow_id: str) -> dict:
     """Remove a contact from a GHL workflow."""
-    resp = requests.delete(
-        f"{GHL_BASE_URL}/contacts/{contact_id}/workflow/{workflow_id}",
-        headers=_get_headers(),
+    return _ghl_request(
+        "remove_from_workflow",
+        "DELETE",
+        f"/contacts/{contact_id}/workflow/{workflow_id}",
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
 # ── Master Push Functions (per business) ─────────────────────────────────────
