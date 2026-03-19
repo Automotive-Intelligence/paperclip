@@ -9,6 +9,30 @@ import re
 import logging
 import json
 import requests
+import litellm
+
+
+def _call_parser_llm(prompt: str, max_tokens: int = 3000) -> str:
+    """Call the configured LLM via LiteLLM for parsing tasks. No separate API key needed."""
+    model = os.getenv("LLM_MODEL") or os.getenv("GROQ_MODEL") or "groq/llama-3.1-8b-instant"
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        if model.startswith("groq/"):
+            api_key = os.getenv("GROQ_API_KEY")
+        elif model.startswith("openrouter/"):
+            api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        elif model.startswith("deepseek/"):
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+    response = litellm.completion(
+        model=model,
+        api_key=api_key,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=0,
+    )
+    return response.choices[0].message.content.strip()
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -254,16 +278,12 @@ def parse_prospects(raw_output: str, agent_name: str = "tyler") -> list:
     Universal prospect parser. Takes any sales agent's raw CrewAI output
     and returns structured prospect dicts with ready-to-send emails.
 
-    Uses Claude Haiku to reliably extract structured data from free-form text.
+    Uses the configured LLM (via LiteLLM) to extract structured data from free-form text.
+    No separate ANTHROPIC_API_KEY needed — reuses LLM_API_KEY/LLM_MODEL from Railway.
     """
     if not raw_output or len(raw_output.strip()) < 50:
         logging.warning(f"[Parser] {agent_name} output too short to parse.")
         return []
-
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        logging.warning("[Parser] ANTHROPIC_API_KEY not set — using heuristic prospect parser.")
-        return _heuristic_parse_prospects(raw_output)
 
     agent_config = PARSE_PROMPTS.get(agent_name, PARSE_PROMPTS["tyler"])
 
@@ -297,23 +317,7 @@ REPORT:
 JSON array:"""
 
     try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 3000,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        content = resp.json()["content"][0]["text"].strip()
-
+        content = _call_parser_llm(prompt, max_tokens=3000)
         prospects = _extract_json_array(content)
         if prospects is None:
             raise ValueError("No parseable JSON array in parser response")
@@ -343,10 +347,6 @@ def parse_retention_actions(raw_output: str, agent_name: str = "jennifer") -> li
     if not raw_output or len(raw_output.strip()) < 50:
         return []
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return []
-
     prompt = f"""Extract actionable retention items from this client success report.
 Return ONLY a JSON array. No markdown, no explanation.
 
@@ -367,22 +367,7 @@ REPORT:
 JSON array:"""
 
     try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 2000,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        content = resp.json()["content"][0]["text"].strip()
+        content = _call_parser_llm(prompt, max_tokens=2000)
         actions = _extract_json_array(content)
         if actions is None:
             raise ValueError("No parseable JSON array in parser response")
@@ -402,11 +387,6 @@ def parse_content_pieces(raw_output: str, agent_name: str = "zoe") -> list:
     """
     if not raw_output or len(raw_output.strip()) < 50:
         return []
-
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        logging.warning("[Parser] ANTHROPIC_API_KEY not set — using heuristic content parser.")
-        return _heuristic_parse_content(raw_output)
 
     prompt = f"""Extract publishable content pieces from this content marketing report.
 Return ONLY a JSON array. No markdown, no explanation.
@@ -429,22 +409,7 @@ REPORT:
 JSON array:"""
 
     try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 3000,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        content = resp.json()["content"][0]["text"].strip()
+        content = _call_parser_llm(prompt, max_tokens=3000)
         pieces = _extract_json_array(content)
         if pieces is None:
             raise ValueError("No parseable JSON array in parser response")

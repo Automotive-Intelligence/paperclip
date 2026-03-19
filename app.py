@@ -606,13 +606,16 @@ def run_tyler_prospecting():
                 "Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', "
                 "'after-hours voicemail'). Opening line should reference a specific observation about "
                 "the business. CTA should be interest-based ('Worth a quick look?'), not a meeting request. "
-                "Also draft one follow-up email angle for each prospect (different value angle for touch 2)."
+                "Also draft one follow-up email angle for each prospect (different value angle for touch 2). "
+                "CRITICAL: Write your complete report directly in your final response. "
+                "Do NOT say 'see above', 'see search results', or reference prior tool output. "
+                "Your final answer must contain all 5 prospect entries written out in full."
             ),
             expected_output=(
-                "Daily prospecting report: (1) 5 outreach targets with business name, type, city, "
-                "reason for targeting, a cold email (subject + body), and a follow-up angle for touch 2. "
-                "(2) Any signals that make today a particularly good time to reach out. "
-                "IMPORTANT: All outreach is via cold email only. No SMS to non-opted-in contacts."
+                "Daily prospecting report with exactly 5 entries written inline — not referenced. "
+                "Each entry: Business Name, Business Type, City, Reason for Targeting, "
+                "Cold Email Subject, Cold Email Body, Follow-up Angle. "
+                "Format each entry with labeled fields. All outreach via cold email only."
             ),
             agent=tyler,
         )
