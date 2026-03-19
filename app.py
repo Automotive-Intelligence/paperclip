@@ -39,6 +39,13 @@ from config.logging_setup import configure_logging, set_request_id
 from config.principles import SYSTEM_IDENTITY, evaluate_action_morally
 from services.database import execute_query, fetch_all
 from services.errors import DatabaseError
+from services.artifact import create_artifact, Artifact, ARTIFACT_TYPES, ARTIFACT_STATUSES
+from services.approval_queue import (
+    queue_artifact, get_pending, get_escalated, get_artifact_record,
+    list_artifacts, approve_artifact, reject_artifact, persist_artifact,
+)
+from services.dispatch import dispatch_artifact
+from services.delivery_receipt import get_receipts
 
 # Load environment variables from .env file
 load_dotenv()
@@ -150,6 +157,57 @@ def init_db():
         logging.info("[DB] agent_logs table ready.")
     except DatabaseError as e:
         logging.error(f"[DB] init_db failed: {e}")
+
+    # ── Activation Layer tables ────────────────────────────────────────────
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS artifacts (
+                artifact_id             TEXT        PRIMARY KEY,
+                agent_id                TEXT        NOT NULL,
+                business_key            TEXT        NOT NULL,
+                artifact_type           TEXT        NOT NULL,
+                audience                TEXT        NOT NULL,
+                intent                  TEXT        NOT NULL,
+                content                 TEXT        NOT NULL,
+                subject                 TEXT,
+                channel_candidates      TEXT        NOT NULL DEFAULT '[]',
+                confidence              REAL        NOT NULL DEFAULT 0.8,
+                risk_level              TEXT        NOT NULL DEFAULT 'medium',
+                requires_human_approval BOOLEAN     NOT NULL DEFAULT TRUE,
+                metadata                TEXT        NOT NULL DEFAULT '{}',
+                created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                status                  TEXT        NOT NULL DEFAULT 'pending_approval'
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifacts_status
+                ON artifacts (status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_business
+                ON artifacts (business_key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS artifact_approvals (
+                id          SERIAL      PRIMARY KEY,
+                artifact_id TEXT        NOT NULL REFERENCES artifacts(artifact_id),
+                decision    TEXT        NOT NULL,
+                reviewer    TEXT        NOT NULL,
+                reason      TEXT,
+                decided_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS delivery_receipts (
+                receipt_id        TEXT        PRIMARY KEY,
+                artifact_id       TEXT        NOT NULL REFERENCES artifacts(artifact_id),
+                channel           TEXT        NOT NULL,
+                status            TEXT        NOT NULL,
+                delivered_at      TIMESTAMPTZ,
+                error             TEXT,
+                provider_response TEXT        DEFAULT '{}',
+                created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_receipts_artifact
+                ON delivery_receipts (artifact_id, created_at DESC);
+        """)
+        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts).")
+    except DatabaseError as e:
+        logging.error(f"[DB] Activation Layer table init failed: {e}")
 
 
 def persist_log(agent_name: str, log_type: str, content: str):
@@ -1855,6 +1913,220 @@ async def update_crm_config(
         "updated": changed,
         "crm_config": crm_status_snapshot(),
     }
+
+
+# ── Activation Layer — Artifact & Approval Queue API ─────────────────────────
+
+class ArtifactCreateRequest(BaseModel):
+    """Request body for manually submitting an artifact from an external agent or system."""
+    agent_id: str
+    business_key: str
+    artifact_type: str
+    audience: str
+    intent: str
+    content: str
+    subject: Optional[str] = None
+    channel_candidates: Optional[List[str]] = None
+    confidence: float = 0.8
+    risk_level: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RejectRequest(BaseModel):
+    reason: str = ""
+
+
+@app.post("/api/artifacts")
+async def submit_artifact(
+    payload: ArtifactCreateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Submit a new artifact into the Activation Layer.
+
+    The system evaluates the artifact against the moral gate, assigns a risk
+    tier, and either auto-approves and dispatches it (low risk, high confidence)
+    or places it in the approval queue / escalation lane.
+
+    Requires Bearer auth when API_KEYS is configured.
+    """
+    validate_key(authorization)
+
+    try:
+        artifact = create_artifact(
+            agent_id=payload.agent_id,
+            business_key=payload.business_key,
+            artifact_type=payload.artifact_type,
+            audience=payload.audience,
+            intent=payload.intent,
+            content=payload.content,
+            subject=payload.subject,
+            channel_candidates=payload.channel_candidates,
+            confidence=payload.confidence,
+            risk_level=payload.risk_level,
+            metadata=payload.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    artifact_id = queue_artifact(artifact)
+
+    receipt = None
+    if artifact.status == "auto_approved":
+        try:
+            receipt = dispatch_artifact(artifact)
+        except Exception as exc:
+            logging.error("[artifacts] auto-dispatch failed for %s: %s", artifact_id, exc)
+
+    return {
+        "artifact_id": artifact_id,
+        "status": artifact.status,
+        "risk_level": artifact.risk_level,
+        "requires_human_approval": artifact.requires_human_approval,
+        "receipt": receipt.to_dict() if receipt else None,
+    }
+
+
+@app.get("/api/artifacts")
+async def list_artifacts_endpoint(
+    business_key: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    List artifacts with optional filters.
+
+    Query params:
+        business_key — filter by business
+        agent_id     — filter by producing agent
+        status       — filter by status (pending_approval, delivered, failed, …)
+        limit        — max results (default 50, max 200)
+    """
+    validate_key(authorization)
+
+    if status and status not in ARTIFACT_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status '{status}'. Valid: {sorted(ARTIFACT_STATUSES)}",
+        )
+
+    items = list_artifacts(
+        business_key=business_key,
+        agent_id=agent_id,
+        status=status,
+        limit=limit,
+    )
+    return {"count": len(items), "artifacts": items}
+
+
+@app.get("/api/artifacts/pending")
+async def get_pending_approvals(authorization: Optional[str] = Header(None)):
+    """Return all artifacts waiting for human approval (oldest first)."""
+    validate_key(authorization)
+    items = get_pending()
+    return {"count": len(items), "pending": items}
+
+
+@app.get("/api/artifacts/escalated")
+async def get_escalated_artifacts(authorization: Optional[str] = Header(None)):
+    """Return all escalated artifacts (high risk or moral-gate failures)."""
+    validate_key(authorization)
+    items = get_escalated()
+    return {"count": len(items), "escalated": items}
+
+
+@app.get("/api/artifacts/{artifact_id}")
+async def get_artifact(artifact_id: str, authorization: Optional[str] = Header(None)):
+    """Return a single artifact and all its delivery receipts."""
+    validate_key(authorization)
+    record = get_artifact_record(artifact_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found.")
+    receipts = get_receipts(artifact_id)
+    return {
+        "artifact": record,
+        "receipts": [r.to_dict() for r in receipts],
+    }
+
+
+@app.post("/api/artifacts/{artifact_id}/approve")
+async def approve_artifact_endpoint(
+    artifact_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    1-click approval — approve a queued artifact and dispatch it immediately.
+
+    Requires Bearer auth. The reviewer identity is inferred from the API key
+    header (recorded in the approval audit log as "api_key_holder").
+    """
+    validate_key(authorization)
+
+    ok = approve_artifact(artifact_id, reviewer="api_key_holder")
+    if not ok:
+        record = get_artifact_record(artifact_id)
+        current_status = record["status"] if record else "not_found"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve artifact '{artifact_id}' — current status: '{current_status}'.",
+        )
+
+    # Reconstruct an Artifact object for dispatch from the DB record
+    record = get_artifact_record(artifact_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Artifact not found after approval.")
+
+    import datetime as _dt
+    artifact = Artifact(
+        artifact_id=record["artifact_id"],
+        agent_id=record["agent_id"],
+        business_key=record["business_key"],
+        artifact_type=record["artifact_type"],
+        audience=record["audience"],
+        intent=record["intent"],
+        content=record["content"],
+        subject=record.get("subject"),
+        channel_candidates=record.get("channel_candidates") or [],
+        confidence=float(record.get("confidence", 0.8)),
+        risk_level=record["risk_level"],
+        requires_human_approval=bool(record.get("requires_human_approval", True)),
+        metadata=record.get("metadata") or {},
+        created_at=record["created_at"] if isinstance(record["created_at"], _dt.datetime)
+                   else _dt.datetime.utcnow(),
+        status="approved",
+    )
+
+    try:
+        receipt = dispatch_artifact(artifact)
+    except Exception as exc:
+        logging.error("[artifacts] dispatch after approval failed for %s: %s", artifact_id, exc)
+        raise HTTPException(status_code=500, detail=f"Dispatch failed: {exc}")
+
+    return {
+        "artifact_id": artifact_id,
+        "status": "dispatched",
+        "receipt": receipt.to_dict(),
+    }
+
+
+@app.post("/api/artifacts/{artifact_id}/reject")
+async def reject_artifact_endpoint(
+    artifact_id: str,
+    payload: RejectRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Reject a queued artifact. It will not be dispatched."""
+    validate_key(authorization)
+
+    ok = reject_artifact(artifact_id, reviewer="api_key_holder", reason=payload.reason)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artifact '{artifact_id}' not found.",
+        )
+    return {"artifact_id": artifact_id, "status": "rejected", "reason": payload.reason}
 
 
 @app.get("/api/agent-logs/{agent_name}")
