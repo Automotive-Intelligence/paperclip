@@ -1,8 +1,10 @@
 import os
 import json
 import unittest
+from unittest.mock import patch, MagicMock
 
 from config import runtime
+from services.errors import DatabaseError
 
 
 class CrmRoutingConfigTests(unittest.TestCase):
@@ -43,5 +45,81 @@ class CrmRoutingConfigTests(unittest.TestCase):
         self.assertTrue(s.crm_provider_ready('ghl'))
 
 
+class CrmConfigWriteEndpointTests(unittest.TestCase):
+    """Tests for POST /api/crm/config — runtime CRM reconfiguration."""
+
+    def setUp(self):
+        self._backup = dict(os.environ)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._backup)
+        runtime.get_settings.cache_clear()
+
+    def test_post_crm_config_updates_env_and_clears_cache(self):
+        from fastapi.testclient import TestClient
+        import app as _app
+        client = TestClient(_app.app)
+
+        # Ensure no auth gate
+        os.environ.pop('API_KEYS', None)
+        runtime.get_settings.cache_clear()
+
+        payload = {"business_crm_map": {"aiphoneguy": "hubspot"}}
+        resp = client.post("/api/crm/config", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("business_crm_map", data["updated"])
+        self.assertEqual(os.environ.get("BUSINESS_CRM_MAP"), '{"aiphoneguy": "hubspot"}')
+
+    def test_post_crm_config_rejects_invalid_provider(self):
+        from fastapi.testclient import TestClient
+        import app as _app
+        client = TestClient(_app.app)
+
+        os.environ.pop('API_KEYS', None)
+        runtime.get_settings.cache_clear()
+
+        payload = {"business_crm_map": {"aiphoneguy": "salesforce"}}
+        resp = client.post("/api/crm/config", json=payload)
+        self.assertEqual(resp.status_code, 422)
+
+    def test_post_crm_config_rejects_empty_payload(self):
+        from fastapi.testclient import TestClient
+        import app as _app
+        client = TestClient(_app.app)
+
+        os.environ.pop('API_KEYS', None)
+        runtime.get_settings.cache_clear()
+
+        resp = client.post("/api/crm/config", json={})
+        self.assertEqual(resp.status_code, 400)
+
+
+class DatabaseServiceLayerTests(unittest.TestCase):
+    """Tests for services/database.py retry helpers."""
+
+    def test_execute_query_raises_database_error_without_url(self):
+        from services.database import execute_query
+        with patch.dict(os.environ, {"DATABASE_URL": ""}):
+            with self.assertRaises(DatabaseError) as ctx:
+                execute_query("SELECT 1")
+            self.assertIn("DATABASE_URL", str(ctx.exception))
+
+    def test_fetch_all_raises_database_error_without_url(self):
+        from services.database import fetch_all
+        with patch.dict(os.environ, {"DATABASE_URL": ""}):
+            with self.assertRaises(DatabaseError) as ctx:
+                fetch_all("SELECT 1")
+            self.assertIn("DATABASE_URL", str(ctx.exception))
+
+    def test_database_error_is_typed(self):
+        err = DatabaseError("test_op", "something broke", retryable=True)
+        self.assertEqual(err.operation, "test_op")
+        self.assertTrue(err.retryable)
+        self.assertIn("test_op", str(err))
+
+
 if __name__ == '__main__':
     unittest.main()
+

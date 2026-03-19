@@ -37,6 +37,8 @@ import pytz
 from config.runtime import get_settings
 from config.logging_setup import configure_logging, set_request_id
 from config.principles import SYSTEM_IDENTITY, evaluate_action_morally
+from services.database import execute_query, fetch_all
+from services.errors import DatabaseError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -133,22 +135,20 @@ def init_db():
         logging.warning("[DB] DATABASE_URL not set — Postgres logging disabled, using filesystem.")
         return
     try:
-        with _db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS agent_logs (
-                        id          SERIAL PRIMARY KEY,
-                        agent_name  TEXT        NOT NULL,
-                        log_type    TEXT        NOT NULL,
-                        run_date    DATE        NOT NULL,
-                        content     TEXT        NOT NULL,
-                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_agent_logs_lookup
-                        ON agent_logs (agent_name, created_at DESC);
-                """)
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS agent_logs (
+                id          SERIAL PRIMARY KEY,
+                agent_name  TEXT        NOT NULL,
+                log_type    TEXT        NOT NULL,
+                run_date    DATE        NOT NULL,
+                content     TEXT        NOT NULL,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_logs_lookup
+                ON agent_logs (agent_name, created_at DESC);
+        """)
         logging.info("[DB] agent_logs table ready.")
-    except Exception as e:
+    except DatabaseError as e:
         logging.error(f"[DB] init_db failed: {e}")
 
 
@@ -161,18 +161,16 @@ def persist_log(agent_name: str, log_type: str, content: str):
     if not DATABASE_URL:
         logging.warning(f"[DB] DATABASE_URL not set — cannot persist logs for {agent_name}")
         return
-    
+
     try:
-        with _db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (agent_name, log_type, run_date, content),
-                )
+        execute_query(
+            "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
+            "VALUES (%s, %s, %s, %s)",
+            (agent_name, log_type, run_date, content),
+        )
         logging.info(f"[DB] ✓ Persisted {agent_name}/{log_type} to Postgres ({len(content)} chars)")
-    except Exception as e:
-        logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {type(e).__name__}: {e}")
+    except DatabaseError as e:
+        logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {e}")
 
 
 def _build_ceo_kpi_context(business_key: str) -> str:
@@ -1772,6 +1770,91 @@ async def get_metrics():
 async def get_crm_config():
     """Return CRM mapping and provider readiness for plug-and-play onboarding."""
     return crm_status_snapshot()
+
+
+class CrmConfigUpdate(BaseModel):
+    """Payload for updating CRM routing and credentials at runtime.
+
+    All fields are optional — send only what you want to change.
+    Changes survive until the next process restart (Railway env vars are the
+    persistent store; use this endpoint to apply changes without redeploying).
+    """
+    # Routing maps  {business_key: provider}  e.g. {"aiphoneguy": "ghl"}
+    business_crm_map: Optional[Dict[str, str]] = None
+    # Agent-level overrides  {agent_id: provider}
+    agent_crm_map: Optional[Dict[str, str]] = None
+    # Credentials — omit any key you don't want to change
+    ghl_api_key: Optional[str] = None
+    ghl_location_id: Optional[str] = None
+    hubspot_api_key: Optional[str] = None
+    attio_api_key: Optional[str] = None
+
+
+_VALID_PROVIDERS = {"ghl", "hubspot", "attio"}
+
+
+@app.post("/api/crm/config")
+async def update_crm_config(
+    payload: CrmConfigUpdate,
+    authorization: Optional[str] = Header(None),
+):
+    """Update CRM routing and credentials at runtime without redeploying.
+
+    Requires Bearer auth when API_KEYS is configured.
+    Changes take effect immediately — next CRM push uses the new mapping.
+    """
+    validate_key(authorization)
+
+    import json as _json
+
+    changed: List[str] = []
+
+    # -- Validate and apply business_crm_map
+    if payload.business_crm_map is not None:
+        for biz, provider in payload.business_crm_map.items():
+            if provider not in _VALID_PROVIDERS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid provider '{provider}' for business '{biz}'. Must be one of: {sorted(_VALID_PROVIDERS)}",
+                )
+        os.environ["BUSINESS_CRM_MAP"] = _json.dumps(payload.business_crm_map)
+        changed.append("business_crm_map")
+
+    # -- Validate and apply agent_crm_map
+    if payload.agent_crm_map is not None:
+        for agent, provider in payload.agent_crm_map.items():
+            if provider not in _VALID_PROVIDERS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid provider '{provider}' for agent '{agent}'. Must be one of: {sorted(_VALID_PROVIDERS)}",
+                )
+        os.environ["AGENT_CRM_MAP"] = _json.dumps(payload.agent_crm_map)
+        changed.append("agent_crm_map")
+
+    # -- Apply credential updates (never log or echo values back)
+    if payload.ghl_api_key:
+        os.environ["GHL_API_KEY"] = payload.ghl_api_key.strip()
+        changed.append("ghl_api_key")
+    if payload.ghl_location_id:
+        os.environ["GHL_LOCATION_ID"] = payload.ghl_location_id.strip()
+        changed.append("ghl_location_id")
+    if payload.hubspot_api_key:
+        os.environ["HUBSPOT_API_KEY"] = payload.hubspot_api_key.strip()
+        changed.append("hubspot_api_key")
+    if payload.attio_api_key:
+        os.environ["ATTIO_API_KEY"] = payload.attio_api_key.strip()
+        changed.append("attio_api_key")
+
+    if not changed:
+        raise HTTPException(status_code=400, detail="No fields provided to update.")
+
+    # -- Clear cached settings so next call re-reads the updated env vars
+    get_settings.cache_clear()
+
+    return {
+        "updated": changed,
+        "crm_config": crm_status_snapshot(),
+    }
 
 
 @app.get("/api/agent-logs/{agent_name}")

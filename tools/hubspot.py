@@ -131,6 +131,50 @@ def _create_company(prospect: dict, source_agent: str, business_key: str) -> str
     return data.get("id", "")
 
 
+def _associate_deal(deal_id: str, object_type: str, object_id: str, assoc_type_id: int) -> None:
+    """Associate a deal with a contact (type 3) or company (type 5). Fails silently — association
+    is best-effort and should not block the prospect push."""
+    if not deal_id or not object_id:
+        return
+    try:
+        _hubspot_request(
+            f"associate_deal_{object_type}",
+            "PUT",
+            f"/crm/v3/objects/deals/{deal_id}/associations/{object_type}/{object_id}/{assoc_type_id}",
+            timeout=10,
+        )
+    except Exception as e:
+        logging.warning(f"[HubSpot] Could not associate deal {deal_id} with {object_type} {object_id}: {e}")
+
+
+def _create_deal(prospect: dict, source_agent: str, contact_id: str = "", company_id: str = "") -> str:
+    """Create a HubSpot deal and associate it with the given contact or company.
+
+    Pipeline and deal stage are read from env vars so each customer can configure
+    their own HubSpot pipeline without code changes:
+        HUBSPOT_PIPELINE_ID   — defaults to 'default'
+        HUBSPOT_DEAL_STAGE_NEW — defaults to 'appointmentscheduled'
+    """
+    pipeline_id = (os.getenv("HUBSPOT_PIPELINE_ID") or "default").strip()
+    deal_stage = (os.getenv("HUBSPOT_DEAL_STAGE_NEW") or "appointmentscheduled").strip()
+    props = {
+        "dealname": f"{prospect.get('business_name', 'Unknown')} — {source_agent}",
+        "pipeline": pipeline_id,
+        "dealstage": deal_stage,
+        "description": prospect.get("reason", ""),
+    }
+    try:
+        data = _hubspot_request("create_deal", "POST", "/crm/v3/objects/deals", json_body={"properties": props}, timeout=15)
+        deal_id = data.get("id", "")
+        if deal_id:
+            _associate_deal(deal_id, "contacts", contact_id, 3)   # deal → contact
+            _associate_deal(deal_id, "companies", company_id, 5)  # deal → company
+        return deal_id
+    except Exception as e:
+        logging.warning(f"[HubSpot] Deal creation failed: {e}")
+        return ""
+
+
 def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", business_key: str = "autointelligence") -> list:
     """Push parsed prospects to HubSpot as contacts (preferred) or companies."""
     if not hubspot_ready():
@@ -152,11 +196,13 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     })
                     continue
                 new_id = _create_contact(p, source_agent, business_key)
+                _create_deal(p, source_agent, contact_id=new_id)
                 results.append({
                     "business_name": business_name,
                     "contact_id": new_id,
                     "status": "created",
                     "email_sent": False,
+                    "deal_created": True,
                     "provider": "hubspot",
                 })
                 continue
@@ -172,11 +218,13 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                 continue
 
             new_id = _create_company(p, source_agent, business_key)
+            _create_deal(p, source_agent, company_id=new_id)
             results.append({
                 "business_name": business_name,
                 "contact_id": new_id,
                 "status": "created",
                 "email_sent": False,
+                "deal_created": True,
                 "provider": "hubspot",
             })
         except Exception as e:

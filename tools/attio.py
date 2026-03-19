@@ -61,6 +61,44 @@ def _attio_request(operation: str, method: str, path: str, *, json_body: dict | 
     raise ServiceCallError(response.error)
 
 
+def _search_company_by_name(name: str) -> str | None:
+    """Return existing record_id if a company with this name exists, else None."""
+    if not name:
+        return None
+    payload = {
+        "filter": {"name": {"$equals": name}},
+        "limit": 1,
+    }
+    try:
+        data = _attio_request("search_company", "POST", "/objects/companies/records/query", json_body=payload, timeout=15)
+        records = data.get("data", [])
+        if not records:
+            return None
+        rec = records[0]
+        return rec.get("id", {}).get("record_id") if isinstance(rec.get("id"), dict) else None
+    except Exception:
+        return None  # fail open — attempt create rather than silently skip
+
+
+def _search_person_by_email(email: str) -> str | None:
+    """Return existing record_id if a person with this email exists, else None."""
+    if not email:
+        return None
+    payload = {
+        "filter": {"email_addresses": {"$contains": email}},
+        "limit": 1,
+    }
+    try:
+        data = _attio_request("search_person", "POST", "/objects/people/records/query", json_body=payload, timeout=15)
+        records = data.get("data", [])
+        if not records:
+            return None
+        rec = records[0]
+        return rec.get("id", {}).get("record_id") if isinstance(rec.get("id"), dict) else None
+    except Exception:
+        return None  # fail open
+
+
 def _create_company_record(prospect: dict, source_agent: str, business_key: str) -> str:
     # Attio values are arrays of value objects for many system fields.
     payload = {
@@ -105,9 +143,28 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
     for p in prospects:
         business_name = p.get("business_name", "")
         try:
-            if (p.get("email") or "").strip():
+            email = (p.get("email") or "").strip()
+            if email:
+                existing_id = _search_person_by_email(email)
+                if existing_id:
+                    results.append({
+                        "business_name": business_name,
+                        "contact_id": existing_id,
+                        "status": "duplicate_skipped",
+                        "provider": "attio",
+                    })
+                    continue
                 rec_id = _create_person_record(p, source_agent, business_key)
             else:
+                existing_id = _search_company_by_name(business_name)
+                if existing_id:
+                    results.append({
+                        "business_name": business_name,
+                        "contact_id": existing_id,
+                        "status": "duplicate_skipped",
+                        "provider": "attio",
+                    })
+                    continue
                 rec_id = _create_company_record(p, source_agent, business_key)
 
             results.append({

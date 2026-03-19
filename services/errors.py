@@ -53,3 +53,13 @@ class ServiceCallError(RuntimeError):
             f"{self.error.provider}.{self.error.operation} failed "
             f"(status={code}, retryable={self.error.retryable}): {self.error.message}"
         )
+
+
+class DatabaseError(RuntimeError):
+    """Raised by services/database.py when a query fails after all retry attempts."""
+
+    def __init__(self, operation: str, message: str, *, retryable: bool = False):
+        self.operation = operation
+        self.message = message
+        self.retryable = retryable
+        super().__init__(f"database.{operation} failed: {message}")
