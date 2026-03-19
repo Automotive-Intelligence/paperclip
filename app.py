@@ -306,6 +306,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
 
     try:
         prospects = parse_prospects(raw_output, agent_name=agent_name)
+        raw_preview = (raw_output or "")[:400].replace("\n", " ")
         if not prospects:
             logging.warning(f"[Pipeline] No prospects parsed from {agent_name}'s output.")
             return {
@@ -314,6 +315,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 "ghl_created": 0,
                 "emails_sent": 0,
                 "failed": 0,
+                "raw_preview": raw_preview,
             }
 
         ghl_results = push_prospects_to_ghl(
@@ -363,6 +365,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "emails_sent": emails_sent,
             "failed": failed,
             "failure_samples": failure_samples,
+            "raw_preview": (raw_output or "")[:400].replace("\n", " "),
         }
 
     except Exception as e:

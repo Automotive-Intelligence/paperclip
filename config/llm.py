@@ -31,5 +31,5 @@ def get_llm():
         model=model_name,
         provider="litellm",
         api_key=api_key,
-        max_tokens=1200,
+        max_tokens=4000,
     )
