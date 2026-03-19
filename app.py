@@ -3,6 +3,7 @@ import glob
 import logging
 import datetime
 import json
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
@@ -1455,18 +1456,19 @@ async def run_now(
         )
 
     started_at = datetime.datetime.now(CST).isoformat()
-    results = []
 
-    for job_name, fn in jobs:
+    async def _run_job(job_name, fn):
         try:
-            fn_result = fn()
+            fn_result = await asyncio.to_thread(fn)
             row = {"job": job_name, "status": "ok"}
             if debug and isinstance(fn_result, dict):
                 row["debug"] = fn_result
-            results.append(row)
+            return row
         except Exception as e:
             logging.error(f"[RunNow] {job_name} failed: {type(e).__name__}: {e}")
-            results.append({"job": job_name, "status": "error", "error": f"{type(e).__name__}: {e}"})
+            return {"job": job_name, "status": "error", "error": f"{type(e).__name__}: {e}"}
+
+    results = list(await asyncio.gather(*[_run_job(name, fn) for name, fn in jobs]))
 
     return JSONResponse(
         content={
