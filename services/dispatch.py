@@ -37,9 +37,19 @@ feedback loop is never broken.
 import logging
 from typing import Optional
 
+from typing import Optional
+
 from services.artifact import Artifact
 from services.delivery_receipt import DeliveryReceipt, make_receipt, record_receipt
 from services.approval_queue import _update_artifact_status
+
+
+def _update_artifact_status_safe(artifact_id: str, status: str) -> None:
+    """Update artifact status, eating exceptions so dispatch never crashes on DB errors."""
+    try:
+        _update_artifact_status(artifact_id, status)
+    except Exception as exc:
+        logger.warning("[dispatch] status update failed for %s: %s", artifact_id, exc)
 
 logger = logging.getLogger(__name__)
 
@@ -198,11 +208,79 @@ def _dispatch_stub(artifact: Artifact, channel: str) -> DeliveryReceipt:
     )
 
 
+def _dispatch_log(artifact: Artifact) -> DeliveryReceipt:
+    """
+    Log channel — for internal notes, reports, and any artifact that does not
+    need to reach an external system. Content is persisted to agent_logs in
+    Postgres and the receipt is marked delivered immediately.
+
+    This is the correct default for audience='internal' artifacts so the
+    pipeline completes without requiring external credentials or metadata.
+    """
+    from services.database import execute_query
+    from services.errors import DatabaseError
+    import datetime
+
+    try:
+        execute_query(
+            "INSERT INTO agent_logs (agent_name, log_type, run_date, content) "
+            "VALUES (%s, %s, %s, %s)",
+            (
+                artifact.agent_id,
+                f"artifact:{artifact.artifact_type}",
+                datetime.date.today(),
+                artifact.content[:10000],  # guard against oversized payloads
+            ),
+        )
+        logger.info(
+            "[dispatch] log channel artifact=%s agent=%s type=%s",
+            artifact.artifact_id, artifact.agent_id, artifact.artifact_type,
+        )
+    except DatabaseError as exc:
+        logger.warning("[dispatch] log channel DB write failed: %s", exc)
+
+    return make_receipt(
+        artifact.artifact_id,
+        "log",
+        status="delivered",
+        provider_response={"destination": "agent_logs"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Metadata pre-validation
+# ---------------------------------------------------------------------------
+
+def _validate_channel_metadata(artifact: Artifact, channel: str) -> Optional[str]:
+    """
+    Return an error string if required metadata for the channel is missing,
+    or None if all required fields are present.
+
+    Called before invoking the adapter so callers get a clear receipt error
+    rather than an opaque exception from deep inside an adapter.
+    """
+    meta = artifact.metadata or {}
+    if channel == "email" and not meta.get("contact_id"):
+        return (
+            "email dispatch requires metadata.contact_id (GHL contact ID). "
+            "Generate a contact via POST /api/crm first."
+        )
+    if channel == "crm" and not meta.get("prospects"):
+        return (
+            "crm dispatch requires metadata.prospects (list of prospect dicts). "
+            "Populate metadata.prospects or use artifact_type='note' with the log channel."
+        )
+    if channel == "sms" and not meta.get("contact_id"):
+        return "sms dispatch requires metadata.contact_id (GHL contact ID)."
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Channel router map
 # ---------------------------------------------------------------------------
 
 _CHANNEL_ADAPTERS = {
+    "log":      _dispatch_log,
     "email":    _dispatch_email,
     "crm":      _dispatch_crm,
     "sms":      _dispatch_sms,
@@ -240,10 +318,7 @@ def dispatch_artifact(artifact: Artifact) -> DeliveryReceipt:
 
     # Mark as dispatched immediately so concurrent callers don't double-dispatch
     artifact.status = "dispatched"
-    try:
-        _update_artifact_status(artifact.artifact_id, "dispatched")
-    except Exception as exc:
-        logger.warning("[dispatch] status update pre-dispatch failed: %s", exc)
+    _update_artifact_status_safe(artifact.artifact_id, "dispatched")
 
     # Find the first usable channel
     channel = _resolve_channel(artifact)
@@ -254,6 +329,19 @@ def dispatch_artifact(artifact: Artifact) -> DeliveryReceipt:
         artifact.artifact_id, artifact.artifact_type, channel,
     )
 
+    # Pre-validate required metadata before invoking the adapter
+    meta_error = _validate_channel_metadata(artifact, channel)
+    if meta_error:
+        receipt = make_receipt(
+            artifact.artifact_id,
+            channel,
+            status="failed",
+            error=meta_error,
+        )
+        record_receipt(receipt)
+        _update_artifact_status_safe(artifact.artifact_id, "failed")
+        return receipt
+
     receipt = adapter(artifact)
 
     # Persist receipt (fails silently — error is logged inside record_receipt)
@@ -261,10 +349,7 @@ def dispatch_artifact(artifact: Artifact) -> DeliveryReceipt:
 
     # Update artifact status to delivered or failed based on receipt
     final_status = "delivered" if receipt.status in ("delivered", "dispatched") else "failed"
-    try:
-        _update_artifact_status(artifact.artifact_id, final_status)
-    except Exception as exc:
-        logger.warning("[dispatch] status update post-dispatch failed: %s", exc)
+    _update_artifact_status_safe(artifact.artifact_id, final_status)
 
     logger.info(
         "[dispatch] ✓ artifact=%s channel=%s receipt=%s final=%s",

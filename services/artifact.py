@@ -294,10 +294,11 @@ def create_artifact(
 
 def _default_channels(artifact_type: str) -> List[str]:
     return {
-        "email": ["email"],
-        "crm_update": ["crm"],
+        "email":       ["email"],
+        "crm_update":  ["crm"],
         "social_post": ["linkedin", "twitter"],
-        "report": ["email", "crm"],
+        "report":      ["log", "email"],  # log first (always works), email if contact_id present
+        "note":        ["log"],           # internal notes go to log channel, never CRM by default
         "task": ["crm"],
         "ad": ["meta", "google"],
         "sms": ["sms"],

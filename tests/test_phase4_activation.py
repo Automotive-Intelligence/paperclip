@@ -296,6 +296,7 @@ class DispatchTests(unittest.TestCase):
             intent="inform",
             content="Briefing note.",
             confidence=0.95,
+            metadata={"contact_id": "test-contact-123"},  # required by email pre-validation
         )
         self.assertEqual(a.status, "auto_approved")
         a.channel_candidates = ["email"]  # force email channel
