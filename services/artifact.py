@@ -299,8 +299,7 @@ def _default_channels(artifact_type: str) -> List[str]:
         "social_post": ["linkedin", "twitter"],
         "report":      ["log", "email"],  # log first (always works), email if contact_id present
         "note":        ["log"],           # internal notes go to log channel, never CRM by default
-        "task": ["crm"],
-        "ad": ["meta", "google"],
-        "sms": ["sms"],
-        "note": ["crm"],
-    }.get(artifact_type, ["email"])
+        "task":        ["crm"],
+        "ad":          ["meta", "google"],
+        "sms":         ["sms"],
+    }.get(artifact_type, ["log"])
