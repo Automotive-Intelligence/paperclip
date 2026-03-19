@@ -4,22 +4,32 @@ from crewai import LLM
 
 def get_llm():
     """
-    Returns a Groq LLM instance via litellm (free preview tier, 500x faster than Claude).
-    Cost-optimized for 24/7 agent execution: $0/month
+    Returns an LLM instance via LiteLLM.
+    Provider/model are configurable via environment variables to support low-cost routing.
     """
-    groq_api_key = os.environ.get("GROQ_API_KEY")
-    
-    # Don't crash at import time - let app start and show error on dashboard
-    if not groq_api_key:
-        print("⚠️  WARNING: GROQ_API_KEY not set in environment", file=sys.stderr)
-        groq_api_key = "placeholder-key-set-in-railway-variables"
-    
-    # Use litellm provider format: "groq/model-name".
-    # Default to a lower-cost model to avoid daily token cap stalls.
-    model_name = os.getenv("GROQ_MODEL", "groq/llama-3.1-8b-instant")
+    # Priority order keeps backward compatibility with existing Railway variables.
+    model_name = os.getenv("LLM_MODEL") or os.getenv("GROQ_MODEL") or "groq/llama-3.1-8b-instant"
+    api_key = os.getenv("LLM_API_KEY")
+
+    # Auto-pick a key for common providers when LLM_API_KEY is not explicitly set.
+    if not api_key:
+        if model_name.startswith("groq/"):
+            api_key = os.getenv("GROQ_API_KEY")
+        elif model_name.startswith("openrouter/"):
+            api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        elif model_name.startswith("deepseek/"):
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+
+    # Don't crash at import time; surface warning in logs/dashboard.
+    if not api_key:
+        print("⚠️  WARNING: No API key found for configured LLM model", file=sys.stderr)
+        api_key = "placeholder-key-set-in-railway-variables"
+
     return LLM(
         model=model_name,
         provider="litellm",
-        api_key=groq_api_key,
+        api_key=api_key,
         max_tokens=1200,
     )
