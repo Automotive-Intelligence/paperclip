@@ -1688,7 +1688,6 @@ async def get_metrics():
         "jobs_registered": len(jobs_info),
         "agents_total": 15,
         "test_pass_rate": test_pass_rate,
-        "api_endpoint": "http://127.0.0.1:8000",
         "uptime": "running",
         "database": "Postgres" if DATABASE_URL else "Filesystem"
     }

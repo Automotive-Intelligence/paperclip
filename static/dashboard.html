@@ -131,12 +131,8 @@
         <div id="logs-tab" class="tab-content" style="display: none;">
             <div class="card">
                 <h2>Recent Logs</h2>
-                <div class="log-viewer">
-                    <div style="color: #7ec699;">[INFO] Server started on http://127.0.0.1:8000</div>
-                    <div style="color: #7ec699;">[INFO] ✓ Scheduler started with 27 jobs</div>
-                    <div style="color: #7ec699;">[INFO] ✓ All 15 agents loaded successfully</div>
-                    <div style="color: #dcdcaa;">[WARNING] Database not configured - using filesystem</div>
-                    <div style="color: #7ec699;">[INFO] Dashboard ready at /dashboard</div>
+                <div class="log-viewer" id="log-viewer-content">
+                    <div style="color: #999;">Loading logs...</div>
                 </div>
             </div>
         </div>
@@ -144,27 +140,7 @@
         <div id="test-tab" class="tab-content" style="display: none;">
             <div class="card">
                 <h2>Latest Test Results</h2>
-                <div style="padding: 15px; background: #f9fafb; border-radius: 6px; margin-bottom: 15px;">
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-                        <div>
-                            <div style="font-size: 12px; color: #999; text-transform: uppercase;">Pass Rate</div>
-                            <div style="font-size: 28px; font-weight: bold; color: #10b981;">✓ 14/14</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 12px; color: #999; text-transform: uppercase;">Duration</div>
-                            <div style="font-size: 28px; font-weight: bold; color: #667eea;">12.92s</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 12px; color: #999; text-transform: uppercase;">Run Time</div>
-                            <div style="font-size: 12px; color: #666;">2026-03-17 18:32:21</div>
-                        </div>
-                    </div>
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
-                    <div style="padding: 10px; background: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;"><div style="font-weight: 600; color: #10b981;">✓ alex</div><div style="font-size: 12px; color: #999;">1.088s</div></div>
-                    <div style="padding: 10px; background: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;"><div style="font-weight: 600; color: #10b981;">✓ tyler</div><div style="font-size: 12px; color: #999;">1.653s</div></div>
-                    <div style="padding: 10px; background: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;"><div style="font-weight: 600; color: #10b981;">✓ zoe</div><div style="font-size: 12px; color: #999;">0.863s</div></div>
-                </div>
+                <div id="test-results-content" style="padding: 20px; color: #999; text-align: center;">Loading test results...</div>
             </div>
         </div>
     </div>
@@ -331,16 +307,23 @@
 
         async function refreshDashboard() {
             try {
-                const [agentsData, jobsData, logsData, resultsData, metricsData] = await Promise.all([
+                const [agentsData, jobsData, logsData, resultsData, metricsData, revenueData] = await Promise.all([
                     fetchData('/api/agents'),
                     fetchData('/api/jobs'),
                     fetchData('/api/logs?limit=15'),
                     fetchData('/api/test-results'),
-                    fetchData('/api/metrics')
+                    fetchData('/api/metrics'),
+                    fetchData('/revenue?days=1')
                 ]);
 
                 if (metricsData) {
                     document.getElementById('jobs-count').textContent = metricsData.jobs_registered || 27;
+                }
+
+                if (revenueData) {
+                    document.getElementById('prospects-created').textContent = revenueData.prospects_created ?? 0;
+                    document.getElementById('emails-sent').textContent = revenueData.emails_sent ?? 0;
+                    document.getElementById('content-created').textContent = revenueData.content_queued ?? 0;
                 }
 
                 if (jobsData && jobsData.jobs) {
@@ -361,7 +344,7 @@
                 }
 
                 if (logsData && logsData.entries) {
-                    const logViewer = document.querySelector('.log-viewer');
+                    const logViewer = document.getElementById('log-viewer-content');
                     logViewer.innerHTML = '';
                     if (logsData.entries.length > 0) {
                         logsData.entries.slice(-10).reverse().forEach(entry => {
@@ -377,40 +360,27 @@
 
                 if (resultsData && resultsData.results) {
                     const results = resultsData.results;
-                    const testGrid = document.querySelector('[style*="grid-template-columns: repeat(3"]');
-                    if (testGrid) {
-                        testGrid.innerHTML = `
-                            <div>
-                                <div style="font-size: 12px; color: #999; text-transform: uppercase;">Pass Rate</div>
-                                <div style="font-size: 28px; font-weight: bold; color: #10b981;">✓ ${results.pass_rate || '14/14'}</div>
+                    const testEl = document.getElementById('test-results-content');
+                    if (testEl) {
+                        let agentCards = '';
+                        if (results.execution_times) {
+                            agentCards = Object.entries(results.execution_times)
+                                .sort((a, b) => a[1] - b[1])
+                                .map(([agent, time]) => `<div style="padding:10px;background:#f0fdf4;border:1px solid #10b981;border-radius:6px;"><div style="font-weight:600;color:#10b981;">✓ ${agent}</div><div style="font-size:12px;color:#999;">${time.toFixed(3)}s</div></div>`)
+                                .join('');
+                        }
+                        testEl.innerHTML = `
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:15px;">
+                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Pass Rate</div><div style="font-size:28px;font-weight:bold;color:#10b981;">✓ ${results.pass_rate || 'N/A'}</div></div>
+                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Duration</div><div style="font-size:28px;font-weight:bold;color:#667eea;">${(results.total_duration_seconds || 0).toFixed(2)}s</div></div>
+                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Run Time</div><div style="font-size:12px;color:#666;">${new Date().toLocaleString()}</div></div>
                             </div>
-                            <div>
-                                <div style="font-size: 12px; color: #999; text-transform: uppercase;">Duration</div>
-                                <div style="font-size: 28px; font-weight: bold; color: #667eea;">${(results.total_duration_seconds || 12.92).toFixed(2)}s</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 12px; color: #999; text-transform: uppercase;">Run Time</div>
-                                <div style="font-size: 12px; color: #666;">${new Date().toLocaleString()}</div>
-                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">${agentCards}</div>
                         `;
                     }
-
-                    const agentGrid = document.querySelector('[style*="grid-template-columns: repeat(auto-fit"]');
-                    if (agentGrid && results.execution_times) {
-                        agentGrid.innerHTML = '';
-                        Object.entries(results.execution_times)
-                            .sort((a, b) => a[1] - b[1])
-                            .slice(0, 6)
-                            .forEach(([agent, time]) => {
-                                const card = document.createElement('div');
-                                card.style.cssText = 'padding: 10px; background: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;';
-                                card.innerHTML = `
-                                    <div style="font-weight: 600; color: #10b981;">✓ ${agent}</div>
-                                    <div style="font-size: 12px; color: #999;">${time.toFixed(3)}s</div>
-                                `;
-                                agentGrid.appendChild(card);
-                            });
-                    }
+                } else {
+                    const testEl = document.getElementById('test-results-content');
+                    if (testEl) testEl.innerHTML = '<div style="color:#999;padding:20px;text-align:center;">No test runs yet — tests run daily at 6:30 PM CST</div>';
                 }
 
             } catch (error) {
