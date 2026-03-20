@@ -22,12 +22,213 @@ workflow triggers, and pipeline tracking across all 3 businesses.
 
 import os
 import logging
+import html
+import re
 from typing import Optional
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.outbound_email import email_delivery_mode, send_unified_email
 
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
+
+
+def _slugify(value: str) -> str:
+    text = (value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"-+", "-", text)
+    return text[:96].strip("-") or "daily-update"
+
+
+def _to_html_paragraphs(text: str) -> str:
+    blocks = [b.strip() for b in (text or "").split("\n\n") if b.strip()]
+    if not blocks:
+        return ""
+    return "".join(f"<p>{html.escape(block).replace(chr(10), '<br>')}</p>" for block in blocks)
+
+
+def build_ghl_site_graphic_svg(title: str, subtitle: str = "AI Phone Guy") -> str:
+    """Create a deterministic branded SVG hero graphic for GHL site posts."""
+    safe_title = html.escape((title or "").strip()[:140])
+    safe_subtitle = html.escape((subtitle or "").strip()[:90])
+    return (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630' role='img' "
+        "aria-label='The AI Phone Guy content graphic'>"
+        "<defs>"
+        "<linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'>"
+        "<stop offset='0%' stop-color='#0f172a'/>"
+        "<stop offset='100%' stop-color='#1e3a8a'/>"
+        "</linearGradient>"
+        "</defs>"
+        "<rect width='1200' height='630' fill='url(#bg)'/>"
+        "<circle cx='1030' cy='120' r='190' fill='#22d3ee' opacity='0.14'/>"
+        "<circle cx='120' cy='560' r='180' fill='#38bdf8' opacity='0.12'/>"
+        "<text x='88' y='130' fill='#7dd3fc' font-family='Arial, Helvetica, sans-serif' font-size='30' font-weight='700'>"
+        "THE AI PHONE GUY"
+        "</text>"
+        "<text x='88' y='280' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-size='62' font-weight='700'>"
+        f"{safe_title}"
+        "</text>"
+        "<text x='88' y='360' fill='#bfdbfe' font-family='Arial, Helvetica, sans-serif' font-size='36' font-weight='500'>"
+        f"{safe_subtitle}"
+        "</text>"
+        "<rect x='88' y='430' width='392' height='72' rx='14' fill='#0ea5e9'/>"
+        "<text x='118' y='476' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-size='33' font-weight='700'>"
+        "Never miss a revenue call"
+        "</text>"
+        "</svg>"
+    )
+
+
+def ghl_site_publish_ready() -> bool:
+    """GHL site publishing requires a webhook URL and core GHL credentials."""
+    return bool(
+        os.getenv("GHL_API_KEY", "").strip()
+        and os.getenv("GHL_LOCATION_ID", "").strip()
+        and os.getenv("GHL_SITE_PUBLISH_WEBHOOK_URL", "").strip()
+    )
+
+
+def ghl_social_publish_ready() -> bool:
+    """GHL social publishing requires a webhook URL and core GHL credentials."""
+    return bool(
+        os.getenv("GHL_API_KEY", "").strip()
+        and os.getenv("GHL_LOCATION_ID", "").strip()
+        and os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_URL", "").strip()
+    )
+
+
+def publish_content_to_ghl_site(content_item: dict) -> dict:
+    """Publish a queued content item to a GHL site via webhook integration.
+
+    This keeps Paperclip provider-agnostic while allowing GHL-side site workflows
+    to handle final post creation.
+    """
+    webhook_url = os.getenv("GHL_SITE_PUBLISH_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        raise ValueError("GHL_SITE_PUBLISH_WEBHOOK_URL is not configured.")
+
+    title = (content_item.get("title") or "AI Phone Guy Update").strip()
+    body = (content_item.get("body") or "").strip()
+    cta = (content_item.get("cta") or "").strip()
+    hashtags = (content_item.get("hashtags") or "").strip()
+    slug = _slugify(title)
+    graphic_svg = build_ghl_site_graphic_svg(title=title, subtitle="DFW AI Receptionist Insights")
+
+    payload = {
+        "title": title,
+        "slug": slug,
+        "body_text": body,
+        "body_html": _to_html_paragraphs(body),
+        "cta": cta,
+        "hashtags": hashtags,
+        "platform": content_item.get("platform", ""),
+        "content_type": content_item.get("content_type", ""),
+        "graphic": {
+            "format": "svg",
+            "filename": f"{slug}.svg",
+            "alt": f"{title} - The AI Phone Guy",
+            "svg": graphic_svg,
+        },
+        "source": {
+            "system": "paperclip",
+            "business_key": content_item.get("business_key", "aiphoneguy"),
+            "queue_id": content_item.get("id"),
+            "agent_name": content_item.get("agent_name", "zoe"),
+        },
+    }
+
+    extra_auth = os.getenv("GHL_SITE_PUBLISH_WEBHOOK_AUTH", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if extra_auth:
+        headers["Authorization"] = extra_auth
+
+    result = request_with_retry(
+        provider="ghl",
+        operation="publish_content_to_ghl_site",
+        method="POST",
+        url=webhook_url,
+        headers=headers,
+        json_body=payload,
+        timeout=20,
+        max_attempts=3,
+        backoff_seconds=0.8,
+    )
+    if not result.ok:
+        err = result.error.message if result.error else "unknown"
+        raise RuntimeError(f"GHL site publish failed: {err}")
+
+    data = result.data if isinstance(result.data, dict) else {}
+    return {
+        "status": "published",
+        "slug": slug,
+        "url": data.get("url", ""),
+        "external_id": data.get("id", ""),
+        "provider": "ghl_webhook",
+    }
+
+
+def publish_content_to_ghl_social(content_item: dict) -> dict:
+    """Publish a queued social content item to GHL social workflow via webhook."""
+    webhook_url = os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        raise ValueError("GHL_SOCIAL_PUBLISH_WEBHOOK_URL is not configured.")
+
+    title = (content_item.get("title") or "AI Phone Guy Social Post").strip()
+    body = (content_item.get("body") or "").strip()
+    hashtags = (content_item.get("hashtags") or "").strip()
+    platform = (content_item.get("platform") or "linkedin").strip().lower()
+    post_text = body
+    if hashtags:
+        post_text = f"{body}\n\n{hashtags}".strip()
+
+    payload = {
+        "title": title,
+        "platform": platform,
+        "post_text": post_text,
+        "cta": (content_item.get("cta") or "").strip(),
+        "graphic": {
+            "format": "svg",
+            "filename": f"social-{_slugify(title)}.svg",
+            "alt": f"{title} - social graphic",
+            "svg": build_ghl_site_graphic_svg(title=title, subtitle="Social Content"),
+        },
+        "source": {
+            "system": "paperclip",
+            "business_key": content_item.get("business_key", "aiphoneguy"),
+            "queue_id": content_item.get("id"),
+            "agent_name": content_item.get("agent_name", "zoe"),
+        },
+    }
+
+    extra_auth = os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_AUTH", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if extra_auth:
+        headers["Authorization"] = extra_auth
+
+    result = request_with_retry(
+        provider="ghl",
+        operation="publish_content_to_ghl_social",
+        method="POST",
+        url=webhook_url,
+        headers=headers,
+        json_body=payload,
+        timeout=20,
+        max_attempts=3,
+        backoff_seconds=0.8,
+    )
+    if not result.ok:
+        err = result.error.message if result.error else "unknown"
+        raise RuntimeError(f"GHL social publish failed: {err}")
+
+    data = result.data if isinstance(result.data, dict) else {}
+    return {
+        "status": "published",
+        "platform": platform,
+        "url": data.get("url", ""),
+        "external_id": data.get("id", ""),
+        "provider": "ghl_social_webhook",
+    }
 
 
 def _get_headers() -> dict:
@@ -105,21 +306,19 @@ def create_contact(
         "ryan_data": "Ryan Data AI Prospecting - Dealer Outreach",
     }
 
+    name_parts = (business_name or "").strip().split()
+    first_name = name_parts[0] if name_parts else "Prospect"
+    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else "Lead"
+
     payload = {
         "locationId": location_id,
+        "firstName": first_name,
+        "lastName": last_name,
         "name": business_name,
         "companyName": business_name,
         "city": city,
         "source": source_labels.get(source_agent, f"{source_agent} AI Prospecting"),
         "tags": tags,
-        "customFields": [
-            {"key": "business_type", "value": business_type},
-            {"key": "outreach_reason", "value": reason},
-            {"key": "email_hook", "value": email_hook},
-            {"key": "source_agent", "value": source_agent},
-            {"key": "outreach_channel", "value": "cold-email"},
-            {"key": "pipeline_stage", "value": "new_prospect"},
-        ],
     }
 
     if email:
