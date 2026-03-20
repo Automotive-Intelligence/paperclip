@@ -20,6 +20,9 @@ tools/attio.py - Attio CRM connector for Paperclip sales pipeline.
 
 import os
 import logging
+import smtplib
+from email.message import EmailMessage
+from tools.outbound_email import email_delivery_mode, send_unified_email
 
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
@@ -33,6 +36,18 @@ def _attio_token() -> str:
 
 def attio_ready() -> bool:
     return bool(_attio_token())
+
+
+def attio_email_ready() -> bool:
+    """Attio email sending is enabled when SMTP settings are fully configured."""
+    required = (
+        os.getenv("ATTIO_SMTP_HOST", "").strip(),
+        os.getenv("ATTIO_SMTP_PORT", "").strip(),
+        os.getenv("ATTIO_SMTP_USERNAME", "").strip(),
+        os.getenv("ATTIO_SMTP_PASSWORD", "").strip(),
+        os.getenv("ATTIO_SMTP_FROM", "").strip(),
+    )
+    return bool(attio_ready() and all(required))
 
 
 def _headers() -> dict:
@@ -131,6 +146,37 @@ def _create_person_record(prospect: dict, source_agent: str, business_key: str) 
     return record.get("id", {}).get("record_id", "") if isinstance(record.get("id"), dict) else record.get("id", "")
 
 
+def _send_email_via_smtp(prospect: dict) -> bool:
+    """Send first-touch email using configured SMTP for Attio-routed prospects."""
+    to_email = (prospect.get("email") or "").strip()
+    subject = (prospect.get("subject") or "").strip()
+    body = (prospect.get("body") or "").strip()
+    if not to_email or not subject or not body or not attio_email_ready():
+        return False
+
+    smtp_host = os.getenv("ATTIO_SMTP_HOST", "").strip()
+    smtp_port = int((os.getenv("ATTIO_SMTP_PORT", "587") or "587").strip())
+    smtp_user = os.getenv("ATTIO_SMTP_USERNAME", "").strip()
+    smtp_pass = os.getenv("ATTIO_SMTP_PASSWORD", "").strip()
+    from_email = os.getenv("ATTIO_SMTP_FROM", "").strip()
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        logging.warning("[Attio] SMTP send failed for %s: %s", to_email, e)
+        return False
+
+
 def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", business_key: str = "callingdigital") -> list:
     """Push parsed prospects to Attio records.
 
@@ -151,10 +197,19 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                         "business_name": business_name,
                         "contact_id": existing_id,
                         "status": "duplicate_skipped",
+                        "email_attempted": False,
+                        "email_sent": False,
                         "provider": "attio",
                     })
                     continue
                 rec_id = _create_person_record(p, source_agent, business_key)
+                mode = email_delivery_mode()
+                if mode == "unified":
+                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip())
+                    email_sent = send_unified_email(p.get("email", ""), p.get("subject", ""), p.get("body", "")) if email_attempted else False
+                else:
+                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip() and attio_email_ready())
+                    email_sent = _send_email_via_smtp(p) if email_attempted else False
             else:
                 existing_id = _search_company_by_name(business_name)
                 if existing_id:
@@ -162,16 +217,21 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                         "business_name": business_name,
                         "contact_id": existing_id,
                         "status": "duplicate_skipped",
+                        "email_attempted": False,
+                        "email_sent": False,
                         "provider": "attio",
                     })
                     continue
                 rec_id = _create_company_record(p, source_agent, business_key)
+                email_attempted = False
+                email_sent = False
 
             results.append({
                 "business_name": business_name,
                 "contact_id": rec_id,
                 "status": "created",
-                "email_sent": False,
+                "email_attempted": email_attempted,
+                "email_sent": email_sent,
                 "provider": "attio",
             })
         except Exception as e:
@@ -179,6 +239,8 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
             results.append({
                 "business_name": business_name,
                 "status": "failed",
+                "email_attempted": False,
+                "email_sent": False,
                 "provider": "attio",
                 "error": str(e),
             })

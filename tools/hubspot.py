@@ -24,6 +24,7 @@ from typing import Optional
 
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
+from tools.outbound_email import email_delivery_mode, send_unified_email
 
 HUBSPOT_BASE_URL = "https://api.hubapi.com"
 
@@ -34,6 +35,11 @@ def _hubspot_token() -> str:
 
 def hubspot_ready() -> bool:
     return bool(_hubspot_token())
+
+
+def hubspot_email_ready() -> bool:
+    """HubSpot first-touch email is enabled only when a transactional template is configured."""
+    return hubspot_ready() and bool((os.getenv("HUBSPOT_TRANSACTIONAL_EMAIL_ID") or "").strip())
 
 
 def _headers() -> dict:
@@ -175,6 +181,52 @@ def _create_deal(prospect: dict, source_agent: str, contact_id: str = "", compan
         return ""
 
 
+def _send_transactional_email(prospect: dict) -> bool:
+    """Send first-touch email through HubSpot transactional email API.
+
+    Requirements:
+      - HUBSPOT_TRANSACTIONAL_EMAIL_ID env var must be set.
+      - Prospect must contain email, subject, and body.
+
+    The transactional template should support custom properties:
+      - subject_line
+      - body_copy
+      - business_name
+    """
+    email = (prospect.get("email") or "").strip()
+    subject = (prospect.get("subject") or "").strip()
+    body = (prospect.get("body") or "").strip()
+    email_id = (os.getenv("HUBSPOT_TRANSACTIONAL_EMAIL_ID") or "").strip()
+
+    if not email or not subject or not body or not email_id:
+        return False
+
+    payload = {
+        "emailId": int(email_id),
+        "message": {
+            "to": email,
+            "customProperties": {
+                "subject_line": subject,
+                "body_copy": body,
+                "business_name": prospect.get("business_name", ""),
+            },
+        },
+    }
+
+    try:
+        _hubspot_request(
+            "send_transactional_email",
+            "POST",
+            "/marketing/v3/transactional/single-email/send",
+            json_body=payload,
+            timeout=20,
+        )
+        return True
+    except Exception as e:
+        logging.warning("[HubSpot] Transactional email send failed for %s: %s", email, e)
+        return False
+
+
 def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", business_key: str = "autointelligence") -> list:
     """Push parsed prospects to HubSpot as contacts (preferred) or companies."""
     if not hubspot_ready():
@@ -192,16 +244,26 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                         "business_name": business_name,
                         "contact_id": existing_contact_id,
                         "status": "duplicate_skipped",
+                        "email_attempted": False,
+                        "email_sent": False,
                         "provider": "hubspot",
                     })
                     continue
                 new_id = _create_contact(p, source_agent, business_key)
                 _create_deal(p, source_agent, contact_id=new_id)
+                mode = email_delivery_mode()
+                if mode == "unified":
+                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip())
+                    email_sent = send_unified_email(p.get("email", ""), p.get("subject", ""), p.get("body", "")) if email_attempted else False
+                else:
+                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip() and hubspot_email_ready())
+                    email_sent = _send_transactional_email(p) if email_attempted else False
                 results.append({
                     "business_name": business_name,
                     "contact_id": new_id,
                     "status": "created",
-                    "email_sent": False,
+                    "email_attempted": email_attempted,
+                    "email_sent": email_sent,
                     "deal_created": True,
                     "provider": "hubspot",
                 })
@@ -213,6 +275,8 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     "business_name": business_name,
                     "contact_id": existing_company_id,
                     "status": "duplicate_skipped",
+                    "email_attempted": False,
+                    "email_sent": False,
                     "provider": "hubspot",
                 })
                 continue
@@ -223,6 +287,7 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                 "business_name": business_name,
                 "contact_id": new_id,
                 "status": "created",
+                "email_attempted": False,
                 "email_sent": False,
                 "deal_created": True,
                 "provider": "hubspot",
@@ -232,6 +297,8 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
             results.append({
                 "business_name": business_name,
                 "status": "failed",
+                "email_attempted": False,
+                "email_sent": False,
                 "provider": "hubspot",
                 "error": str(e),
             })

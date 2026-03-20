@@ -64,6 +64,9 @@ except ImportError as _psycopg_err:
 from tools.prospect_parser import parse_tyler_prospects
 from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
 from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
+from tools.hubspot import hubspot_email_ready
+from tools.attio import attio_email_ready
+from tools.outbound_email import email_delivery_mode, unified_email_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
@@ -204,8 +207,26 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_receipts_artifact
                 ON delivery_receipts (artifact_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS quality_snapshots (
+                snapshot_id         TEXT        PRIMARY KEY,
+                window_hours        INTEGER     NOT NULL,
+                total_runs          INTEGER     NOT NULL,
+                active_agents       INTEGER     NOT NULL,
+                availability_ratio  REAL        NOT NULL,
+                short_outputs       INTEGER     NOT NULL,
+                error_like_outputs  INTEGER     NOT NULL,
+                delivered_artifacts INTEGER     NOT NULL,
+                failed_artifacts    INTEGER     NOT NULL,
+                delivery_ratio      REAL        NOT NULL,
+                score               REAL        NOT NULL,
+                details             TEXT        NOT NULL DEFAULT '{}',
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_quality_snapshots_created_at
+                ON quality_snapshots (created_at DESC);
         """)
-        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts).")
+        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots).")
     except DatabaseError as e:
         logging.error(f"[DB] Activation Layer table init failed: {e}")
 
@@ -358,6 +379,137 @@ def _crm_ready_for(business_key: str, agent_name: str) -> bool:
     return provider_ready(provider)
 
 
+def _provider_email_capability(provider: str) -> Dict[str, Any]:
+    """Return whether this provider supports outbound email in current codebase."""
+    p = (provider or "").strip().lower()
+    mode = email_delivery_mode()
+    if mode == "unified":
+        ready = unified_email_ready()
+        return {
+            "provider": p or "unknown",
+            "email_supported": True,
+            "email_send_ready": ready,
+            "missing_requirements": [] if ready else [
+                "MAIL_HOST",
+                "MAIL_PORT",
+                "MAIL_USERNAME",
+                "MAIL_PASSWORD",
+                "MAIL_FROM",
+            ],
+            "notes": "Unified delivery mode is enabled. All providers send through one SMTP sender.",
+        }
+    if p == "ghl":
+        return {
+            "provider": "ghl",
+            "email_supported": True,
+            "email_send_ready": SETTINGS.ghl_ready,
+            "missing_requirements": [] if SETTINGS.ghl_ready else ["GHL_API_KEY", "GHL_LOCATION_ID"],
+            "notes": "Requires a connected sending mailbox inside GHL; API cannot verify mailbox state.",
+        }
+    if p == "hubspot":
+        hubspot_ready_for_email = hubspot_email_ready()
+        return {
+            "provider": "hubspot",
+            "email_supported": hubspot_ready_for_email,
+            "email_send_ready": hubspot_ready_for_email,
+            "missing_requirements": [] if hubspot_ready_for_email else ["HUBSPOT_TRANSACTIONAL_EMAIL_ID"],
+            "notes": (
+                "HubSpot transactional first-touch email is enabled when HUBSPOT_TRANSACTIONAL_EMAIL_ID is set "
+                "and the template supports customProperties (subject_line, body_copy, business_name)."
+            ),
+        }
+    if p == "attio":
+        attio_ready_for_email = attio_email_ready()
+        return {
+            "provider": "attio",
+            "email_supported": attio_ready_for_email,
+            "email_send_ready": attio_ready_for_email,
+            "missing_requirements": [] if attio_ready_for_email else [
+                "ATTIO_SMTP_HOST",
+                "ATTIO_SMTP_PORT",
+                "ATTIO_SMTP_USERNAME",
+                "ATTIO_SMTP_PASSWORD",
+                "ATTIO_SMTP_FROM",
+            ],
+            "notes": "Attio first-touch email is enabled via SMTP when ATTIO_SMTP_* settings are configured.",
+        }
+    return {
+        "provider": p or "unknown",
+        "email_supported": False,
+        "email_send_ready": False,
+        "missing_requirements": ["Unsupported provider mapping"],
+        "notes": "Provider is not recognized by the CRM router.",
+    }
+
+
+def _sales_preflight_report() -> Dict[str, Any]:
+    """Build provider + agent-level readiness report for sales execution."""
+    providers = ("ghl", "hubspot", "attio")
+    by_provider: Dict[str, Any] = {}
+    mode = email_delivery_mode()
+    overall_ready = True
+
+    for provider in providers:
+        creds_ready = provider_ready(provider)
+        email_cap = _provider_email_capability(provider)
+        missing = []
+        if not creds_ready:
+            if provider == "ghl":
+                missing.extend(["GHL_API_KEY", "GHL_LOCATION_ID"])
+            elif provider == "hubspot":
+                missing.extend(["HUBSPOT_API_KEY or HUBSPOT_ACCESS_TOKEN"])
+            elif provider == "attio":
+                missing.extend(["ATTIO_API_KEY"])
+        for item in email_cap.get("missing_requirements", []):
+            if item not in missing:
+                missing.append(item)
+
+        ready = bool(creds_ready and email_cap.get("email_send_ready", False))
+        overall_ready = overall_ready and ready
+        by_provider[provider] = {
+            "credentials_ready": creds_ready,
+            "email_supported": email_cap.get("email_supported", False),
+            "email_send_ready": email_cap.get("email_send_ready", False),
+            "missing_requirements": missing,
+            "notes": email_cap.get("notes", ""),
+        }
+
+    sales_agents = []
+    for agent_id in ("tyler", "marcus", "ryan_data"):
+        business_key = AGENT_BUSINESS_KEY.get(agent_id, "")
+        provider = resolve_provider(business_key=business_key, agent_name=agent_id)
+        provider_row = by_provider.get(provider, _provider_email_capability(provider))
+        sales_agents.append(
+            {
+                "agent_id": agent_id,
+                "business_key": business_key,
+                "routed_provider": provider,
+                "provider_ready": provider_row.get("credentials_ready", False),
+                "email_ready": provider_row.get("email_send_ready", False),
+            }
+        )
+
+    unified_sender = {
+        "email_delivery_mode": mode,
+        "ready": unified_email_ready() if mode == "unified" else None,
+        "required_vars": [
+            "MAIL_HOST",
+            "MAIL_PORT",
+            "MAIL_USERNAME",
+            "MAIL_PASSWORD",
+            "MAIL_FROM",
+        ],
+    }
+
+    return {
+        "overall_ready": overall_ready,
+        "email_delivery_mode": mode,
+        "unified_sender": unified_sender,
+        "by_provider": by_provider,
+        "sales_agents": sales_agents,
+    }
+
+
 # ── Revenue Pipeline Helper ─────────────────────────────────────────────────
 
 def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str):
@@ -380,8 +532,12 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "crm_provider": provider,
             "parsed_prospects": 0,
             "crm_created": 0,
+            "duplicate_skipped": 0,
             "ghl_created": 0,
+            "emails_attempted": 0,
             "emails_sent": 0,
+            "emails_failed": 0,
+            "provider_not_email_capable": 0,
             "failed": 0,
         }
 
@@ -395,8 +551,12 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 "parsed_prospects": 0,
                 "crm_provider": provider,
                 "crm_created": 0,
+                "duplicate_skipped": 0,
                 "ghl_created": 0,
+                "emails_attempted": 0,
                 "emails_sent": 0,
+                "emails_failed": 0,
+                "provider_not_email_capable": 0,
                 "failed": 0,
                 "raw_preview": raw_preview,
             }
@@ -408,7 +568,17 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         )
 
         created = 0
+        duplicate_skipped = 0
+        emails_attempted = 0
         emails_sent = 0
+        emails_failed = 0
+        provider_not_email_capable = 0
+        email_capability_reason = ""
+        email_capability = _provider_email_capability(crm_provider)
+        if not email_capability.get("email_supported", False):
+            provider_not_email_capable = len(crm_results)
+            email_capability_reason = f"email_not_supported_provider:{crm_provider}"
+
         failed = 0
         failure_samples = []
         for r in crm_results:
@@ -420,6 +590,10 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     monetary_value={"tyler": 482, "marcus": 2500, "ryan_data": 2500}.get(agent_name, 0),
                     metadata={"business_name": r.get("business_name")},
                 )
+            if r.get("status") == "duplicate_skipped":
+                duplicate_skipped += 1
+            if r.get("email_attempted"):
+                emails_attempted += 1
             if r.get("email_sent"):
                 emails_sent += 1
                 track_event(
@@ -427,6 +601,8 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     contact_id=r.get("contact_id", ""),
                     metadata={"business_name": r.get("business_name")},
                 )
+            if r.get("email_attempted") and not r.get("email_sent"):
+                emails_failed += 1
             if r.get("status") == "failed":
                 failed += 1
                 if len(failure_samples) < 3:
@@ -446,8 +622,13 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "parsed_prospects": len(prospects),
             "crm_provider": crm_provider,
             "crm_created": created,
+            "duplicate_skipped": duplicate_skipped,
             "ghl_created": created if crm_provider == "ghl" else 0,
+            "emails_attempted": emails_attempted,
             "emails_sent": emails_sent,
+            "emails_failed": emails_failed,
+            "provider_not_email_capable": provider_not_email_capable,
+            "email_capability_reason": email_capability_reason,
             "failed": failed,
             "failure_samples": failure_samples,
             "raw_preview": (raw_output or "")[:400].replace("\n", " "),
@@ -461,8 +642,12 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "parsed_prospects": 0,
             "crm_provider": provider,
             "crm_created": 0,
+            "duplicate_skipped": 0,
             "ghl_created": 0,
+            "emails_attempted": 0,
             "emails_sent": 0,
+            "emails_failed": 0,
+            "provider_not_email_capable": 0,
             "failed": 0,
         }
 
@@ -561,6 +746,148 @@ def _job_next_run_str(job) -> str:
     """Safely serialize job next-run time across APScheduler versions."""
     next_run = getattr(job, "next_run_time", None)
     return str(next_run) if next_run else "paused"
+
+
+QUALITY_SHORT_OUTPUT_CHARS = 80
+QUALITY_ERROR_TOKENS = ("error", "exception", "traceback", "failed")
+
+
+def _compute_quality_snapshot(window_hours: int = 24) -> Dict[str, Any]:
+    """Compute a quality snapshot from recent logs + artifact delivery outcomes."""
+    if window_hours < 1:
+        window_hours = 1
+
+    if not DATABASE_URL:
+        return {
+            "status": "no_database",
+            "message": "DATABASE_URL not configured.",
+            "window_hours": window_hours,
+        }
+
+    try:
+        log_rows = fetch_all(
+            """
+            SELECT agent_name, COALESCE(content, '')
+            FROM agent_logs
+            WHERE created_at >= NOW() - make_interval(hours => %s)
+            """,
+            (window_hours,),
+        )
+
+        total_runs = len(log_rows)
+        active_agents = len({row[0] for row in log_rows})
+        short_outputs = 0
+        error_like_outputs = 0
+
+        for _, content in log_rows:
+            text = (content or "").strip()
+            lower = text.lower()
+            if len(text) < QUALITY_SHORT_OUTPUT_CHARS:
+                short_outputs += 1
+            if any(token in lower for token in QUALITY_ERROR_TOKENS):
+                error_like_outputs += 1
+
+        artifact_rows = fetch_all(
+            """
+            SELECT status, COUNT(*)
+            FROM artifacts
+            WHERE created_at >= NOW() - make_interval(hours => %s)
+            GROUP BY status
+            """,
+            (window_hours,),
+        )
+        by_status = {status: int(count) for status, count in artifact_rows}
+        delivered = by_status.get("delivered", 0)
+        failed = by_status.get("failed", 0)
+
+        agent_count = max(len(AGENTS), 1)
+        availability_ratio = min(1.0, active_agents / float(agent_count))
+        usable_ratio = 1.0
+        if total_runs > 0:
+            usable_ratio = max(0.0, (total_runs - short_outputs - error_like_outputs) / float(total_runs))
+        delivery_denominator = delivered + failed
+        delivery_ratio = (delivered / float(delivery_denominator)) if delivery_denominator > 0 else 1.0
+
+        # Weighted score emphasizes output quality + reliability before scale.
+        score = round(
+            100.0 * (
+                (0.4 * availability_ratio) +
+                (0.4 * usable_ratio) +
+                (0.2 * delivery_ratio)
+            ),
+            1,
+        )
+
+        return {
+            "status": "ok",
+            "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "window_hours": window_hours,
+            "score": score,
+            "total_runs": total_runs,
+            "active_agents": active_agents,
+            "availability_ratio": round(availability_ratio, 4),
+            "short_outputs": short_outputs,
+            "error_like_outputs": error_like_outputs,
+            "delivered_artifacts": delivered,
+            "failed_artifacts": failed,
+            "delivery_ratio": round(delivery_ratio, 4),
+            "details": {
+                "short_output_threshold_chars": QUALITY_SHORT_OUTPUT_CHARS,
+                "artifact_status_counts": by_status,
+            },
+        }
+    except Exception as e:
+        logging.error(f"[Quality] snapshot computation failed: {e}")
+        return {
+            "status": "error",
+            "message": f"{type(e).__name__}: {e}",
+            "window_hours": window_hours,
+        }
+
+
+def _persist_quality_snapshot(snapshot: Dict[str, Any]) -> Optional[str]:
+    """Persist computed quality snapshot for historical tracking."""
+    if snapshot.get("status") != "ok":
+        return None
+
+    snapshot_id = str(uuid.uuid4())
+    execute_query(
+        """
+        INSERT INTO quality_snapshots (
+            snapshot_id, window_hours, total_runs, active_agents, availability_ratio,
+            short_outputs, error_like_outputs, delivered_artifacts, failed_artifacts,
+            delivery_ratio, score, details
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            snapshot_id,
+            int(snapshot["window_hours"]),
+            int(snapshot["total_runs"]),
+            int(snapshot["active_agents"]),
+            float(snapshot["availability_ratio"]),
+            int(snapshot["short_outputs"]),
+            int(snapshot["error_like_outputs"]),
+            int(snapshot["delivered_artifacts"]),
+            int(snapshot["failed_artifacts"]),
+            float(snapshot["delivery_ratio"]),
+            float(snapshot["score"]),
+            json.dumps(snapshot.get("details", {})),
+        ),
+    )
+    return snapshot_id
+
+
+def run_quality_snapshot_daily():
+    """Scheduled daily quality snapshot to create a durable operating history."""
+    try:
+        snapshot = _compute_quality_snapshot(window_hours=24)
+        if snapshot.get("status") != "ok":
+            logging.warning("[Quality] daily snapshot skipped: %s", snapshot)
+            return
+        snapshot_id = _persist_quality_snapshot(snapshot)
+        logging.info("[Quality] daily snapshot saved id=%s score=%s", snapshot_id, snapshot.get("score"))
+    except Exception as e:
+        logging.error(f"[Quality] daily snapshot failed: {type(e).__name__}: {e}")
 
 
 # ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────
@@ -1239,6 +1566,11 @@ scheduler.add_job(run_all_agents_test, CronTrigger(hour=18, minute=30, timezone=
     id="all_agents_test", name="🧪 Master Test Suite - All Agents",
     replace_existing=True, misfire_grace_time=3600)
 
+# Quality score snapshot — 6:45 PM CST (after daily activity and test suite)
+scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, timezone=CST),
+    id="quality_snapshot_daily", name="📈 Daily Quality Snapshot",
+    replace_existing=True, misfire_grace_time=3600)
+
 # ONE-TIME TEST at 7:56 PM CST for live demo
 from apscheduler.triggers.date import DateTrigger
 test_time = datetime.datetime.now(CST).replace(hour=19, minute=56, second=0, microsecond=0)
@@ -1275,6 +1607,9 @@ RUN_NOW_SCOPES = {
         ("atlas_intel", run_atlas_intel),
         ("phoenix_delivery", run_phoenix_delivery),
     ],
+    "quality": [
+        ("quality_snapshot_daily", run_quality_snapshot_daily),
+    ],
     "all": [
         ("alex_daily_briefing", run_alex_daily_briefing),
         ("dek_daily_briefing", run_dek_daily_briefing),
@@ -1290,6 +1625,7 @@ RUN_NOW_SCOPES = {
         ("nova_intelligence", run_nova_intelligence),
         ("atlas_intel", run_atlas_intel),
         ("phoenix_delivery", run_phoenix_delivery),
+        ("quality_snapshot_daily", run_quality_snapshot_daily),
     ],
 }
 
@@ -1382,6 +1718,11 @@ class AuthRequest(BaseModel):
 
 def validate_key(authorization: Optional[str] = Header(None)):
     if not API_KEYS:
+        if SETTINGS.environment == "production":
+            raise HTTPException(
+                status_code=503,
+                detail="Protected endpoints are disabled: API_KEYS is required in production.",
+            )
         return True
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
@@ -1565,6 +1906,13 @@ async def pipeline_overview():
     for biz_key in BUSINESSES:
         summary[biz_key] = get_revenue_summary(business_key=biz_key, days=30)
     return JSONResponse(content=summary)
+
+
+@app.get("/api/sales/preflight")
+async def sales_preflight(authorization: Optional[str] = Header(None)):
+    """Return sales execution readiness by provider and sales agent routing."""
+    validate_key(authorization)
+    return _sales_preflight_report()
 
 
 @app.post("/admin/run-now")
@@ -1809,7 +2157,7 @@ async def get_metrics():
         "system_status": "operational",
         "scheduler_running": scheduler.running,
         "jobs_registered": len(jobs_info),
-        "agents_total": 15,
+        "agents_total": 14,
         "test_pass_rate": test_pass_rate,
         "uptime": "running",
         "database": "Postgres" if SETTINGS.postgres_enabled else "Filesystem",
@@ -1821,6 +2169,112 @@ async def get_metrics():
         "business_crm_map": SETTINGS.business_crm_map,
         "llm_model": SETTINGS.llm_model,
         "llm_ready": SETTINGS.llm_ready,
+    }
+
+
+@app.get("/api/quality/now")
+async def get_quality_now(
+    hours: int = 24,
+    persist: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    """Compute a current quality snapshot; optional persist for historical tracking."""
+    if persist:
+        validate_key(authorization)
+
+    snapshot = _compute_quality_snapshot(window_hours=hours)
+    if snapshot.get("status") == "no_database":
+        raise HTTPException(status_code=503, detail=snapshot.get("message", "Database unavailable."))
+    if snapshot.get("status") == "error":
+        raise HTTPException(status_code=500, detail=snapshot.get("message", "Quality compute failed."))
+
+    snapshot_id = None
+    if persist:
+        try:
+            snapshot_id = _persist_quality_snapshot(snapshot)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Persist failed: {type(e).__name__}: {e}")
+
+    return {
+        "snapshot": snapshot,
+        "persisted": bool(snapshot_id),
+        "snapshot_id": snapshot_id,
+    }
+
+
+@app.get("/api/quality/history")
+async def get_quality_history(limit: int = 30, authorization: Optional[str] = Header(None)):
+    """Return historical quality snapshots for trend tracking and weekly reviews."""
+    validate_key(authorization)
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="DATABASE_URL not configured.")
+
+    if limit < 1:
+        limit = 1
+    if limit > 200:
+        limit = 200
+
+    try:
+        rows = fetch_all(
+            """
+            SELECT
+                snapshot_id, window_hours, total_runs, active_agents, availability_ratio,
+                short_outputs, error_like_outputs, delivered_artifacts, failed_artifacts,
+                delivery_ratio, score, details, created_at
+            FROM quality_snapshots
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {type(e).__name__}: {e}")
+
+    snapshots = []
+    for row in rows:
+        (
+            snapshot_id,
+            window_hours,
+            total_runs,
+            active_agents,
+            availability_ratio,
+            short_outputs,
+            error_like_outputs,
+            delivered_artifacts,
+            failed_artifacts,
+            delivery_ratio,
+            score,
+            details,
+            created_at,
+        ) = row
+
+        parsed_details: Dict[str, Any] = {}
+        try:
+            parsed_details = json.loads(details or "{}")
+        except Exception:
+            parsed_details = {}
+
+        snapshots.append(
+            {
+                "snapshot_id": snapshot_id,
+                "created_at": str(created_at),
+                "window_hours": int(window_hours),
+                "score": float(score),
+                "total_runs": int(total_runs),
+                "active_agents": int(active_agents),
+                "availability_ratio": float(availability_ratio),
+                "short_outputs": int(short_outputs),
+                "error_like_outputs": int(error_like_outputs),
+                "delivered_artifacts": int(delivered_artifacts),
+                "failed_artifacts": int(failed_artifacts),
+                "delivery_ratio": float(delivery_ratio),
+                "details": parsed_details,
+            }
+        )
+
+    return {
+        "count": len(snapshots),
+        "snapshots": snapshots,
     }
 
 

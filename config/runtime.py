@@ -152,6 +152,9 @@ class RuntimeSettings:
         Fatal checks are intentionally minimal and only applied when strict_startup is enabled.
         """
         fatals: List[str] = []
+        # Production must never run protected endpoints with open auth.
+        if self.environment == "production" and not self.api_keys:
+            fatals.append("Production requires API_KEYS for protected endpoints.")
         if self.strict_startup and not self.llm_ready:
             fatals.append("STRICT_STARTUP is enabled but LLM credentials are missing.")
         if self.strict_startup:

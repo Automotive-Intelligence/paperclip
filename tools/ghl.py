@@ -25,6 +25,7 @@ import logging
 from typing import Optional
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
+from tools.outbound_email import email_delivery_mode, send_unified_email
 
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
 
@@ -378,6 +379,8 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                     "business_name": p.get("business_name"),
                     "contact_id": existing.get("id"),
                     "status": "duplicate_skipped",
+                    "email_attempted": False,
+                    "email_sent": False,
                 })
                 continue
 
@@ -405,16 +408,28 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 )
 
             # Send first-touch cold email if subject and body are available
+            email_attempted = False
             email_sent = False
             if contact_id and p.get("subject") and p.get("body"):
                 try:
-                    send_email(
-                        contact_id=contact_id,
-                        subject=p["subject"],
-                        body=p["body"],
-                    )
-                    email_sent = True
-                    logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
+                    mode = email_delivery_mode()
+                    if mode == "unified":
+                        # Unified mode requires an explicit recipient email.
+                        if p.get("email"):
+                            email_attempted = True
+                            email_sent = send_unified_email(p.get("email", ""), p["subject"], p["body"])
+                        else:
+                            logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} — missing email.")
+                    else:
+                        email_attempted = True
+                        send_email(
+                            contact_id=contact_id,
+                            subject=p["subject"],
+                            body=p["body"],
+                        )
+                        email_sent = True
+                    if email_sent:
+                        logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
 
                     # Schedule follow-up if available
                     if p.get("follow_up_subject") and p.get("follow_up_body"):
@@ -425,6 +440,8 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                         )
                 except Exception as email_err:
                     logging.warning(f"[GHL] Email send failed for {p.get('business_name')}: {email_err}")
+            else:
+                logging.info(f"[GHL] Email skipped for {p.get('business_name')} — missing subject/body.")
 
             # Create pipeline opportunity for revenue tracking
             if contact_id and pipeline_id and stage_id:
@@ -452,6 +469,7 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 "business_name": p.get("business_name"),
                 "contact_id": contact_id,
                 "status": "created",
+                "email_attempted": email_attempted,
                 "email_sent": email_sent,
             })
 
@@ -460,6 +478,8 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             results.append({
                 "business_name": p.get("business_name"),
                 "status": "failed",
+                "email_attempted": False,
+                "email_sent": False,
                 "error": str(e),
             })
 
