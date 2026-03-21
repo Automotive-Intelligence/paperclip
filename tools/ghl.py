@@ -28,6 +28,7 @@ from typing import Optional
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.outbound_email import email_delivery_mode, send_unified_email
+from tools.email_templates import compose_templated_email, strict_template_validation_enabled
 
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
 
@@ -576,11 +577,7 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
 
     for p in prospects:
         try:
-            # Check for duplicate before creating
-            existing = search_contact(
-                email=p.get("email"),
-                name=p.get("business_name"),
-            )
+            existing = search_contact(email=p.get("email"), name=p.get("business_name"))
             if existing:
                 logging.info(f"[GHL] Skipping duplicate: {p.get('business_name')}")
                 results.append({
@@ -589,6 +586,9 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                     "status": "duplicate_skipped",
                     "email_attempted": False,
                     "email_sent": False,
+                    "template_key": "",
+                    "template_valid": True,
+                    "template_issues": [],
                 })
                 continue
 
@@ -607,7 +607,6 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             )
             contact_id = contact.get("id")
 
-            # Add detailed note with outreach context and full cadence plan (non-critical)
             if contact_id:
                 try:
                     contact_line = (
@@ -624,81 +623,82 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                         f"Targeting Reason:\n{p.get('reason', '')}\n\n"
                         f"Email Hook:\n{hook}\n\n"
                         f"CADENCE PLAN:\n"
-                        f"  Day 0  — First touch (immediate)\n"
-                        f"  Day 3  — Follow-up: {p.get('follow_up_subject', 'different angle')}\n"
-                        f"  Day 7  — Value add / case study\n"
-                        f"  Day 14 — Breakup email\n\n"
+                        f"  Day 0  - First touch (immediate)\n"
+                        f"  Day 3  - Follow-up: {p.get('follow_up_subject', 'different angle')}\n"
+                        f"  Day 7  - Value add / case study\n"
+                        f"  Day 14 - Breakup email\n\n"
                         f"Channel: Cold Email ONLY (no SMS without opt-in)",
                     )
                 except Exception as note_err:
                     logging.warning(f"[GHL] Note creation failed for {p.get('business_name')} (non-fatal): {note_err}")
 
-            # Send first-touch cold email if subject and body are available
             email_attempted = False
             email_sent = False
             contact_email = (p.get("email") or "").strip()
+            rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
 
-            if contact_id and p.get("subject") and p.get("body"):
+            if contact_id:
                 try:
-                    mode = email_delivery_mode()
-                    if mode == "unified":
-                        if contact_email:
-                            email_attempted = True
-                            email_sent = send_unified_email(contact_email, p["subject"], p["body"])
+                    if strict_template_validation_enabled() and not rendered.get("valid", False):
+                        logging.warning(
+                            f"[GHL] Email blocked by template validation for {p.get('business_name')}: "
+                            f"{','.join(rendered.get('issues', []))}"
+                        )
+                    elif rendered.get("subject") and rendered.get("body_text"):
+                        subject = rendered.get("subject", "")
+                        body_text = rendered.get("body_text", "")
+
+                        mode = email_delivery_mode()
+                        if mode == "unified":
+                            if contact_email:
+                                email_attempted = True
+                                email_sent = send_unified_email(contact_email, subject, body_text)
+                            else:
+                                logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} - no email found.")
                         else:
-                            logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} — no email found.")
-                    else:
-                        # Native GHL mode — requires contact to have an email stored
-                        if contact_email:
-                            email_attempted = True
-                            send_email(
-                                contact_id=contact_id,
-                                subject=p["subject"],
-                                body=p["body"],
-                            )
-                            email_sent = True
-                        else:
-                            logging.info(
-                                f"[GHL] Email skipped for {p.get('business_name')} — no email address found. "
-                                f"Manual outreach required. Email draft stored in notes."
-                            )
-                            # Store the unsent email draft as a note for manual follow-up
+                            if contact_email:
+                                email_attempted = True
+                                send_email(contact_id=contact_id, subject=subject, body=body_text)
+                                email_sent = True
+                            else:
+                                logging.info(
+                                    f"[GHL] Email skipped for {p.get('business_name')} - no email address found. "
+                                    f"Manual outreach required. Email draft stored in notes."
+                                )
+                                try:
+                                    add_contact_note(
+                                        contact_id,
+                                        f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
+                                        f"Subject: {subject}\n\n"
+                                        f"{body_text}\n\n"
+                                        f"--- Follow-up Draft (Day 3) ---\n"
+                                        f"Subject: {p.get('follow_up_subject', '')}\n\n"
+                                        f"{p.get('follow_up_body', '')}",
+                                    )
+                                except Exception:
+                                    pass
+
+                        if email_sent:
+                            logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
+                        if email_sent and p.get("follow_up_subject") and p.get("follow_up_body"):
                             try:
                                 add_contact_note(
                                     contact_id,
-                                    f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
-                                    f"Subject: {p['subject']}\n\n"
-                                    f"{p['body']}\n\n"
-                                    f"--- Follow-up Draft (Day 3) ---\n"
-                                    f"Subject: {p.get('follow_up_subject', '')}\n\n"
-                                    f"{p.get('follow_up_body', '')}",
+                                    f"=== FOLLOW-UP CADENCE ===\n"
+                                    f"DAY 3 - Subject: {p['follow_up_subject']}\n\n"
+                                    f"{p['follow_up_body']}\n\n"
+                                    f"DAY 7 - Value-add / case study angle\n"
+                                    f"DAY 14 - Breakup email",
                                 )
                             except Exception:
                                 pass
-
-                    if email_sent:
-                        logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
-
-                    # Schedule follow-up cadence notes
-                    if email_sent and p.get("follow_up_subject") and p.get("follow_up_body"):
-                        try:
-                            add_contact_note(
-                                contact_id,
-                                f"=== FOLLOW-UP CADENCE ===\n"
-                                f"DAY 3 — Subject: {p['follow_up_subject']}\n\n"
-                                f"{p['follow_up_body']}\n\n"
-                                f"DAY 7 — Value-add / case study angle\n"
-                                f"DAY 14 — Breakup email",
-                            )
-                        except Exception:
-                            pass
-
+                    else:
+                        logging.info(f"[GHL] Email skipped for {p.get('business_name')} - missing rendered subject/body.")
                 except Exception as email_err:
                     logging.warning(f"[GHL] Email send failed for {p.get('business_name')}: {email_err}")
             else:
-                logging.info(f"[GHL] Email skipped for {p.get('business_name')} — missing subject/body.")
+                logging.info(f"[GHL] Email skipped for {p.get('business_name')} - missing contact id.")
 
-            # Create pipeline opportunity for revenue tracking
             if contact_id and pipeline_id and stage_id:
                 try:
                     create_opportunity(
@@ -712,7 +712,6 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 except Exception as opp_err:
                     logging.warning(f"[GHL] Opportunity creation failed: {opp_err}")
 
-            # Add to cold email workflow if configured
             workflow_id = os.getenv(f"GHL_WORKFLOW_{source_agent.upper()}", "")
             if contact_id and workflow_id:
                 try:
@@ -728,17 +727,22 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 "status": "created",
                 "email_attempted": email_attempted,
                 "email_sent": email_sent,
+                "template_key": rendered.get("template_key", ""),
+                "template_valid": bool(rendered.get("valid", False)),
+                "template_issues": rendered.get("issues", []),
             })
 
         except Exception as e:
-            # GHL returns 400 for duplicate contacts — treat gracefully instead of failing
-            if isinstance(e, ServiceCallError) and getattr(e, 'error', None) and e.error.status_code == 400:
-                logging.warning(f"[GHL] Contact already exists for {p.get('business_name')} (400) — skipping duplicate")
+            if isinstance(e, ServiceCallError) and getattr(e, "error", None) and e.error.status_code == 400:
+                logging.warning(f"[GHL] Contact already exists for {p.get('business_name')} (400) - skipping duplicate")
                 results.append({
                     "business_name": p.get("business_name"),
                     "status": "duplicate_skipped",
                     "email_attempted": False,
                     "email_sent": False,
+                    "template_key": "",
+                    "template_valid": True,
+                    "template_issues": [],
                 })
             else:
                 logging.error(f"[GHL] Failed to push prospect {p.get('business_name')}: {e}")
@@ -747,6 +751,9 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                     "status": "failed",
                     "email_attempted": False,
                     "email_sent": False,
+                    "template_key": "",
+                    "template_valid": False,
+                    "template_issues": ["send_path_failed"],
                     "error": str(e),
                 })
 

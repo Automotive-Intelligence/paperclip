@@ -383,3 +383,67 @@ def get_daily_metrics(business_key: Optional[str] = None, days: int = 7) -> list
     except Exception as e:
         logging.error(f"[Revenue] Daily metrics query failed: {e}")
         return []
+
+
+def get_email_template_report(business_key: Optional[str] = None, days: int = 7) -> dict:
+    """Get daily template usage and validation quality from revenue_events metadata."""
+    if _db_context is None:
+        return {"error": "Database not available"}
+
+    try:
+        with _db_context() as conn:
+            with conn.cursor() as cur:
+                where_biz = "AND business_key = %s" if business_key else ""
+                params = (days, business_key) if business_key else (days,)
+
+                cur.execute(
+                    f"SELECT "
+                    f"  COALESCE(metadata->>'template_key', ''), "
+                    f"  COALESCE((metadata->>'template_valid')::boolean, false), "
+                    f"  COUNT(*) "
+                    f"FROM revenue_events "
+                    f"WHERE event_type = 'email_template_applied' "
+                    f"AND created_at >= NOW() - INTERVAL '%s days' {where_biz} "
+                    f"GROUP BY 1, 2 "
+                    f"ORDER BY 1",
+                    params,
+                )
+
+                summary = {}
+                total = 0
+                invalid_total = 0
+                for template_key, template_valid, count in cur.fetchall():
+                    key = template_key or "unknown"
+                    bucket = summary.setdefault(key, {"valid": 0, "invalid": 0, "total": 0})
+                    if template_valid:
+                        bucket["valid"] += count
+                    else:
+                        bucket["invalid"] += count
+                        invalid_total += count
+                    bucket["total"] += count
+                    total += count
+
+                cur.execute(
+                    f"SELECT DATE(created_at) as day, COUNT(*) "
+                    f"FROM revenue_events "
+                    f"WHERE event_type = 'email_template_applied' "
+                    f"AND created_at >= NOW() - INTERVAL '%s days' {where_biz} "
+                    f"GROUP BY day "
+                    f"ORDER BY day DESC",
+                    params,
+                )
+                daily = [{"date": str(r[0]), "count": r[1]} for r in cur.fetchall()]
+
+                return {
+                    "status": "ok",
+                    "period_days": days,
+                    "business": business_key or "all",
+                    "templates": summary,
+                    "total_applied": total,
+                    "invalid_total": invalid_total,
+                    "invalid_rate_pct": round((invalid_total / total * 100), 2) if total else 0,
+                    "daily": daily,
+                }
+    except Exception as e:
+        logging.error(f"[Revenue] Email template report failed: {e}")
+        return {"error": str(e)}

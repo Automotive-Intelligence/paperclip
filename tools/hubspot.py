@@ -25,6 +25,7 @@ from typing import Optional
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.outbound_email import email_delivery_mode, send_unified_email
+from tools.email_templates import compose_templated_email, strict_template_validation_enabled
 
 HUBSPOT_BASE_URL = "https://api.hubapi.com"
 
@@ -246,17 +247,33 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                         "status": "duplicate_skipped",
                         "email_attempted": False,
                         "email_sent": False,
+                        "template_key": "",
+                        "template_valid": True,
+                        "template_issues": [],
                         "provider": "hubspot",
                     })
                     continue
                 new_id = _create_contact(p, source_agent, business_key)
                 _create_deal(p, source_agent, contact_id=new_id)
+                rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
                 mode = email_delivery_mode()
-                if mode == "unified":
-                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip())
-                    email_sent = send_unified_email(p.get("email", ""), p.get("subject", ""), p.get("body", "")) if email_attempted else False
+                if strict_template_validation_enabled() and not rendered.get("valid", False):
+                    email_attempted = False
+                    email_sent = False
+                    logging.warning(
+                        "[HubSpot] Email blocked by template validation for %s: %s",
+                        business_name,
+                        ",".join(rendered.get("issues", [])),
+                    )
+                elif mode == "unified":
+                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
+                    email_sent = send_unified_email(p.get("email", ""), rendered.get("subject", ""), rendered.get("body_text", "")) if email_attempted else False
                 else:
-                    email_attempted = bool((p.get("email") or "").strip() and (p.get("subject") or "").strip() and (p.get("body") or "").strip() and hubspot_email_ready())
+                    if rendered.get("subject"):
+                        p["subject"] = rendered.get("subject", "")
+                    if rendered.get("body_text"):
+                        p["body"] = rendered.get("body_text", "")
+                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text") and hubspot_email_ready())
                     email_sent = _send_transactional_email(p) if email_attempted else False
                 results.append({
                     "business_name": business_name,
@@ -264,6 +281,9 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     "status": "created",
                     "email_attempted": email_attempted,
                     "email_sent": email_sent,
+                    "template_key": rendered.get("template_key", ""),
+                    "template_valid": bool(rendered.get("valid", False)),
+                    "template_issues": rendered.get("issues", []),
                     "deal_created": True,
                     "provider": "hubspot",
                 })
@@ -277,6 +297,9 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     "status": "duplicate_skipped",
                     "email_attempted": False,
                     "email_sent": False,
+                    "template_key": "",
+                    "template_valid": True,
+                    "template_issues": [],
                     "provider": "hubspot",
                 })
                 continue
@@ -289,6 +312,9 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                 "status": "created",
                 "email_attempted": False,
                 "email_sent": False,
+                "template_key": "",
+                "template_valid": True,
+                "template_issues": [],
                 "deal_created": True,
                 "provider": "hubspot",
             })
@@ -299,6 +325,9 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                 "status": "failed",
                 "email_attempted": False,
                 "email_sent": False,
+                "template_key": "",
+                "template_valid": False,
+                "template_issues": ["send_path_failed"],
                 "provider": "hubspot",
                 "error": str(e),
             })

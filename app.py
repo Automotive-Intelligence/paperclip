@@ -81,7 +81,7 @@ from tools.contact_enricher import enrich_prospects
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
     queue_content, get_content_queue, mark_content_published,
-    get_revenue_summary, get_daily_metrics,
+    get_revenue_summary, get_daily_metrics, get_email_template_report,
 )
 
 
@@ -603,6 +603,17 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     monetary_value={"tyler": 482, "marcus": 2500, "ryan_data": 2500}.get(agent_name, 0),
                     metadata={"business_name": r.get("business_name")},
                 )
+                if r.get("template_key"):
+                    track_event(
+                        "email_template_applied", business_key, agent_name,
+                        contact_id=r.get("contact_id", ""),
+                        metadata={
+                            "business_name": r.get("business_name"),
+                            "template_key": r.get("template_key", ""),
+                            "template_valid": bool(r.get("template_valid", True)),
+                            "template_issues": r.get("template_issues", []),
+                        },
+                    )
             if r.get("status") == "duplicate_skipped":
                 duplicate_skipped += 1
             if r.get("email_attempted"):
@@ -612,7 +623,10 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 track_event(
                     "email_sent", business_key, agent_name,
                     contact_id=r.get("contact_id", ""),
-                    metadata={"business_name": r.get("business_name")},
+                    metadata={
+                        "business_name": r.get("business_name"),
+                        "template_key": r.get("template_key", ""),
+                    },
                 )
             if r.get("email_attempted") and not r.get("email_sent"):
                 emails_failed += 1
@@ -2215,6 +2229,23 @@ async def sales_pipeline(
     except Exception as e:
         logging.error(f"[Pipeline] Status endpoint error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sales/email-templates/report")
+async def sales_email_templates_report(
+    days: int = 7,
+    business_key: str = "",
+    authorization: Optional[str] = Header(None),
+):
+    """Daily template usage and validation quality summary from tracked revenue events."""
+    validate_key(authorization)
+    result = get_email_template_report(
+        business_key=business_key.strip() or None,
+        days=max(1, min(days, 90)),
+    )
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return JSONResponse(content=result)
 
 
 @app.post("/admin/run-now")
