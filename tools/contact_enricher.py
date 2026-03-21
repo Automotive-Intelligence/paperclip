@@ -87,10 +87,19 @@ def _extract_website(text: str) -> str:
     return ""
 
 
+# Common non-name words that get falsely captured by enricher regex
+_NON_NAME_WORDS = {
+    "and", "or", "for", "of", "the", "in", "at", "to", "from", "with",
+    "home", "business", "commercial", "property", "service", "services",
+    "local", "new", "since", "our", "your", "their", "its", "this", "that",
+}
+
+
 def _extract_contact_name(text: str, business_name: str) -> str:
     """
     Look for name patterns near 'owner', 'manager', 'founder', 'president', 'GM'.
     Returns best guess at a person name, or empty string.
+    Validates that the extracted text looks like a proper Title Case person's name.
     """
     patterns = [
         r'(?:owner|founder|president|gm|general manager|manager|principal|partner)[,:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})',
@@ -100,8 +109,14 @@ def _extract_contact_name(text: str, business_name: str) -> str:
         m = re.search(pat, text or "", re.IGNORECASE)
         if m:
             candidate = m.group(1).strip()
-            # skip if it's just the business name
-            if candidate.lower() not in (business_name or "").lower():
+            words = candidate.split()
+            # Must be 2+ words, all Title Case, and not contain junk words
+            if (
+                len(words) >= 2
+                and all(w[0].isupper() for w in words)
+                and not any(w.lower() in _NON_NAME_WORDS for w in words)
+                and candidate.lower() not in (business_name or "").lower()
+            ):
                 return candidate
     return ""
 

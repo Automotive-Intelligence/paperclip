@@ -350,7 +350,7 @@ def search_contact(email: Optional[str] = None, name: Optional[str] = None) -> O
 
     params = {"locationId": location_id}
     if email:
-        params["email"] = email
+        params["query"] = email  # GHL v2 search uses 'query' for both email and name lookups
     elif name:
         params["query"] = name
 
@@ -731,14 +731,24 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             })
 
         except Exception as e:
-            logging.error(f"[GHL] Failed to push prospect {p.get('business_name')}: {e}")
-            results.append({
-                "business_name": p.get("business_name"),
-                "status": "failed",
-                "email_attempted": False,
-                "email_sent": False,
-                "error": str(e),
-            })
+            # GHL returns 400 for duplicate contacts — treat gracefully instead of failing
+            if isinstance(e, ServiceCallError) and getattr(e, 'error', None) and e.error.status_code == 400:
+                logging.warning(f"[GHL] Contact already exists for {p.get('business_name')} (400) — skipping duplicate")
+                results.append({
+                    "business_name": p.get("business_name"),
+                    "status": "duplicate_skipped",
+                    "email_attempted": False,
+                    "email_sent": False,
+                })
+            else:
+                logging.error(f"[GHL] Failed to push prospect {p.get('business_name')}: {e}")
+                results.append({
+                    "business_name": p.get("business_name"),
+                    "status": "failed",
+                    "email_attempted": False,
+                    "email_sent": False,
+                    "error": str(e),
+                })
 
     created = len([r for r in results if r["status"] == "created"])
     emails_sent = len([r for r in results if r.get("email_sent")])
