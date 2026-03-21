@@ -366,12 +366,11 @@ def update_contact_tags(contact_id: str, tags: list) -> dict:
 
 def add_contact_note(contact_id: str, note: str) -> dict:
     """Add a note to an existing GHL contact."""
-    location_id = os.getenv("GHL_LOCATION_ID", "")
     return _ghl_request(
         "add_contact_note",
         "POST",
         f"/contacts/{contact_id}/notes",
-        json_body={"body": note, "locationId": location_id},
+        json_body={"body": note},
         timeout=15,
     )
 
@@ -596,15 +595,18 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             )
             contact_id = contact.get("id")
 
-            # Add detailed note with outreach context
+            # Add detailed note with outreach context (non-critical — log but don't fail)
             hook = p.get("email_hook", "")
             if contact_id and hook:
-                add_contact_note(
-                    contact_id,
-                    f"{source_agent.title()}'s Cold Email Hook:\n{hook}\n\n"
-                    f"Targeting Reason:\n{p.get('reason', '')}\n\n"
-                    f"Channel: Cold Email (no SMS - no opt-in consent)",
-                )
+                try:
+                    add_contact_note(
+                        contact_id,
+                        f"{source_agent.title()}'s Cold Email Hook:\n{hook}\n\n"
+                        f"Targeting Reason:\n{p.get('reason', '')}\n\n"
+                        f"Channel: Cold Email (no SMS - no opt-in consent)",
+                    )
+                except Exception as note_err:
+                    logging.warning(f"[GHL] Note creation failed for {p.get('business_name')} (non-fatal): {note_err}")
 
             # Send first-touch cold email if subject and body are available
             email_attempted = False
