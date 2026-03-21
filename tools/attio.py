@@ -21,6 +21,7 @@ tools/attio.py - Attio CRM connector for Paperclip sales pipeline.
 import os
 import logging
 import smtplib
+import re
 from email.message import EmailMessage
 from tools.outbound_email import email_delivery_mode, send_unified_email
 
@@ -28,6 +29,39 @@ from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 
 ATTIO_BASE_URL = "https://api.attio.com/v2"
+
+
+def _normalize_person_name(contact_name: str, business_name: str) -> tuple[str, str, str]:
+    """Return a safe (first_name, last_name, full_name) tuple for Attio person records.
+
+    Attio's people.name attribute expects first_name, last_name, and full_name.
+    Agent outputs can include placeholders or noisy text, so we sanitize and fall back
+    to business tokens when needed.
+    """
+    raw = (contact_name or "").strip()
+
+    # Treat common placeholders as missing names.
+    lowered = raw.lower()
+    if lowered.startswith("not found") or lowered.startswith("n/a") or lowered.startswith("unknown"):
+        raw = ""
+
+    # Keep only alphabetic name tokens (allow apostrophes/hyphens in words).
+    source = raw if raw else (business_name or "")
+    tokens = re.findall(r"[A-Za-z][A-Za-z'\-]*", source)
+
+    # Ensure we always send at least two tokens.
+    if len(tokens) >= 2:
+        first_name = tokens[0]
+        last_name = " ".join(tokens[1:3])
+    elif len(tokens) == 1:
+        first_name = tokens[0]
+        last_name = "Prospect"
+    else:
+        first_name = "Sales"
+        last_name = "Prospect"
+
+    full_name = f"{first_name} {last_name}".strip()
+    return first_name, last_name, full_name
 
 
 def _attio_token() -> str:
@@ -140,12 +174,7 @@ def _create_person_record(prospect: dict, source_agent: str, business_key: str) 
     # Prefer the enriched contact_name over business_name for person records
     contact_name = (prospect.get("contact_name") or "").strip()
     business_name = (prospect.get("business_name") or "Unknown").strip()
-    display_name = contact_name if contact_name else business_name
-
-    # Attio person name requires first_name / last_name / full_name as separate subfields
-    name_parts = display_name.split()
-    first_name = name_parts[0] if name_parts else display_name
-    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+    first_name, last_name, display_name = _normalize_person_name(contact_name, business_name)
 
     payload = {
         "data": {
