@@ -100,7 +100,7 @@ def _search_person_by_email(email: str) -> str | None:
     if not email:
         return None
     payload = {
-        "filter": {"email_addresses": {"$contains": email}},
+        "filter": {"email_addresses": {"$contains": {"email_address": email}}},
         "limit": 1,
     }
     try:
@@ -141,11 +141,22 @@ def _create_person_record(prospect: dict, source_agent: str, business_key: str) 
     contact_name = (prospect.get("contact_name") or "").strip()
     business_name = (prospect.get("business_name") or "Unknown").strip()
     display_name = contact_name if contact_name else business_name
+
+    # Attio person name requires first_name / last_name / full_name as separate subfields
+    name_parts = display_name.split()
+    first_name = name_parts[0] if name_parts else display_name
+    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
     payload = {
         "data": {
             "values": {
-                "name": [{"value": display_name}],
-                "email_addresses": [{"value": email}] if email else [],
+                "name": [{
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "full_name": display_name,
+                }],
+                # Attio email_addresses entries require the key "email_address", not "value"
+                "email_addresses": [{"email_address": email}] if email else [],
                 "description": [{"value": (
                     f"Company: {business_name} | {source_agent} prospecting: {prospect.get('reason', '')} | "
                     f"Phone: {prospect.get('phone', '')} | Website: {prospect.get('website', '')}"

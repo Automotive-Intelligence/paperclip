@@ -328,12 +328,12 @@ For ALL agents: Include CAN-SPAM compliant unsubscribe language at the end of bo
 If any field is missing, use an empty string.
 
 REPORT:
-{raw_output[:4000]}
+{raw_output[:8000]}
 
 JSON array:"""
 
     try:
-        content = _call_parser_llm(prompt, max_tokens=3000)
+        content = _call_parser_llm(prompt, max_tokens=4000)
         prospects = _extract_json_array(content)
         if prospects is None:
             raise ValueError("No parseable JSON array in parser response")
