@@ -244,7 +244,10 @@ PARSE_PROMPTS = {
 - body (string, the full cold email body text)
 - follow_up_subject (string, the follow-up email subject line)
 - follow_up_body (string, the follow-up email body text)
-- email (string, business email if found, otherwise empty string)""",
+- contact_name (string, owner or manager first and last name if found, otherwise empty string)
+- email (string, direct contact email address if found, otherwise empty string)
+- phone (string, business phone number if found, otherwise empty string)
+- website (string, business website URL if found, otherwise empty string)""",
         "context": "This is from a sales agent targeting local service businesses (HVAC, plumbing, etc.) in DFW Texas with cold emails.",
     },
     "marcus": {
@@ -258,7 +261,10 @@ PARSE_PROMPTS = {
 - body (string, the full cold email body — educational, not salesy, leads with their problem)
 - follow_up_subject (string, follow-up email subject)
 - follow_up_body (string, follow-up email body with different value angle)
-- email (string, business email if found, otherwise empty string)
+- contact_name (string, owner or decision-maker first and last name if found, otherwise empty string)
+- email (string, direct contact email address if found, otherwise empty string)
+- phone (string, business phone number if found, otherwise empty string)
+- website (string, business website URL if found, otherwise empty string)
 - bundle_candidate (boolean, true if flagged as AI Phone Guy bundle opportunity)""",
         "context": "This is from a consultative sales agent targeting Dallas businesses that need digital marketing and AI implementation services.",
     },
@@ -273,7 +279,10 @@ PARSE_PROMPTS = {
 - body (string, full cold email body positioning the free AI Readiness Assessment)
 - follow_up_subject (string, follow-up subject line)
 - follow_up_body (string, follow-up body with different angle)
-- email (string, dealership contact email if found, otherwise empty string)
+- contact_name (string, BDC manager, GM, or owner name if found, otherwise empty string)
+- email (string, direct dealership contact email if found, otherwise empty string)
+- phone (string, dealership phone number if found, otherwise empty string)
+- website (string, dealership website URL if found, otherwise empty string)
 - group_affiliation (string, dealership group if known, otherwise empty string)""",
         "context": "This is from a CRO targeting DFW car dealerships with a free AI Readiness Assessment → $2,500 Audit → $7,500 Implementation pipeline.",
     },

@@ -120,7 +120,13 @@ def _create_company_record(prospect: dict, source_agent: str, business_key: str)
         "data": {
             "values": {
                 "name": [{"value": prospect.get("business_name", "Unknown")}],
-                "description": [{"value": f"{source_agent} prospecting: {prospect.get('reason', '')}"}],
+                "description": [{"value": (
+                    f"{source_agent} prospecting: {prospect.get('reason', '')} | "
+                    f"City: {prospect.get('city', '')} | "
+                    f"Phone: {prospect.get('phone', '')} | "
+                    f"Website: {prospect.get('website', '')} | "
+                    f"Contact: {prospect.get('contact_name', '')}"
+                )}],
             }
         }
     }
@@ -131,13 +137,19 @@ def _create_company_record(prospect: dict, source_agent: str, business_key: str)
 
 def _create_person_record(prospect: dict, source_agent: str, business_key: str) -> str:
     email = (prospect.get("email") or "").strip()
-    name = (prospect.get("business_name") or "Unknown").strip()
+    # Prefer the enriched contact_name over business_name for person records
+    contact_name = (prospect.get("contact_name") or "").strip()
+    business_name = (prospect.get("business_name") or "Unknown").strip()
+    display_name = contact_name if contact_name else business_name
     payload = {
         "data": {
             "values": {
-                "name": [{"value": name}],
+                "name": [{"value": display_name}],
                 "email_addresses": [{"value": email}] if email else [],
-                "description": [{"value": f"{source_agent} prospecting: {prospect.get('reason', '')}"}],
+                "description": [{"value": (
+                    f"Company: {business_name} | {source_agent} prospecting: {prospect.get('reason', '')} | "
+                    f"Phone: {prospect.get('phone', '')} | Website: {prospect.get('website', '')}"
+                )}],
             }
         }
     }

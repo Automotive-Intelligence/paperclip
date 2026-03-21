@@ -281,6 +281,8 @@ def create_contact(
     tags: Optional[list] = None,
     email: Optional[str] = None,
     phone: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    website: Optional[str] = None,
     business_key: str = "aiphoneguy",
 ) -> dict:
     """
@@ -306,15 +308,21 @@ def create_contact(
         "ryan_data": "Ryan Data AI Prospecting - Dealer Outreach",
     }
 
-    name_parts = (business_name or "").strip().split()
-    first_name = name_parts[0] if name_parts else "Prospect"
-    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else "Lead"
+    # Use real contact name when found; fall back to business name as placeholder
+    if contact_name and contact_name.strip():
+        name_parts = contact_name.strip().split()
+        first_name = name_parts[0]
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else business_name
+    else:
+        name_parts = (business_name or "").strip().split()
+        first_name = name_parts[0] if name_parts else "Prospect"
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else "Lead"
 
     payload = {
         "locationId": location_id,
         "firstName": first_name,
         "lastName": last_name,
-        "name": business_name,
+        "name": contact_name.strip() if contact_name else business_name,
         "companyName": business_name,
         "city": city,
         "source": source_labels.get(source_agent, f"{source_agent} AI Prospecting"),
@@ -325,6 +333,8 @@ def create_contact(
         payload["email"] = email
     if phone:
         payload["phone"] = phone
+    if website:
+        payload["website"] = website
 
     data = _ghl_request("create_contact", "POST", "/contacts/", json_body=payload, timeout=15)
     contact = data.get("contact", {})
@@ -591,19 +601,34 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 source_agent=source_agent,
                 email=p.get("email"),
                 phone=p.get("phone"),
+                contact_name=p.get("contact_name"),
+                website=p.get("website"),
                 business_key=business_key,
             )
             contact_id = contact.get("id")
 
-            # Add detailed note with outreach context (non-critical — log but don't fail)
-            hook = p.get("email_hook", "")
-            if contact_id and hook:
+            # Add detailed note with outreach context and full cadence plan (non-critical)
+            if contact_id:
                 try:
+                    contact_line = (
+                        f"Contact: {p.get('contact_name', '')} | "
+                        f"Email: {p.get('email', 'NOT FOUND')} | "
+                        f"Phone: {p.get('phone', 'NOT FOUND')} | "
+                        f"Website: {p.get('website', '')}"
+                    )
+                    hook = p.get("email_hook", "") or p.get("reason", "")
                     add_contact_note(
                         contact_id,
-                        f"{source_agent.title()}'s Cold Email Hook:\n{hook}\n\n"
+                        f"=== {source_agent.title()} Prospecting Note ===\n"
+                        f"{contact_line}\n\n"
                         f"Targeting Reason:\n{p.get('reason', '')}\n\n"
-                        f"Channel: Cold Email (no SMS - no opt-in consent)",
+                        f"Email Hook:\n{hook}\n\n"
+                        f"CADENCE PLAN:\n"
+                        f"  Day 0  — First touch (immediate)\n"
+                        f"  Day 3  — Follow-up: {p.get('follow_up_subject', 'different angle')}\n"
+                        f"  Day 7  — Value add / case study\n"
+                        f"  Day 14 — Breakup email\n\n"
+                        f"Channel: Cold Email ONLY (no SMS without opt-in)",
                     )
                 except Exception as note_err:
                     logging.warning(f"[GHL] Note creation failed for {p.get('business_name')} (non-fatal): {note_err}")
@@ -611,34 +636,63 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             # Send first-touch cold email if subject and body are available
             email_attempted = False
             email_sent = False
+            contact_email = (p.get("email") or "").strip()
+
             if contact_id and p.get("subject") and p.get("body"):
                 try:
                     mode = email_delivery_mode()
                     if mode == "unified":
-                        # Unified mode requires an explicit recipient email.
-                        if p.get("email"):
+                        if contact_email:
                             email_attempted = True
-                            email_sent = send_unified_email(p.get("email", ""), p["subject"], p["body"])
+                            email_sent = send_unified_email(contact_email, p["subject"], p["body"])
                         else:
-                            logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} — missing email.")
+                            logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} — no email found.")
                     else:
-                        email_attempted = True
-                        send_email(
-                            contact_id=contact_id,
-                            subject=p["subject"],
-                            body=p["body"],
-                        )
-                        email_sent = True
+                        # Native GHL mode — requires contact to have an email stored
+                        if contact_email:
+                            email_attempted = True
+                            send_email(
+                                contact_id=contact_id,
+                                subject=p["subject"],
+                                body=p["body"],
+                            )
+                            email_sent = True
+                        else:
+                            logging.info(
+                                f"[GHL] Email skipped for {p.get('business_name')} — no email address found. "
+                                f"Manual outreach required. Email draft stored in notes."
+                            )
+                            # Store the unsent email draft as a note for manual follow-up
+                            try:
+                                add_contact_note(
+                                    contact_id,
+                                    f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
+                                    f"Subject: {p['subject']}\n\n"
+                                    f"{p['body']}\n\n"
+                                    f"--- Follow-up Draft (Day 3) ---\n"
+                                    f"Subject: {p.get('follow_up_subject', '')}\n\n"
+                                    f"{p.get('follow_up_body', '')}",
+                                )
+                            except Exception:
+                                pass
+
                     if email_sent:
                         logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
 
-                    # Schedule follow-up if available
-                    if p.get("follow_up_subject") and p.get("follow_up_body"):
-                        add_contact_note(
-                            contact_id,
-                            f"SCHEDULED FOLLOW-UP (Touch 2, Day 3):\n"
-                            f"Subject: {p['follow_up_subject']}\n\n{p['follow_up_body']}",
-                        )
+                    # Schedule follow-up cadence notes
+                    if email_sent and p.get("follow_up_subject") and p.get("follow_up_body"):
+                        try:
+                            add_contact_note(
+                                contact_id,
+                                f"=== FOLLOW-UP CADENCE ===\n"
+                                f"DAY 3 — Subject: {p['follow_up_subject']}\n\n"
+                                f"{p['follow_up_body']}\n\n"
+                                f"DAY 7 — Value-add / case study angle\n"
+                                f"DAY 14 — Breakup email",
+                            )
+                        except Exception:
+                            pass
+
                 except Exception as email_err:
                     logging.warning(f"[GHL] Email send failed for {p.get('business_name')}: {email_err}")
             else:
@@ -669,6 +723,8 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             results.append({
                 "business_name": p.get("business_name"),
                 "contact_id": contact_id,
+                "contact_name": p.get("contact_name", ""),
+                "contact_email": contact_email,
                 "status": "created",
                 "email_attempted": email_attempted,
                 "email_sent": email_sent,

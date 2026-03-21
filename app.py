@@ -62,12 +62,22 @@ except ImportError as _psycopg_err:
 # ── Tool Imports ─────────────────────────────────────────────────────────────
 
 from tools.prospect_parser import parse_tyler_prospects
-from tools.ghl import push_prospects_to_ghl, create_contact, add_contact_note, send_email
+from tools.ghl import (
+    push_prospects_to_ghl,
+    create_contact,
+    add_contact_note,
+    send_email,
+    publish_content_to_ghl_site,
+    ghl_site_publish_ready,
+    publish_content_to_ghl_social,
+    ghl_social_publish_ready,
+)
 from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
 from tools.hubspot import hubspot_email_ready
 from tools.attio import attio_email_ready
 from tools.outbound_email import email_delivery_mode, unified_email_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
+from tools.contact_enricher import enrich_prospects
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
     queue_content, get_content_queue, mark_content_published,
@@ -561,6 +571,9 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 "raw_preview": raw_preview,
             }
 
+        # ── Contact enrichment: fill gaps in email/phone/name via web search ──
+        prospects = enrich_prospects(prospects, only_missing_email=False)
+
         crm_provider, crm_results = push_prospects_to_crm(
             prospects,
             source_agent=agent_name,
@@ -1021,6 +1034,13 @@ def run_tyler_prospecting():
                 "Search for news about businesses expanding, opening new locations, or hiring. "
                 "Look for buying signals: Google reviews mentioning missed calls, slow response, "
                 "or after-hours availability issues. "
+                "For each of your 5 targets, you MUST search the web to find: "
+                "(1) the business owner or manager's FIRST AND LAST NAME, "
+                "(2) a direct email address for that person or the business, "
+                "(3) the business phone number, "
+                "(4) the business website URL. "
+                "Search '[business name] [city] TX owner email contact' and '[business name] [city] website'. "
+                "Include any found contact info in your report — real names and emails, not placeholders. "
                 "Compile 5 high-priority outreach targets for today with a personalized COLD EMAIL "
                 "for each — NOT SMS. Use the Observation > Problem > Proof > Ask framework. "
                 "Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', "
@@ -1033,9 +1053,10 @@ def run_tyler_prospecting():
             ),
             expected_output=(
                 "Daily prospecting report with exactly 5 entries written inline — not referenced. "
-                "Each entry: Business Name, Business Type, City, Reason for Targeting, "
-                "Cold Email Subject, Cold Email Body, Follow-up Angle. "
-                "Format each entry with labeled fields. All outreach via cold email only."
+                "Each entry: Business Name, Business Type, City, Owner/Contact Name, Email, Phone, Website, "
+                "Reason for Targeting, Cold Email Subject, Cold Email Body, Follow-up Angle. "
+                "Format each entry with labeled fields. Contact info is REQUIRED — search for it. "
+                "All outreach via cold email only."
             ),
             agent=tyler,
         )
@@ -1062,6 +1083,13 @@ def run_marcus_prospecting():
                 "businesses with outdated websites, weak social presence, no Google reviews strategy, "
                 "or recent funding/expansion news. Look for buying signals: businesses posting about "
                 "marketing struggles, hiring marketing roles, or launching new services. "
+                "For each of your 5 targets, you MUST search the web to find: "
+                "(1) the business owner or marketing decision-maker's FIRST AND LAST NAME, "
+                "(2) a direct email address for that person or the business, "
+                "(3) the business phone number, "
+                "(4) the business website URL. "
+                "Search '[business name] Dallas owner email contact' and '[business name] website contact'. "
+                "Include any found contact info in your report — real names and emails, not placeholders. "
                 "Compile 5 high-priority outreach targets for today with a consultative cold email "
                 "for each — lead with their problem, not your service. Use an educational, diagnostic tone. "
                 "Subject lines should be consultative (e.g. 'quick audit for [business]', 'your website traffic'). "
@@ -1070,8 +1098,10 @@ def run_marcus_prospecting():
             ),
             expected_output=(
                 "Daily prospecting report: (1) 5 outreach targets with company name, industry, city, "
-                "key pain point, a cold email (subject + body), and a follow-up email angle. "
+                "owner/contact name, email, phone, website, key pain point, "
+                "a cold email (subject + body), and a follow-up email angle. "
                 "(2) Bundle opportunities flagged for Dek. "
+                "Contact info is REQUIRED for each target — search for it. "
                 "IMPORTANT: All outreach is via cold email only."
             ),
             agent=marcus,
@@ -1099,6 +1129,13 @@ def run_ryan_data_prospecting():
                 "job postings for digital transformation or BDC roles, news about expansion or new ownership, "
                 "Google reviews mentioning slow response times, or recent tech vendor changes. "
                 "Search for news about target dealership groups. "
+                "For each of your 5 targets, you MUST search the web to find: "
+                "(1) the BDC manager, General Manager, or owner's FIRST AND LAST NAME, "
+                "(2) a direct email address for that person or the dealership, "
+                "(3) the dealership phone number, "
+                "(4) the dealership website URL. "
+                "Search '[dealership name] [city] BDC manager general manager email contact'. "
+                "Include any found contact info in your report — real names and emails, not placeholders. "
                 "Identify 5 high-priority dealership targets for outreach today with personalized cold emails "
                 "positioning the free AI Readiness Assessment offer. "
                 "Subject lines should reference automotive/dealership context. "
@@ -1107,8 +1144,10 @@ def run_ryan_data_prospecting():
             ),
             expected_output=(
                 "Daily prospecting report: (1) 5 dealership targets with name, group affiliation, city, "
-                "AI readiness signal found, a cold email (subject + body), and a follow-up email angle. "
+                "contact name (BDC/GM/owner), email, phone, website, AI readiness signal found, "
+                "a cold email (subject + body), and a follow-up email angle. "
                 "(2) Pipeline notes on any previously contacted dealers showing new activity. "
+                "Contact info is REQUIRED for each target — search for it. "
                 "IMPORTANT: All outreach is via cold email only."
             ),
             agent=ryan_data,
@@ -1899,6 +1938,207 @@ async def publish_content(content_id: int, authorization: Optional[str] = Header
     return {"status": "published", "content_id": content_id}
 
 
+@app.post("/content/publish/ghl")
+async def publish_content_to_ghl(
+    limit: int = 5,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish queued AI Phone Guy content to GHL site workflow with a branded graphic payload."""
+    validate_key(authorization)
+    if limit < 1:
+        limit = 1
+    if limit > 25:
+        limit = 25
+
+    if not ghl_site_publish_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="GHL site publishing is not configured. Set GHL_SITE_PUBLISH_WEBHOOK_URL and core GHL credentials.",
+        )
+
+    queued_all = get_content_queue(business_key="aiphoneguy", status="queued", limit=100)
+    social_platforms = {"linkedin", "twitter", "x", "instagram", "facebook", "tiktok", "youtube"}
+    queued = [q for q in queued_all if (q.get("platform") or "").strip().lower() not in social_platforms][:limit]
+    if not queued:
+        return {
+            "status": "ok",
+            "published": 0,
+            "failed": 0,
+            "results": [],
+            "message": "No queued aiphoneguy site content found.",
+        }
+
+    published = 0
+    failed = 0
+    results = []
+
+    for item in queued:
+        enriched_item = dict(item)
+        enriched_item["business_key"] = "aiphoneguy"
+        try:
+            publish_result = publish_content_to_ghl_site(enriched_item)
+            mark_content_published(item["id"])
+            track_event(
+                "content_published",
+                business_key="aiphoneguy",
+                agent_name=item.get("agent_name", "zoe"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghl",
+                    "published_url": publish_result.get("url", ""),
+                    "slug": publish_result.get("slug", ""),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "status": "published",
+                    "url": publish_result.get("url", ""),
+                    "slug": publish_result.get("slug", ""),
+                }
+            )
+            published += 1
+        except Exception as e:
+            failed += 1
+            logging.warning("[Content] GHL publish failed for content_id=%s: %s", item.get("id"), e)
+            track_event(
+                "content_publish_failed",
+                business_key="aiphoneguy",
+                agent_name=item.get("agent_name", "zoe"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghl",
+                    "error": str(e),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
+
+    return {
+        "status": "ok",
+        "published": published,
+        "failed": failed,
+        "results": results,
+    }
+
+
+@app.post("/content/publish/ghl/social")
+async def publish_content_to_ghl_social_endpoint(
+    limit: int = 5,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish queued AI Phone Guy social content via GHL social channels."""
+    validate_key(authorization)
+    if limit < 1:
+        limit = 1
+    if limit > 25:
+        limit = 25
+
+    if not ghl_social_publish_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="GHL social publishing is not configured. Set GHL_SOCIAL_PUBLISH_WEBHOOK_URL and core GHL credentials.",
+        )
+
+    queued_all = get_content_queue(business_key="aiphoneguy", status="queued", limit=100)
+    social_platforms = {"linkedin", "twitter", "x", "instagram", "facebook", "tiktok", "youtube"}
+    queued = [q for q in queued_all if (q.get("platform") or "").strip().lower() in social_platforms][:limit]
+    if not queued:
+        return {
+            "status": "ok",
+            "published": 0,
+            "failed": 0,
+            "results": [],
+            "message": "No queued aiphoneguy social content found.",
+        }
+
+    published = 0
+    failed = 0
+    results = []
+
+    for item in queued:
+        enriched_item = dict(item)
+        enriched_item["business_key"] = "aiphoneguy"
+        try:
+            publish_result = publish_content_to_ghl_social(enriched_item)
+            mark_content_published(item["id"])
+            track_event(
+                "content_published_social",
+                business_key="aiphoneguy",
+                agent_name=item.get("agent_name", "zoe"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghl_social",
+                    "platform": item.get("platform", ""),
+                    "published_url": publish_result.get("url", ""),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "platform": item.get("platform", ""),
+                    "status": "published",
+                    "url": publish_result.get("url", ""),
+                }
+            )
+            published += 1
+        except Exception as e:
+            failed += 1
+            logging.warning("[Content] GHL social publish failed for content_id=%s: %s", item.get("id"), e)
+            track_event(
+                "content_publish_failed_social",
+                business_key="aiphoneguy",
+                agent_name=item.get("agent_name", "zoe"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghl_social",
+                    "platform": item.get("platform", ""),
+                    "error": str(e),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "platform": item.get("platform", ""),
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
+
+    return {
+        "status": "ok",
+        "published": published,
+        "failed": failed,
+        "results": results,
+    }
+
+
+@app.post("/content/publish/ghl/all")
+async def publish_content_to_ghl_all(
+    limit_site: int = 5,
+    limit_social: int = 5,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish AI Phone Guy site and social content in one run."""
+    validate_key(authorization)
+    site_result = await publish_content_to_ghl(limit=limit_site, authorization=authorization)
+    social_result = await publish_content_to_ghl_social_endpoint(limit=limit_social, authorization=authorization)
+    return {
+        "status": "ok",
+        "site": site_result,
+        "social": social_result,
+    }
+
+
 @app.get("/pipeline")
 async def pipeline_overview():
     """Quick pipeline overview — how many prospects, emails, opportunities across all businesses."""
@@ -1913,6 +2153,68 @@ async def sales_preflight(authorization: Optional[str] = Header(None)):
     """Return sales execution readiness by provider and sales agent routing."""
     validate_key(authorization)
     return _sales_preflight_report()
+
+
+@app.get("/api/sales/pipeline")
+async def sales_pipeline(
+    days: int = 30,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Return pipeline health snapshot: prospects created, emails sent, and
+    stage breakdown per business, aggregated from the revenue_events table.
+    """
+    validate_key(authorization)
+
+    try:
+        from tools.revenue_tracker import get_revenue_summary, get_daily_metrics
+
+        businesses = {
+            "aiphoneguy": {"name": "The AI Phone Guy", "agents": ["tyler"], "deal_value": 482},
+            "callingdigital": {"name": "Calling Digital", "agents": ["marcus"], "deal_value": 2500},
+            "autointelligence": {"name": "Automotive Intelligence", "agents": ["ryan_data"], "deal_value": 2500},
+        }
+
+        pipeline = {}
+        for biz_key, biz_info in businesses.items():
+            summary = get_revenue_summary(business_key=biz_key, days=days)
+            daily = get_daily_metrics(business_key=biz_key, days=7)
+
+            prospects_created = summary.get("prospect_created", 0)
+            emails_sent = summary.get("email_sent", 0)
+            demos_booked = summary.get("demo_booked", 0)
+            deals_closed = summary.get("deal_closed", 0)
+            pipeline_value = prospects_created * biz_info["deal_value"]
+            closed_value = deals_closed * biz_info["deal_value"]
+
+            contact_rate = round((emails_sent / prospects_created * 100), 1) if prospects_created else 0
+            demo_rate = round((demos_booked / emails_sent * 100), 1) if emails_sent else 0
+            close_rate = round((deals_closed / demos_booked * 100), 1) if demos_booked else 0
+
+            pipeline[biz_key] = {
+                "business": biz_info["name"],
+                "period_days": days,
+                "stages": {
+                    "prospected": prospects_created,
+                    "emailed": emails_sent,
+                    "demo_booked": demos_booked,
+                    "deals_closed": deals_closed,
+                },
+                "pipeline_value_usd": pipeline_value,
+                "closed_value_usd": closed_value,
+                "conversion_rates": {
+                    "prospect_to_email_pct": contact_rate,
+                    "email_to_demo_pct": demo_rate,
+                    "demo_to_close_pct": close_rate,
+                },
+                "daily_last_7d": daily,
+            }
+
+        return JSONResponse(content={"status": "ok", "pipeline": pipeline})
+
+    except Exception as e:
+        logging.error(f"[Pipeline] Status endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/admin/run-now")
