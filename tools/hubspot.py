@@ -26,6 +26,7 @@ from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.outbound_email import email_delivery_mode, send_unified_email
 from tools.email_templates import compose_templated_email, strict_template_validation_enabled
+from tools.revenue_tracker import already_emailed
 
 HUBSPOT_BASE_URL = "https://api.hubapi.com"
 
@@ -265,6 +266,13 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                         business_name,
                         ",".join(rendered.get("issues", [])),
                     )
+                elif email and already_emailed(email):
+                    email_attempted = False
+                    email_sent = False
+                    logging.info(
+                        "[HubSpot] Email skipped for %s — already emailed %s within 90 days.",
+                        business_name, email,
+                    )
                 elif mode == "unified":
                     email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
                     email_sent = send_unified_email(p.get("email", ""), rendered.get("subject", ""), rendered.get("body_text", "")) if email_attempted else False
@@ -279,6 +287,7 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     "business_name": business_name,
                     "contact_id": new_id,
                     "status": "created",
+                    "contact_email": email,
                     "email_attempted": email_attempted,
                     "email_sent": email_sent,
                     "template_key": rendered.get("template_key", ""),

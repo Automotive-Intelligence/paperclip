@@ -29,6 +29,7 @@ from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.outbound_email import email_delivery_mode, send_unified_email
 from tools.email_templates import compose_templated_email, strict_template_validation_enabled
+from tools.revenue_tracker import already_emailed
 
 GHL_BASE_URL = "https://services.leadconnectorhq.com"
 
@@ -652,35 +653,40 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                         subject = rendered.get("subject", "")
                         body_text = rendered.get("body_text", "")
 
-                        mode = email_delivery_mode()
-                        if mode == "unified":
-                            if contact_email:
-                                email_attempted = True
-                                email_sent = send_unified_email(contact_email, subject, body_text)
-                            else:
-                                logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} - no email found.")
+                        if contact_email and already_emailed(contact_email):
+                            logging.info(
+                                f"[GHL] Email skipped for {p.get('business_name')} — already emailed {contact_email} within 90 days."
+                            )
                         else:
-                            if contact_email:
-                                email_attempted = True
-                                send_email(contact_id=contact_id, subject=subject, body=body_text)
-                                email_sent = True
+                            mode = email_delivery_mode()
+                            if mode == "unified":
+                                if contact_email:
+                                    email_attempted = True
+                                    email_sent = send_unified_email(contact_email, subject, body_text)
+                                else:
+                                    logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} - no email found.")
                             else:
-                                logging.info(
-                                    f"[GHL] Email skipped for {p.get('business_name')} - no email address found. "
-                                    f"Manual outreach required. Email draft stored in notes."
-                                )
-                                try:
-                                    add_contact_note(
-                                        contact_id,
-                                        f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
-                                        f"Subject: {subject}\n\n"
-                                        f"{body_text}\n\n"
-                                        f"--- Follow-up Draft (Day 3) ---\n"
-                                        f"Subject: {p.get('follow_up_subject', '')}\n\n"
-                                        f"{p.get('follow_up_body', '')}",
+                                if contact_email:
+                                    email_attempted = True
+                                    send_email(contact_id=contact_id, subject=subject, body=body_text)
+                                    email_sent = True
+                                else:
+                                    logging.info(
+                                        f"[GHL] Email skipped for {p.get('business_name')} - no email address found. "
+                                        f"Manual outreach required. Email draft stored in notes."
                                     )
-                                except Exception:
-                                    pass
+                                    try:
+                                        add_contact_note(
+                                            contact_id,
+                                            f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
+                                            f"Subject: {subject}\n\n"
+                                            f"{body_text}\n\n"
+                                            f"--- Follow-up Draft (Day 3) ---\n"
+                                            f"Subject: {p.get('follow_up_subject', '')}\n\n"
+                                            f"{p.get('follow_up_body', '')}",
+                                        )
+                                    except Exception:
+                                        pass
 
                         if email_sent:
                             logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")

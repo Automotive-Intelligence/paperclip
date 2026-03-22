@@ -154,6 +154,32 @@ def track_event(
         logging.error(f"[Revenue] Event tracking failed: {e}")
 
 
+def already_emailed(email: str, days: int = 90) -> bool:
+    """Return True if an email_sent event exists for this address within the last `days` days.
+
+    This is the authoritative duplicate-send guard — independent of any CRM-side lookup.
+    Prevents repeat emails if a CRM search misses an existing contact or the pipeline
+    is triggered more than once in a short window.
+    """
+    if not email or _db_context is None:
+        return False
+    try:
+        with _db_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM revenue_events "
+                    "WHERE event_type = 'email_sent' "
+                    "AND metadata->>'email' = %s "
+                    "AND created_at >= NOW() - INTERVAL '%s days' "
+                    "LIMIT 1",
+                    (email.lower().strip(), days),
+                )
+                return cur.fetchone() is not None
+    except Exception as e:
+        logging.warning("[Revenue] already_emailed check failed (fail-open): %s", e)
+        return False  # fail open — prefer a rare duplicate over silently blocking a valid outreach
+
+
 # ── Content Queue ────────────────────────────────────────────────────────────
 
 

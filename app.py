@@ -625,6 +625,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     contact_id=r.get("contact_id", ""),
                     metadata={
                         "business_name": r.get("business_name"),
+                        "email": (r.get("contact_email") or "").lower().strip(),
                         "template_key": r.get("template_key", ""),
                     },
                 )
@@ -3010,6 +3011,16 @@ async def get_dashboard():
         return FileResponse(str(dashboard_path), media_type="text/html")
     else:
         return {"error": f"Dashboard not found at {dashboard_path}"}
+
+
+@app.get("/visual")
+async def get_visual():
+    """Serve the visual HTML page."""
+    visual_path = Path(__file__).parent / "static" / "visual.html"
+    if visual_path.exists():
+        return FileResponse(str(visual_path), media_type="text/html")
+    else:
+        return {"error": f"Visual page not found at {visual_path}"}
 
 
 @app.get("/health")
