@@ -135,7 +135,7 @@ def _search_person_by_email(email: str) -> str | None:
     if not email:
         return None
     payload = {
-        "filter": {"email_addresses": {"$contains": {"email_address": email}}},
+        "filter": {"email_addresses": {"$contains": email}},
         "limit": 1,
     }
     try:
@@ -311,6 +311,22 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                 "provider": "attio",
             })
         except Exception as e:
+            if isinstance(e, ServiceCallError) and getattr(e, "error", None) and e.error.status_code == 400 and email:
+                existing_id = _search_person_by_email(email)
+                if existing_id:
+                    logging.warning("[Attio] Duplicate person detected after 400 for %s — skipping", business_name)
+                    results.append({
+                        "business_name": business_name,
+                        "contact_id": existing_id,
+                        "status": "duplicate_skipped",
+                        "email_attempted": False,
+                        "email_sent": False,
+                        "template_key": "",
+                        "template_valid": True,
+                        "template_issues": [],
+                        "provider": "attio",
+                    })
+                    continue
             logging.error(f"[Attio] Failed to push prospect {business_name}: {e}")
             results.append({
                 "business_name": business_name,
