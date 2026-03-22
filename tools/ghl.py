@@ -81,154 +81,158 @@ def build_ghl_site_graphic_svg(title: str, subtitle: str = "AI Phone Guy") -> st
     )
 
 
+# Map Paperclip platform names to GHL Social Planner account types
+_GHL_PLATFORM_TYPE = {
+    "linkedin": ["linkedin_business", "linkedin_profile"],
+    "facebook": ["facebook_page", "facebook_group"],
+    "instagram": ["instagram_business"],
+    "twitter": ["twitter_profile"],
+    "x": ["twitter_profile"],
+    "tiktok": ["tiktok_profile"],
+    "youtube": ["youtube_channel"],
+}
+
+
+def _get_ghl_social_accounts(location_id: str) -> list:
+    """Fetch connected social accounts from GHL Social Planner."""
+    try:
+        data = _ghl_request(
+            "get_social_accounts",
+            "GET",
+            f"/social-media-posting/oauth/{location_id}/socialmedia/accounts",
+            timeout=10,
+        )
+        return data.get("accounts", [])
+    except Exception as exc:
+        logging.warning("[GHL] Social account discovery failed: %s", exc)
+        return []
+
+
 def ghl_site_publish_ready() -> bool:
-    """GHL site publishing requires a webhook URL and core GHL credentials."""
+    """Site publishing uses GHL Blog API directly — only core credentials needed."""
     return bool(
         os.getenv("GHL_API_KEY", "").strip()
         and os.getenv("GHL_LOCATION_ID", "").strip()
-        and os.getenv("GHL_SITE_PUBLISH_WEBHOOK_URL", "").strip()
     )
 
 
 def ghl_social_publish_ready() -> bool:
-    """GHL social publishing requires a webhook URL and core GHL credentials."""
+    """Social publishing uses GHL Social Planner API directly — only core credentials needed."""
     return bool(
         os.getenv("GHL_API_KEY", "").strip()
         and os.getenv("GHL_LOCATION_ID", "").strip()
-        and os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_URL", "").strip()
     )
 
 
 def publish_content_to_ghl_site(content_item: dict) -> dict:
-    """Publish a queued content item to a GHL site via webhook integration.
+    """Publish a queued content item to GHL Blog via direct API (no premium webhook needed).
 
-    This keeps Paperclip provider-agnostic while allowing GHL-side site workflows
-    to handle final post creation.
+    Requires GHL_BLOG_ID — find it in GHL under Sites → Blogs → open your blog
+    → copy the ID from the URL bar → set as GHL_BLOG_ID in Railway.
     """
-    webhook_url = os.getenv("GHL_SITE_PUBLISH_WEBHOOK_URL", "").strip()
-    if not webhook_url:
-        raise ValueError("GHL_SITE_PUBLISH_WEBHOOK_URL is not configured.")
+    location_id = os.getenv("GHL_LOCATION_ID", "").strip()
+    blog_id = os.getenv("GHL_BLOG_ID", "").strip()
+
+    if not blog_id:
+        raise ValueError(
+            "GHL_BLOG_ID not set. In GHL go to Sites → Blogs → open your blog "
+            "→ copy the ID from the URL → set GHL_BLOG_ID in Railway."
+        )
 
     title = (content_item.get("title") or "AI Phone Guy Update").strip()
     body = (content_item.get("body") or "").strip()
     cta = (content_item.get("cta") or "").strip()
-    hashtags = (content_item.get("hashtags") or "").strip()
+    hashtags_raw = (content_item.get("hashtags") or "").strip()
     slug = _slugify(title)
-    graphic_svg = build_ghl_site_graphic_svg(title=title, subtitle="DFW AI Receptionist Insights")
+    body_html = _to_html_paragraphs(body)
+    if cta:
+        body_html += f"<p><strong>{html.escape(cta)}</strong></p>"
+    tags = [t.lstrip("#") for t in hashtags_raw.split() if t.startswith("#")]
 
     payload = {
+        "locationId": location_id,
+        "blogId": blog_id,
         "title": title,
-        "slug": slug,
-        "body_text": body,
-        "body_html": _to_html_paragraphs(body),
-        "cta": cta,
-        "hashtags": hashtags,
-        "platform": content_item.get("platform", ""),
-        "content_type": content_item.get("content_type", ""),
-        "graphic": {
-            "format": "svg",
-            "filename": f"{slug}.svg",
-            "alt": f"{title} - The AI Phone Guy",
-            "svg": graphic_svg,
-        },
-        "source": {
-            "system": "paperclip",
-            "business_key": content_item.get("business_key", "aiphoneguy"),
-            "queue_id": content_item.get("id"),
-            "agent_name": content_item.get("agent_name", "zoe"),
-        },
+        "rawHTML": body_html,
+        "urlSlug": slug,
+        "description": body[:160].strip(),
+        "imageAltText": title,
+        "author": "The AI Phone Guy",
+        "tags": tags,
+        "status": "PUBLISHED",
     }
 
-    extra_auth = os.getenv("GHL_SITE_PUBLISH_WEBHOOK_AUTH", "").strip()
-    headers = {"Content-Type": "application/json"}
-    if extra_auth:
-        headers["Authorization"] = extra_auth
-
-    result = request_with_retry(
-        provider="ghl",
-        operation="publish_content_to_ghl_site",
-        method="POST",
-        url=webhook_url,
-        headers=headers,
+    data = _ghl_request(
+        "publish_blog_post",
+        "POST",
+        "/blogs/posts",
         json_body=payload,
         timeout=20,
-        max_attempts=3,
-        backoff_seconds=0.8,
     )
-    if not result.ok:
-        err = result.error.message if result.error else "unknown"
-        raise RuntimeError(f"GHL site publish failed: {err}")
-
-    data = result.data if isinstance(result.data, dict) else {}
+    post_id = data.get("id", data.get("_id", ""))
     return {
         "status": "published",
         "slug": slug,
         "url": data.get("url", ""),
-        "external_id": data.get("id", ""),
-        "provider": "ghl_webhook",
+        "external_id": post_id,
+        "provider": "ghl_blog",
     }
 
 
 def publish_content_to_ghl_social(content_item: dict) -> dict:
-    """Publish a queued social content item to GHL social workflow via webhook."""
-    webhook_url = os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_URL", "").strip()
-    if not webhook_url:
-        raise ValueError("GHL_SOCIAL_PUBLISH_WEBHOOK_URL is not configured.")
+    """Publish a social content item directly via GHL Social Planner API.
+
+    No premium workflow trigger needed — uses GHL_API_KEY directly.
+    Connected accounts are auto-discovered from GHL Social Planner.
+    Override by setting GHL_SOCIAL_ACCOUNT_IDS (comma-separated account IDs).
+    """
+    location_id = os.getenv("GHL_LOCATION_ID", "").strip()
 
     title = (content_item.get("title") or "AI Phone Guy Social Post").strip()
     body = (content_item.get("body") or "").strip()
     hashtags = (content_item.get("hashtags") or "").strip()
     platform = (content_item.get("platform") or "linkedin").strip().lower()
-    post_text = body
-    if hashtags:
-        post_text = f"{body}\n\n{hashtags}".strip()
+    post_text = f"{body}\n\n{hashtags}".strip() if hashtags else body
+
+    # Resolve which GHL social accounts to post to
+    override_ids = [x.strip() for x in os.getenv("GHL_SOCIAL_ACCOUNT_IDS", "").split(",") if x.strip()]
+    if override_ids:
+        platform_type = _GHL_PLATFORM_TYPE.get(platform, ["linkedin_business"])[0]
+        account_keys = [{"id": aid, "type": platform_type} for aid in override_ids]
+    else:
+        accounts = _get_ghl_social_accounts(location_id)
+        target_types = _GHL_PLATFORM_TYPE.get(platform, [])
+        matching = [a for a in accounts if a.get("type") in target_types] if target_types else []
+        if not matching:
+            matching = accounts  # fall back to any connected account
+        if not matching:
+            raise RuntimeError(
+                "No GHL social accounts connected. Go to GHL → Social Planner → Accounts "
+                "and connect LinkedIn/Instagram/etc, or set GHL_SOCIAL_ACCOUNT_IDS."
+            )
+        account_keys = [{"id": a["id"], "type": a.get("type", "linkedin_business")} for a in matching[:3]]
 
     payload = {
-        "title": title,
-        "platform": platform,
-        "post_text": post_text,
-        "cta": (content_item.get("cta") or "").strip(),
-        "graphic": {
-            "format": "svg",
-            "filename": f"social-{_slugify(title)}.svg",
-            "alt": f"{title} - social graphic",
-            "svg": build_ghl_site_graphic_svg(title=title, subtitle="Social Content"),
-        },
-        "source": {
-            "system": "paperclip",
-            "business_key": content_item.get("business_key", "aiphoneguy"),
-            "queue_id": content_item.get("id"),
-            "agent_name": content_item.get("agent_name", "zoe"),
-        },
+        "locationId": location_id,
+        "summary": post_text,
+        "status": "PUBLISHED",
+        "accountKeys": account_keys,
     }
 
-    extra_auth = os.getenv("GHL_SOCIAL_PUBLISH_WEBHOOK_AUTH", "").strip()
-    headers = {"Content-Type": "application/json"}
-    if extra_auth:
-        headers["Authorization"] = extra_auth
-
-    result = request_with_retry(
-        provider="ghl",
-        operation="publish_content_to_ghl_social",
-        method="POST",
-        url=webhook_url,
-        headers=headers,
+    data = _ghl_request(
+        "publish_social_post",
+        "POST",
+        f"/social-media-posting/{location_id}/posts",
         json_body=payload,
         timeout=20,
-        max_attempts=3,
-        backoff_seconds=0.8,
     )
-    if not result.ok:
-        err = result.error.message if result.error else "unknown"
-        raise RuntimeError(f"GHL social publish failed: {err}")
-
-    data = result.data if isinstance(result.data, dict) else {}
+    post_id = data.get("id", data.get("_id", ""))
     return {
         "status": "published",
         "platform": platform,
         "url": data.get("url", ""),
-        "external_id": data.get("id", ""),
-        "provider": "ghl_social_webhook",
+        "external_id": post_id,
+        "provider": "ghl_social_planner",
     }
 
 

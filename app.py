@@ -1967,7 +1967,7 @@ async def publish_content_to_ghl(
     if not ghl_site_publish_ready():
         raise HTTPException(
             status_code=503,
-            detail="GHL site publishing is not configured. Set GHL_SITE_PUBLISH_WEBHOOK_URL and core GHL credentials.",
+            detail="GHL site publishing is not configured. Set GHL_API_KEY and GHL_LOCATION_ID in Railway.",
         )
 
     queued_all = get_content_queue(business_key="aiphoneguy", status="queued", limit=100)
@@ -2058,7 +2058,7 @@ async def publish_content_to_ghl_social_endpoint(
     if not ghl_social_publish_ready():
         raise HTTPException(
             status_code=503,
-            detail="GHL social publishing is not configured. Set GHL_SOCIAL_PUBLISH_WEBHOOK_URL and core GHL credentials.",
+            detail="GHL social publishing is not configured. Set GHL_API_KEY and GHL_LOCATION_ID in Railway.",
         )
 
     queued_all = get_content_queue(business_key="aiphoneguy", status="queued", limit=100)
