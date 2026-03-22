@@ -40,6 +40,137 @@ class FoundationEndpointsTests(unittest.TestCase):
         self.assertIn('attio', body['by_provider'])
         self.assertEqual(len(body['sales_agents']), 3)
 
+    @patch('app.ghl_site_publish_ready', return_value=False)
+    def test_ghl_content_publish_requires_config(self, _mock_ready):
+        resp = self.client.post('/content/publish/ghl')
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertIn('detail', body)
+
+    @patch('app.track_event')
+    @patch('app.mark_content_published')
+    @patch('app.publish_content_to_ghl_site')
+    @patch('app.get_content_queue')
+    @patch('app.ghl_site_publish_ready', return_value=True)
+    def test_ghl_content_publish_contract(
+        self,
+        _mock_ready,
+        mock_queue,
+        mock_publish,
+        mock_mark,
+        _mock_track,
+    ):
+        mock_queue.return_value = [
+            {
+                'id': 42,
+                'business_key': 'aiphoneguy',
+                'agent_name': 'zoe',
+                'platform': 'website',
+                'content_type': 'blog',
+                'title': 'Missed Calls Cost Revenue',
+                'body': 'Every missed call is a lost opportunity.',
+                'hashtags': '#dfw #aiphoneguy',
+                'cta': 'Book a demo',
+                'funnel_stage': 'awareness',
+                'created_at': '2026-03-19T08:00:00Z',
+            }
+        ]
+        mock_publish.return_value = {
+            'status': 'published',
+            'slug': 'missed-calls-cost-revenue',
+            'url': 'https://example.com/blog/missed-calls-cost-revenue',
+            'provider': 'ghl_webhook',
+        }
+
+        resp = self.client.post('/content/publish/ghl?limit=5')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'ok')
+        self.assertEqual(body['published'], 1)
+        self.assertEqual(body['failed'], 0)
+        self.assertEqual(len(body['results']), 1)
+        self.assertEqual(body['results'][0]['status'], 'published')
+        mock_mark.assert_called_once_with(42)
+
+    @patch('app.ghl_social_publish_ready', return_value=False)
+    def test_ghl_social_publish_requires_config(self, _mock_ready):
+        resp = self.client.post('/content/publish/ghl/social')
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertIn('detail', body)
+
+    @patch('app.track_event')
+    @patch('app.mark_content_published')
+    @patch('app.publish_content_to_ghl_social')
+    @patch('app.get_content_queue')
+    @patch('app.ghl_social_publish_ready', return_value=True)
+    def test_ghl_social_publish_contract(
+        self,
+        _mock_ready,
+        mock_queue,
+        mock_publish,
+        mock_mark,
+        _mock_track,
+    ):
+        mock_queue.return_value = [
+            {
+                'id': 77,
+                'business_key': 'aiphoneguy',
+                'agent_name': 'zoe',
+                'platform': 'linkedin',
+                'content_type': 'post',
+                'title': '3 Ways To Stop Missing Calls',
+                'body': 'Quick post body',
+                'hashtags': '#aiphoneguy',
+                'cta': 'DM us',
+                'funnel_stage': 'awareness',
+                'created_at': '2026-03-19T08:00:00Z',
+            },
+            {
+                'id': 78,
+                'business_key': 'aiphoneguy',
+                'agent_name': 'zoe',
+                'platform': 'blog',
+                'content_type': 'article',
+                'title': 'Long Form Blog',
+                'body': 'Blog body',
+                'hashtags': '',
+                'cta': 'Book demo',
+                'funnel_stage': 'consideration',
+                'created_at': '2026-03-19T08:00:00Z',
+            },
+        ]
+        mock_publish.return_value = {
+            'status': 'published',
+            'url': 'https://example.com/social/77',
+            'provider': 'ghl_social_webhook',
+        }
+
+        resp = self.client.post('/content/publish/ghl/social?limit=5')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'ok')
+        self.assertEqual(body['published'], 1)
+        self.assertEqual(body['failed'], 0)
+        self.assertEqual(len(body['results']), 1)
+        self.assertEqual(body['results'][0]['platform'], 'linkedin')
+        mock_mark.assert_called_once_with(77)
+
+    @patch('app.publish_content_to_ghl')
+    @patch('app.publish_content_to_ghl_social_endpoint')
+    def test_ghl_publish_all_contract(self, mock_social, mock_site):
+        mock_site.return_value = {'status': 'ok', 'published': 1, 'failed': 0, 'results': []}
+        mock_social.return_value = {'status': 'ok', 'published': 2, 'failed': 0, 'results': []}
+
+        resp = self.client.post('/content/publish/ghl/all?limit_site=1&limit_social=2')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'ok')
+        self.assertIn('site', body)
+        self.assertIn('social', body)
+        self.assertEqual(body['site']['published'], 1)
+        self.assertEqual(body['social']['published'], 2)
+
 
 class ParsingFallbackTests(unittest.TestCase):
     def test_parse_prospects_uses_heuristic_when_llm_fails(self):

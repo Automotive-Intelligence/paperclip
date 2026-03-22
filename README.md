@@ -37,6 +37,30 @@ Useful endpoint:
 
 - `GET /api/crm/config` returns active mapping and provider readiness.
 
+### GHL Site Publishing (AI Phone Guy)
+
+Paperclip can publish queued AI Phone Guy content to a GoHighLevel site workflow
+through a secure webhook adapter.
+
+Required env vars:
+
+- `GHL_SITE_PUBLISH_WEBHOOK_URL`: inbound GHL workflow/webhook URL that creates or updates a site post
+
+Optional env vars:
+
+- `GHL_SITE_PUBLISH_WEBHOOK_AUTH`: custom Authorization header value sent to the publish webhook
+
+Operational endpoint:
+
+- `POST /content/publish/ghl?limit=5`
+
+Behavior:
+
+- Pulls queued content for `aiphoneguy`
+- Builds a branded SVG hero graphic payload for each item
+- Sends title/body/slug/graphic payload to your GHL webhook
+- Marks successful items as published in `content_queue`
+
 ### Runtime Checks
 
 Startup now logs a single configuration summary and warning/fatal checks for:
