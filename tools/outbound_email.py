@@ -6,6 +6,7 @@ Supports a feature-flagged delivery mode:
   - unified: single SMTP sender for all providers
 """
 
+import logging
 import os
 import smtplib
 import re
@@ -73,5 +74,7 @@ def send_unified_email(to_email: str, subject: str, body: str, business_key: str
             server.login(username, password)
             server.send_message(msg)
         return True
-    except Exception:
+    except Exception as exc:
+        logging.error("[outbound_email] SMTP send failed for %s (business=%s host=%s user=%s from=%s): %s",
+                      to_email, business_key, host, username, from_email, exc)
         return False
