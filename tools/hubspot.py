@@ -275,7 +275,12 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     )
                 elif mode == "unified":
                     email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
-                    email_sent = send_unified_email(p.get("email", ""), rendered.get("subject", ""), rendered.get("body_text", "")) if email_attempted else False
+                    email_sent = send_unified_email(
+                        p.get("email", ""),
+                        rendered.get("subject", ""),
+                        rendered.get("body_text", ""),
+                        business_key=business_key,
+                    ) if email_attempted else False
                 else:
                     if rendered.get("subject"):
                         p["subject"] = rendered.get("subject", "")

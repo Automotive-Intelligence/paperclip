@@ -662,7 +662,7 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                             if mode == "unified":
                                 if contact_email:
                                     email_attempted = True
-                                    email_sent = send_unified_email(contact_email, subject, body_text)
+                                    email_sent = send_unified_email(contact_email, subject, body_text, business_key=business_key)
                                 else:
                                     logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} - no email found.")
                             else:
