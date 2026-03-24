@@ -1,16 +1,23 @@
 """
-tools/outbound_email.py - Unified outbound email sender for Option B.
+tools/outbound_email.py - Unified outbound email sender.
 
-Supports a feature-flagged delivery mode:
-  - native  (default): provider-specific send paths (GHL/HubSpot/Attio)
-  - unified: single SMTP sender for all providers
+Delivery is via Resend HTTP API (https://resend.com) so Railway's outbound
+SMTP block does not apply.  All sends go over HTTPS to api.resend.com.
+
+Required Railway vars:
+  RESEND_API_KEY                      - shared fallback key
+  RESEND_API_KEY_<BUSINESSKEY>        - per-business override (optional)
+  MAIL_FROM                           - shared fallback sender address
+  MAIL_FROM_<BUSINESSKEY>             - per-business sender (e.g. MAIL_FROM_CALLINGDIGITAL)
+
+EMAIL_DELIVERY_MODE must be set to "unified" to activate this path.
 """
 
 import logging
 import os
-import smtplib
 import re
-from email.message import EmailMessage
+
+import requests
 
 
 def _business_env_suffix(business_key: str = "") -> str:
@@ -38,15 +45,12 @@ def _mail_from_for_business(business_key: str = "") -> str:
     return _resolve_mail_setting("MAIL_FROM", business_key)
 
 
+def _resend_api_key(business_key: str = "") -> str:
+    return _resolve_mail_setting("RESEND_API_KEY", business_key)
+
+
 def unified_email_ready(business_key: str = "") -> bool:
-    required = (
-        _resolve_mail_setting("MAIL_HOST", business_key),
-        _resolve_mail_setting("MAIL_PORT", business_key),
-        _resolve_mail_setting("MAIL_USERNAME", business_key),
-        _resolve_mail_setting("MAIL_PASSWORD", business_key),
-        _mail_from_for_business(business_key),
-    )
-    return all(required)
+    return bool(_resend_api_key(business_key) and _mail_from_for_business(business_key))
 
 
 def send_unified_email(to_email: str, subject: str, body: str, business_key: str = "") -> bool:
@@ -56,25 +60,34 @@ def send_unified_email(to_email: str, subject: str, body: str, business_key: str
     if not to_email or not subject or not body or not unified_email_ready(business_key):
         return False
 
-    host = _resolve_mail_setting("MAIL_HOST", business_key)
-    port = int((_resolve_mail_setting("MAIL_PORT", business_key, "587") or "587").strip())
-    username = _resolve_mail_setting("MAIL_USERNAME", business_key)
-    password = _resolve_mail_setting("MAIL_PASSWORD", business_key)
+    api_key = _resend_api_key(business_key)
     from_email = _mail_from_for_business(business_key)
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = from_email
-    msg["To"] = to_email
-    msg.set_content(body)
-
     try:
-        with smtplib.SMTP(host, port, timeout=20) as server:
-            server.starttls()
-            server.login(username, password)
-            server.send_message(msg)
-        return True
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": from_email,
+                "to": [to_email],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=20,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        logging.error(
+            "[outbound_email] Resend API error for %s (business=%s from=%s): HTTP %s %s",
+            to_email, business_key, from_email, resp.status_code, resp.text[:200],
+        )
+        return False
     except Exception as exc:
-        logging.error("[outbound_email] SMTP send failed for %s (business=%s host=%s user=%s from=%s): %s",
-                      to_email, business_key, host, username, from_email, exc)
+        logging.error(
+            "[outbound_email] Resend request failed for %s (business=%s): %s",
+            to_email, business_key, exc,
+        )
         return False
