@@ -21,6 +21,7 @@ import datetime
 import json
 import asyncio
 import uuid
+from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
@@ -33,11 +34,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 import pytz
 from config.runtime import get_settings
 from config.logging_setup import configure_logging, set_request_id
 from config.principles import SYSTEM_IDENTITY, evaluate_action_morally
 from services.database import execute_query, fetch_all
+from services.http_client import request_with_retry
 from services.errors import DatabaseError
 from services.artifact import create_artifact, Artifact, ARTIFACT_TYPES, ARTIFACT_STATUSES
 from services.approval_queue import (
@@ -120,6 +123,25 @@ DATABASE_URL = SETTINGS.database_url
 
 logger = logging.getLogger(__name__)
 logger.info("AIBOS identity: %s", SYSTEM_IDENTITY)
+
+
+# ── Task Master Runtime State ────────────────────────────────────────────────
+
+TASKMASTER_INTERVAL_MINUTES = max(1, int(os.getenv("TASKMASTER_INTERVAL_MINUTES", "5") or "5"))
+TASKMASTER_STALE_AGENT_MINUTES = max(15, int(os.getenv("TASKMASTER_STALE_AGENT_MINUTES", "180") or "180"))
+TASKMASTER_WORK_START_HOUR = max(0, min(23, int(os.getenv("TASKMASTER_WORK_START_HOUR", "8") or "8")))
+TASKMASTER_WORK_END_HOUR = max(1, min(24, int(os.getenv("TASKMASTER_WORK_END_HOUR", "20") or "20")))
+TASKMASTER_WEEKDAYS_ONLY = os.getenv("TASKMASTER_WEEKDAYS_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
+TASKMASTER_ENABLED = os.getenv("TASKMASTER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+TASKMASTER_HISTORY_MAX = max(50, int(os.getenv("TASKMASTER_HISTORY_MAX", "200") or "200"))
+TASKMASTER_ALERTS_ENABLED = os.getenv("TASKMASTER_ALERTS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+TASKMASTER_ALERT_ON_AMBER = os.getenv("TASKMASTER_ALERT_ON_AMBER", "false").strip().lower() in {"1", "true", "yes", "on"}
+TASKMASTER_ALERT_COOLDOWN_MINUTES = max(1, int(os.getenv("TASKMASTER_ALERT_COOLDOWN_MINUTES", "30") or "30"))
+TASKMASTER_ALERT_WEBHOOK_URL = (os.getenv("TASKMASTER_ALERT_WEBHOOK_URL") or "").strip()
+TASKMASTER_ALERT_WEBHOOK_AUTH = (os.getenv("TASKMASTER_ALERT_WEBHOOK_AUTH") or "").strip()
+
+_TASKMASTER_HISTORY = deque(maxlen=TASKMASTER_HISTORY_MAX)
+_TASKMASTER_LAST_ALERT_AT_UTC: Optional[datetime.datetime] = None
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
@@ -235,8 +257,22 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_quality_snapshots_created_at
                 ON quality_snapshots (created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS taskmaster_checks (
+                check_id             TEXT        PRIMARY KEY,
+                status               TEXT        NOT NULL,
+                score                REAL        NOT NULL,
+                scheduler_running    BOOLEAN     NOT NULL,
+                stale_agents_count   INTEGER     NOT NULL,
+                red_flags_count      INTEGER     NOT NULL,
+                approval_queue_count INTEGER     NOT NULL,
+                details              TEXT        NOT NULL DEFAULT '{}',
+                created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_taskmaster_checks_created_at
+                ON taskmaster_checks (created_at DESC);
         """)
-        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots).")
+        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots, taskmaster_checks).")
     except DatabaseError as e:
         logging.error(f"[DB] Activation Layer table init failed: {e}")
 
@@ -394,19 +430,24 @@ def _provider_email_capability(provider: str) -> Dict[str, Any]:
     p = (provider or "").strip().lower()
     mode = email_delivery_mode()
     if mode == "unified":
-        ready = unified_email_ready()
+        # In unified mode each provider maps to a specific business key for per-business
+        # MAIL_FROM_<SUFFIX> / RESEND_API_KEY_<SUFFIX> lookups.
+        _provider_business_map = {
+            "ghl": "aiphoneguy",
+            "hubspot": "autointelligence",
+            "attio": "callingdigital",
+        }
+        bk = _provider_business_map.get(p, "")
+        ready = unified_email_ready(bk)
         return {
             "provider": p or "unknown",
             "email_supported": True,
             "email_send_ready": ready,
             "missing_requirements": [] if ready else [
-                "MAIL_HOST",
-                "MAIL_PORT",
-                "MAIL_USERNAME",
-                "MAIL_PASSWORD",
-                "MAIL_FROM",
+                "RESEND_API_KEY",
+                f"MAIL_FROM_{bk.upper() if bk else '<BUSINESSKEY>'} (verified sender address)",
             ],
-            "notes": "Unified delivery mode is enabled. All providers send through one SMTP sender.",
+            "notes": "Unified delivery mode is enabled. All providers send via Resend HTTP API.",
         }
     if p == "ghl":
         return {
@@ -503,11 +544,8 @@ def _sales_preflight_report() -> Dict[str, Any]:
         "email_delivery_mode": mode,
         "ready": unified_email_ready() if mode == "unified" else None,
         "required_vars": [
-            "MAIL_HOST",
-            "MAIL_PORT",
-            "MAIL_USERNAME",
-            "MAIL_PASSWORD",
-            "MAIL_FROM",
+            "RESEND_API_KEY",
+            "MAIL_FROM (or MAIL_FROM_<BUSINESSKEY> per business)",
         ],
     }
 
@@ -518,6 +556,563 @@ def _sales_preflight_report() -> Dict[str, Any]:
         "by_provider": by_provider,
         "sales_agents": sales_agents,
     }
+
+
+# ── Pit Wall Telemetry ───────────────────────────────────────────────────────
+
+PITWALL_AGENT_META: Dict[str, Dict[str, str]] = {
+    "alex": {"name": "Alex", "role": "CEO", "lane": "Executive Control", "team_id": "aiphoneguy"},
+    "tyler": {"name": "Tyler", "role": "Head of Sales", "lane": "Pipeline", "team_id": "aiphoneguy"},
+    "zoe": {"name": "Zoe", "role": "Head of Marketing", "lane": "Demand Engine", "team_id": "aiphoneguy"},
+    "jennifer": {"name": "Jennifer", "role": "Head of Client Success", "lane": "Retention", "team_id": "aiphoneguy"},
+    "michael_meta": {"name": "Michael Meta", "role": "CEO", "lane": "Executive Control", "team_id": "autointelligence"},
+    "chase": {"name": "Chase", "role": "Chief Revenue Officer", "lane": "Revenue", "team_id": "autointelligence"},
+    "atlas": {"name": "Atlas", "role": "Head of Marketing", "lane": "Demand Engine", "team_id": "autointelligence"},
+    "ryan_data": {"name": "Ryan", "role": "Research Analyst", "lane": "Intelligence", "team_id": "autointelligence"},
+    "phoenix": {"name": "Phoenix", "role": "Implementation Lead", "lane": "Delivery", "team_id": "autointelligence"},
+    "dek": {"name": "Dek", "role": "CEO", "lane": "Executive Control", "team_id": "callingdigital"},
+    "marcus": {"name": "Marcus", "role": "Head of Sales", "lane": "Pipeline", "team_id": "callingdigital"},
+    "carlos": {"name": "Carlos", "role": "Head of Content and Creative", "lane": "Creative", "team_id": "callingdigital"},
+    "sofia": {"name": "Sofia", "role": "Head of Client Success", "lane": "Retention", "team_id": "callingdigital"},
+    "nova": {"name": "Nova", "role": "Implementation Director", "lane": "Systems", "team_id": "callingdigital"},
+}
+
+
+def _pitwall_team_ids() -> List[str]:
+    return ["aiphoneguy", "autointelligence", "callingdigital"]
+
+
+def _pitwall_display_name(agent_id: str) -> str:
+    meta = PITWALL_AGENT_META.get(agent_id, {})
+    return meta.get("name", agent_id.replace("_", " ").title())
+
+
+def _iso_now() -> str:
+    return datetime.datetime.now(CST).isoformat()
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round((numerator / denominator) * 100, 2)
+
+
+def _fetch_recent_runs_by_agent() -> Dict[str, str]:
+    if not DATABASE_URL:
+        return {}
+    try:
+        rows = fetch_all(
+            """
+            SELECT agent_name, MAX(created_at)
+            FROM agent_logs
+            GROUP BY agent_name
+            """
+        )
+    except Exception:
+        return {}
+    output: Dict[str, str] = {}
+    for row in rows:
+        agent_name, created_at = row
+        if agent_name:
+            output[str(agent_name)] = str(created_at)
+    return output
+
+
+def _latest_log_for_agent(agent_id: str) -> Optional[str]:
+    if not DATABASE_URL:
+        return None
+    try:
+        rows = fetch_all(
+            """
+            SELECT content
+            FROM agent_logs
+            WHERE agent_name = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (agent_id,),
+        )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return str(rows[0][0] or "")
+
+
+def _extract_signal_lines(text: Optional[str], limit: int = 4) -> List[str]:
+    if not text:
+        return []
+    lines: List[str] = []
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("-*").strip()
+        if not line:
+            continue
+        if line.lower().startswith(("#", "http", "agent:", "role:")):
+            continue
+        if len(line) < 16:
+            continue
+        lines.append(line)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _derive_status_from_last_run(last_run_iso: Optional[str]) -> str:
+    if not last_run_iso:
+        return "red"
+    try:
+        run_dt = datetime.datetime.fromisoformat(last_run_iso.replace("Z", "+00:00"))
+        if run_dt.tzinfo is None:
+            run_dt = CST.localize(run_dt)
+    except Exception:
+        return "amber"
+    delta = datetime.datetime.now(pytz.utc) - run_dt.astimezone(pytz.utc)
+    hours = delta.total_seconds() / 3600.0
+    if hours <= 4:
+        return "green"
+    if hours <= 24:
+        return "amber"
+    return "red"
+
+
+def _artifact_pipeline_counts() -> Dict[str, int]:
+    if not DATABASE_URL:
+        return {
+            "artifact_created": 0,
+            "risk_gate": 0,
+            "approval_queue": 0,
+            "dispatch": 0,
+        }
+    try:
+        rows = fetch_all(
+            """
+            SELECT status, COUNT(*)
+            FROM artifacts
+            GROUP BY status
+            """
+        )
+    except Exception:
+        return {
+            "artifact_created": 0,
+            "risk_gate": 0,
+            "approval_queue": 0,
+            "dispatch": 0,
+        }
+
+    counts = {str(status): int(count) for status, count in rows}
+    dispatch_total = counts.get("delivered", 0) + counts.get("dispatch_failed", 0) + counts.get("failed", 0)
+    approval_total = counts.get("pending_approval", 0) + counts.get("escalated", 0)
+    return {
+        "artifact_created": sum(counts.values()),
+        "risk_gate": counts.get("auto_approved", 0) + approval_total,
+        "approval_queue": approval_total,
+        "dispatch": dispatch_total,
+    }
+
+
+def _team_revenue_kpis(team_id: str) -> Dict[str, Any]:
+    summary = get_revenue_summary(business_key=team_id, days=30) or {}
+    daily = get_daily_metrics(business_key=team_id, days=7) or []
+
+    prospects = int(summary.get("prospect_created", 0) or 0)
+    emails = int(summary.get("email_sent", 0) or 0)
+    replies = int(summary.get("email_replied", 0) or 0)
+    demos = int(summary.get("demo_booked", 0) or 0)
+    closed = int(summary.get("deal_closed", 0) or 0)
+    open_opps = max(demos - closed, 0)
+
+    return {
+        "open_opps": open_opps,
+        "reply_rate": _safe_ratio(replies, emails),
+        "win_rate": _safe_ratio(closed, demos),
+        "raw": {
+            "prospects": prospects,
+            "emails": emails,
+            "replies": replies,
+            "demos": demos,
+            "closed": closed,
+        },
+        "pipeline_activity": daily,
+    }
+
+
+def _fetch_railway_status() -> Dict[str, Any]:
+    public_domain = (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    app_url = f"https://{public_domain}" if public_domain else ""
+    health_url = f"{app_url}/health" if app_url else ""
+
+    health_ok = False
+    health_payload: Dict[str, Any] = {}
+    if health_url:
+        resp = request_with_retry(
+            provider="railway",
+            operation="health",
+            method="GET",
+            url=health_url,
+            timeout=8,
+            max_attempts=2,
+        )
+        if resp.ok and isinstance(resp.data, dict):
+            health_ok = True
+            health_payload = resp.data
+
+    return {
+        "project": os.getenv("RAILWAY_PROJECT_NAME", ""),
+        "environment": os.getenv("RAILWAY_ENVIRONMENT_NAME", os.getenv("RAILWAY_ENVIRONMENT", "")),
+        "service": os.getenv("RAILWAY_SERVICE_NAME", ""),
+        "public_domain": public_domain,
+        "service_url": os.getenv("RAILWAY_SERVICE_PAPERCLIP_URL", "") or app_url,
+        "health_ok": health_ok,
+        "health": health_payload,
+        "last_checked_at": _iso_now(),
+    }
+
+
+def _ghl_live_metrics() -> Dict[str, Any]:
+    if not SETTINGS.ghl_ready:
+        return {"available": False, "reason": "credentials_missing"}
+
+    headers = {
+        "Authorization": f"Bearer {os.getenv('GHL_API_KEY', '').strip()}",
+        "Content-Type": "application/json",
+        "Version": "2021-07-28",
+    }
+    location_id = os.getenv("GHL_LOCATION_ID", "").strip()
+    pipeline_id = os.getenv("GHL_PIPELINE_ID", "").strip()
+    base = "https://services.leadconnectorhq.com"
+
+    contacts_total: Optional[int] = None
+    opportunities_total: Optional[int] = None
+    workflows_active: Optional[int] = None
+    tags_seen: Optional[int] = None
+
+    contacts_resp = request_with_retry(
+        provider="ghl",
+        operation="contacts_count",
+        method="GET",
+        url=f"{base}/contacts/",
+        headers=headers,
+        params={"locationId": location_id, "limit": 100},
+        timeout=10,
+        max_attempts=2,
+    )
+    if contacts_resp.ok and isinstance(contacts_resp.data, dict):
+        contacts = contacts_resp.data.get("contacts", []) or []
+        contacts_total = int(contacts_resp.data.get("total", len(contacts)) or len(contacts))
+        tag_set = set()
+        for c in contacts:
+            for t in c.get("tags", []) or []:
+                if isinstance(t, str) and t.strip():
+                    tag_set.add(t.strip().lower())
+        tags_seen = len(tag_set)
+
+    if pipeline_id:
+        opp_resp = request_with_retry(
+            provider="ghl",
+            operation="opportunities",
+            method="GET",
+            url=f"{base}/opportunities/search",
+            headers=headers,
+            params={"location_id": location_id, "pipeline_id": pipeline_id},
+            timeout=10,
+            max_attempts=2,
+        )
+        if opp_resp.ok and isinstance(opp_resp.data, dict):
+            opportunities = opp_resp.data.get("opportunities", []) or []
+            opportunities_total = len(opportunities)
+
+    wf_resp = request_with_retry(
+        provider="ghl",
+        operation="workflows",
+        method="GET",
+        url=f"{base}/workflows/",
+        headers=headers,
+        params={"locationId": location_id},
+        timeout=10,
+        max_attempts=2,
+    )
+    if wf_resp.ok and isinstance(wf_resp.data, dict):
+        workflows = wf_resp.data.get("workflows", []) or wf_resp.data.get("data", []) or []
+        workflows_active = len(workflows)
+
+    rev = _team_revenue_kpis("aiphoneguy")
+    return {
+        "available": True,
+        "contacts_enrolled": contacts_total,
+        "active_workflows": workflows_active,
+        "reply_rate": rev["reply_rate"],
+        "tag_count_seen": tags_seen,
+        "pipeline_open": opportunities_total,
+    }
+
+
+def _hubspot_live_metrics() -> Dict[str, Any]:
+    token = (os.getenv("HUBSPOT_API_KEY") or os.getenv("HUBSPOT_ACCESS_TOKEN") or "").strip()
+    if not token:
+        return {"available": False, "reason": "credentials_missing"}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base = "https://api.hubapi.com"
+
+    deals_open: Optional[int] = None
+    contacts_recent: Optional[int] = None
+    stage_counts: Dict[str, int] = {}
+
+    deals_resp = request_with_retry(
+        provider="hubspot",
+        operation="deals",
+        method="POST",
+        url=f"{base}/crm/v3/objects/deals/search",
+        headers=headers,
+        json_body={"properties": ["dealstage"], "limit": 100},
+        timeout=10,
+        max_attempts=2,
+    )
+    if deals_resp.ok and isinstance(deals_resp.data, dict):
+        deals = deals_resp.data.get("results", []) or []
+        open_count = 0
+        for d in deals:
+            stage = str((d.get("properties") or {}).get("dealstage", "")).strip().lower()
+            if stage:
+                stage_counts[stage] = stage_counts.get(stage, 0) + 1
+            if stage not in {"closedwon", "closedlost"}:
+                open_count += 1
+        deals_open = open_count
+
+    dt_30d = datetime.datetime.utcnow() - datetime.timedelta(days=30)
+    contact_resp = request_with_retry(
+        provider="hubspot",
+        operation="contacts_recent",
+        method="POST",
+        url=f"{base}/crm/v3/objects/contacts/search",
+        headers=headers,
+        json_body={
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "lastmodifieddate",
+                            "operator": "GTE",
+                            "value": str(int(dt_30d.timestamp() * 1000)),
+                        }
+                    ]
+                }
+            ],
+            "limit": 100,
+        },
+        timeout=10,
+        max_attempts=2,
+    )
+    if contact_resp.ok and isinstance(contact_resp.data, dict):
+        contacts_recent = len(contact_resp.data.get("results", []) or [])
+
+    rev = _team_revenue_kpis("autointelligence")
+    return {
+        "available": True,
+        "open_deals": deals_open,
+        "contact_activity_30d": contacts_recent,
+        "pipeline_stage_counts": stage_counts,
+        "win_rate": rev["win_rate"],
+    }
+
+
+def _attio_live_metrics() -> Dict[str, Any]:
+    token = (os.getenv("ATTIO_API_KEY") or "").strip()
+    if not token:
+        return {"available": False, "reason": "credentials_missing"}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base = "https://api.attio.com/v2"
+
+    company_count: Optional[int] = None
+    person_recent: Optional[int] = None
+
+    company_resp = request_with_retry(
+        provider="attio",
+        operation="companies",
+        method="POST",
+        url=f"{base}/objects/companies/records/query",
+        headers=headers,
+        json_body={"limit": 100},
+        timeout=10,
+        max_attempts=2,
+    )
+    if company_resp.ok and isinstance(company_resp.data, dict):
+        companies = company_resp.data.get("data", []) or []
+        company_count = len(companies)
+
+    person_resp = request_with_retry(
+        provider="attio",
+        operation="people_recent",
+        method="POST",
+        url=f"{base}/objects/people/records/query",
+        headers=headers,
+        json_body={"limit": 100},
+        timeout=10,
+        max_attempts=2,
+    )
+    if person_resp.ok and isinstance(person_resp.data, dict):
+        people = person_resp.data.get("data", []) or []
+        person_recent = len(people)
+
+    rev = _team_revenue_kpis("callingdigital")
+    return {
+        "available": True,
+        "client_records": company_count,
+        "activity_feed_30d": person_recent,
+        "pipeline_health": rev["raw"],
+    }
+
+
+def _crm_live_metrics(team_id: str, provider: str) -> Dict[str, Any]:
+    p = (provider or "").strip().lower()
+    if p == "ghl":
+        return _ghl_live_metrics()
+    if p == "hubspot":
+        return _hubspot_live_metrics()
+    if p == "attio":
+        return _attio_live_metrics()
+    return {"available": False, "reason": f"unsupported_provider:{p}"}
+
+
+def _team_bottlenecks(team_id: str, provider: str) -> List[Dict[str, str]]:
+    preflight = _sales_preflight_report()
+    provider_row = (preflight.get("by_provider") or {}).get(provider, {})
+    rows: List[Dict[str, str]] = []
+
+    for missing in provider_row.get("missing_requirements", []) or []:
+        rows.append({"level": "red", "message": f"Missing credential or scope: {missing}"})
+
+    artifacts = _artifact_pipeline_counts()
+    if artifacts["approval_queue"] > 0:
+        rows.append({"level": "amber", "message": f"{artifacts['approval_queue']} artifacts waiting in approval queue"})
+
+    if not rows:
+        rows.append({"level": "green", "message": "No active blockers detected from live telemetry."})
+    return rows
+
+
+def _agent_artifact_risk_summary(agent_id: str) -> Dict[str, int]:
+    """Return artifact risk counts for a specific agent from persisted artifacts."""
+    if not DATABASE_URL:
+        return {"pending": 0, "escalated": 0, "failed": 0}
+    try:
+        rows = fetch_all(
+            """
+            SELECT status, COUNT(*)
+            FROM artifacts
+            WHERE agent_id = %s
+            GROUP BY status
+            """,
+            (agent_id,),
+        )
+    except Exception:
+        return {"pending": 0, "escalated": 0, "failed": 0}
+
+    counts = {str(status): int(count) for status, count in rows}
+    return {
+        "pending": counts.get("pending_approval", 0),
+        "escalated": counts.get("escalated", 0),
+        "failed": counts.get("failed", 0) + counts.get("dispatch_failed", 0),
+    }
+
+
+def _agent_risk_flags(team_id: str, agent_id: str, last_run: Optional[str]) -> List[str]:
+    """Compute deterministic risk flags from live system telemetry."""
+    flags: List[str] = []
+
+    team_agents = BUSINESSES.get(team_id, {}).get("agents", [])
+    provider = resolve_provider(team_id, agent_id if agent_id in team_agents else (team_agents[0] if team_agents else ""))
+    preflight = _sales_preflight_report()
+    provider_row = (preflight.get("by_provider") or {}).get(provider, {})
+
+    for missing in provider_row.get("missing_requirements", []) or []:
+        flags.append(f"Provider readiness issue: missing {missing}")
+
+    risk_counts = _agent_artifact_risk_summary(agent_id)
+    if risk_counts["escalated"] > 0:
+        flags.append(f"{risk_counts['escalated']} escalated artifacts require explicit sign-off")
+    if risk_counts["pending"] > 0:
+        flags.append(f"{risk_counts['pending']} artifacts are waiting in approval queue")
+    if risk_counts["failed"] > 0:
+        flags.append(f"{risk_counts['failed']} artifact dispatch failures detected")
+
+    if _derive_status_from_last_run(last_run) == "red":
+        flags.append("Agent run freshness is stale (>24h) based on latest run telemetry")
+
+    if not flags:
+        flags.append("No active risk flags from live telemetry.")
+    return flags
+
+
+def _agent_grounded_focus_and_actions(
+    team_id: str,
+    agent_id: str,
+    last_run: Optional[str],
+) -> Dict[str, List[str]]:
+    """Build focus/actions from measurable sources only (no narrative log parsing)."""
+    team_kpis = _team_revenue_kpis(team_id)
+    raw = team_kpis.get("raw", {})
+    artifacts = _agent_artifact_risk_summary(agent_id)
+    pipeline = _artifact_pipeline_counts()
+    role = PITWALL_AGENT_META.get(agent_id, {}).get("role", "")
+    status = _derive_status_from_last_run(last_run)
+
+    team_agents = BUSINESSES.get(team_id, {}).get("agents", [])
+    provider = resolve_provider(team_id, agent_id if agent_id in team_agents else (team_agents[0] if team_agents else ""))
+    preflight = _sales_preflight_report()
+    provider_row = (preflight.get("by_provider") or {}).get(provider, {})
+    missing = provider_row.get("missing_requirements", []) or []
+
+    focus: List[str] = [
+        f"Open opportunities: {team_kpis.get('open_opps', 0)} (30d).",
+        (
+            f"Reply rate: {team_kpis.get('reply_rate', 0.0)}% "
+            f"from {raw.get('replies', 0)} replies / {raw.get('emails', 0)} emails."
+        ),
+        (
+            f"Win rate: {team_kpis.get('win_rate', 0.0)}% "
+            f"from {raw.get('closed', 0)} closed / {raw.get('demos', 0)} demos."
+        ),
+        (
+            f"Agent artifact load: pending {artifacts['pending']}, "
+            f"escalated {artifacts['escalated']}, failed {artifacts['failed']}."
+        ),
+    ]
+
+    if "Sales" in role or "Revenue" in role or role == "CEO":
+        focus.append(f"Prospecting volume (30d): {raw.get('prospects', 0)} prospects created.")
+    if "Marketing" in role:
+        focus.append(f"Email output (30d): {raw.get('emails', 0)} sends tracked.")
+    if "Client Success" in role or "Implementation" in role:
+        focus.append(f"Approval queue pressure: {pipeline.get('approval_queue', 0)} items system-wide.")
+
+    actions: List[str] = []
+    if missing:
+        actions.extend([f"Resolve provider requirement: {item}." for item in missing[:3]])
+    if artifacts["escalated"] > 0:
+        actions.append(f"Review and sign off {artifacts['escalated']} escalated artifacts.")
+    if artifacts["pending"] > 0:
+        actions.append(f"Process {artifacts['pending']} pending approval artifacts.")
+    if artifacts["failed"] > 0:
+        actions.append(f"Investigate {artifacts['failed']} failed dispatch events.")
+    if status == "red":
+        actions.append("Trigger immediate run-now for this lane (last run stale >24h).")
+
+    if not actions:
+        actions = [
+            (
+                f"Maintain cadence: keep reply rate >= {team_kpis.get('reply_rate', 0.0)}% "
+                f"with current tracked volume ({raw.get('emails', 0)} emails)."
+            ),
+            "No urgent remediation actions required from live telemetry.",
+        ]
+
+    return {
+        "focus": focus[:5],
+        "next_actions": actions[:5],
+    }
+
 
 
 # ── Revenue Pipeline Helper ─────────────────────────────────────────────────
@@ -916,6 +1511,287 @@ def run_quality_snapshot_daily():
         logging.info("[Quality] daily snapshot saved id=%s score=%s", snapshot_id, snapshot.get("score"))
     except Exception as e:
         logging.error(f"[Quality] daily snapshot failed: {type(e).__name__}: {e}")
+
+
+def _taskmaster_work_window_open(now_local: Optional[datetime.datetime] = None) -> bool:
+    """Return whether Task Master should actively evaluate execution right now."""
+    now_local = now_local or datetime.datetime.now(CST)
+    if TASKMASTER_WEEKDAYS_ONLY and now_local.weekday() >= 5:
+        return False
+    hour = now_local.hour
+    if TASKMASTER_WORK_START_HOUR <= TASKMASTER_WORK_END_HOUR:
+        return TASKMASTER_WORK_START_HOUR <= hour < TASKMASTER_WORK_END_HOUR
+    return hour >= TASKMASTER_WORK_START_HOUR or hour < TASKMASTER_WORK_END_HOUR
+
+
+def _parse_run_timestamp(run_iso: Optional[str]) -> Optional[datetime.datetime]:
+    if not run_iso:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(str(run_iso).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = CST.localize(dt)
+        return dt.astimezone(pytz.utc)
+    except Exception:
+        return None
+
+
+def _minutes_since_run(run_iso: Optional[str], now_utc: Optional[datetime.datetime] = None) -> Optional[float]:
+    run_dt = _parse_run_timestamp(run_iso)
+    if not run_dt:
+        return None
+    now_utc = now_utc or datetime.datetime.now(datetime.UTC)
+    return max(0.0, (now_utc - run_dt).total_seconds() / 60.0)
+
+
+def _taskmaster_compose_check() -> Dict[str, Any]:
+    """Build a deterministic operating snapshot for founder-level execution control."""
+    now_local = datetime.datetime.now(CST)
+    now_utc = now_local.astimezone(datetime.UTC)
+
+    window_open = _taskmaster_work_window_open(now_local)
+    scheduler_running = bool(getattr(scheduler, "running", False))
+    jobs = scheduler.get_jobs()
+    paused_jobs = [j.id for j in jobs if getattr(j, "next_run_time", None) is None]
+
+    preflight = _sales_preflight_report()
+    provider_issues: List[str] = []
+    by_provider = preflight.get("by_provider", {}) or {}
+    for provider, row in by_provider.items():
+        missing = row.get("missing_requirements", []) or []
+        for item in missing:
+            provider_issues.append(f"{provider}:{item}")
+
+    recent_runs = _fetch_recent_runs_by_agent()
+    stale_agents: List[Dict[str, Any]] = []
+    fresh_agents = 0
+    for agent_id in AGENTS.keys():
+        minutes = _minutes_since_run(recent_runs.get(agent_id), now_utc=now_utc)
+        if minutes is None:
+            stale_agents.append({"agent_id": agent_id, "reason": "never_ran"})
+            continue
+        if minutes > TASKMASTER_STALE_AGENT_MINUTES:
+            stale_agents.append({"agent_id": agent_id, "minutes_since_last_run": round(minutes, 1)})
+        else:
+            fresh_agents += 1
+
+    pipeline = _artifact_pipeline_counts()
+    queue_pressure = int(pipeline.get("approval_queue", 0) or 0)
+
+    red_flags: List[str] = []
+    amber_flags: List[str] = []
+
+    if window_open and not scheduler_running:
+        red_flags.append("Scheduler is not running during active work window")
+    if provider_issues:
+        red_flags.append(f"CRM/email readiness blockers: {len(provider_issues)}")
+    if window_open and stale_agents:
+        red_flags.append(f"Stale agents: {len(stale_agents)}")
+    if queue_pressure > 0:
+        amber_flags.append(f"Approval queue backlog: {queue_pressure}")
+    if paused_jobs:
+        amber_flags.append(f"Paused jobs detected: {len(paused_jobs)}")
+
+    score = 100.0
+    score -= min(45.0, float(len(red_flags) * 20))
+    score -= min(20.0, float(len(amber_flags) * 5))
+    freshness_ratio = fresh_agents / float(max(len(AGENTS), 1))
+    score += min(10.0, round(freshness_ratio * 10.0, 1))
+    score = max(0.0, min(100.0, round(score, 1)))
+
+    status = "green"
+    if red_flags:
+        status = "red"
+    elif amber_flags:
+        status = "amber"
+
+    checks = {
+        "timestamp": now_local.isoformat(),
+        "window_open": window_open,
+        "status": status,
+        "score": score,
+        "scheduler": {
+            "running": scheduler_running,
+            "total_jobs": len(jobs),
+            "paused_jobs": paused_jobs,
+        },
+        "freshness": {
+            "stale_after_minutes": TASKMASTER_STALE_AGENT_MINUTES,
+            "fresh_agents": fresh_agents,
+            "total_agents": len(AGENTS),
+            "stale_agents": stale_agents,
+        },
+        "readiness": {
+            "overall_ready": bool(preflight.get("overall_ready", False)),
+            "provider_issues": provider_issues,
+        },
+        "pipeline": {
+            "approval_queue": queue_pressure,
+            "artifact_created": int(pipeline.get("artifact_created", 0) or 0),
+            "dispatch": int(pipeline.get("dispatch", 0) or 0),
+        },
+        "alerts": {
+            "red": red_flags,
+            "amber": amber_flags,
+            "actions": [
+                "Run /admin/run-now?scope=sales if stale sales agents are blocking execution.",
+                "Clear missing CRM/email credentials and scopes before relying on autonomous outreach.",
+                "Work approval queue to keep dispatch throughput moving.",
+            ],
+        },
+    }
+    return checks
+
+
+def _persist_taskmaster_check(check: Dict[str, Any]) -> Optional[str]:
+    """Persist Task Master check to memory and DB when available."""
+    check_id = str(uuid.uuid4())
+    payload = dict(check)
+    payload["check_id"] = check_id
+    _TASKMASTER_HISTORY.appendleft(payload)
+
+    if not DATABASE_URL:
+        return check_id
+
+    try:
+        execute_query(
+            """
+            INSERT INTO taskmaster_checks (
+                check_id, status, score, scheduler_running, stale_agents_count,
+                red_flags_count, approval_queue_count, details
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                check_id,
+                str(check.get("status", "amber")),
+                float(check.get("score", 0.0) or 0.0),
+                bool(((check.get("scheduler") or {}).get("running", False))),
+                int(len(((check.get("freshness") or {}).get("stale_agents") or []))),
+                int(len(((check.get("alerts") or {}).get("red") or []))),
+                int(((check.get("pipeline") or {}).get("approval_queue", 0) or 0)),
+                json.dumps(check),
+            ),
+        )
+    except Exception as e:
+        logging.warning("[TaskMaster] persist failed: %s", e)
+    return check_id
+
+
+def _taskmaster_should_alert(check: Dict[str, Any], force: bool = False) -> bool:
+    """Decide if this check should emit an outbound alert."""
+    if not TASKMASTER_ALERTS_ENABLED and not force:
+        return False
+
+    status = str(check.get("status", "amber")).lower()
+    if status == "green":
+        return False
+    if status == "amber" and not TASKMASTER_ALERT_ON_AMBER and not force:
+        return False
+
+    if force:
+        return True
+
+    global _TASKMASTER_LAST_ALERT_AT_UTC
+    if _TASKMASTER_LAST_ALERT_AT_UTC is None:
+        return True
+    minutes_since = (datetime.datetime.now(datetime.UTC) - _TASKMASTER_LAST_ALERT_AT_UTC).total_seconds() / 60.0
+    return minutes_since >= float(TASKMASTER_ALERT_COOLDOWN_MINUTES)
+
+
+def _taskmaster_send_alert(check: Dict[str, Any], check_id: Optional[str], force: bool = False) -> Dict[str, Any]:
+    """Send taskmaster alert to webhook channel if configured and not in cooldown."""
+    if not _taskmaster_should_alert(check, force=force):
+        return {"sent": False, "reason": "cooldown_or_status"}
+
+    if not TASKMASTER_ALERT_WEBHOOK_URL:
+        return {"sent": False, "reason": "webhook_missing"}
+
+    status = str(check.get("status", "amber")).upper()
+    score = check.get("score", 0)
+    red = ((check.get("alerts") or {}).get("red") or [])[:5]
+    amber = ((check.get("alerts") or {}).get("amber") or [])[:5]
+    stale = ((check.get("freshness") or {}).get("stale_agents") or [])
+
+    stale_names = []
+    for row in stale[:6]:
+        agent_id = row.get("agent_id", "unknown")
+        stale_names.append(_pitwall_display_name(agent_id))
+
+    text_lines = [
+        f"TASK MASTER {status}",
+        f"score={score}",
+        f"check_id={check_id or 'n/a'}",
+        f"stale_agents={len(stale)} ({', '.join(stale_names) if stale_names else 'none'})",
+    ]
+    if red:
+        text_lines.append("red_flags=" + " | ".join(red))
+    if amber:
+        text_lines.append("amber_flags=" + " | ".join(amber))
+
+    payload = {
+        "event": "taskmaster_alert",
+        "status": status.lower(),
+        "score": score,
+        "check_id": check_id,
+        "timestamp": check.get("timestamp"),
+        "message": "\n".join(text_lines),
+        "check": check,
+    }
+
+    headers = {"Content-Type": "application/json"}
+    if TASKMASTER_ALERT_WEBHOOK_AUTH:
+        headers["Authorization"] = TASKMASTER_ALERT_WEBHOOK_AUTH
+
+    resp = request_with_retry(
+        provider="taskmaster",
+        operation="alert_webhook",
+        method="POST",
+        url=TASKMASTER_ALERT_WEBHOOK_URL,
+        headers=headers,
+        json_body=payload,
+        timeout=8,
+        max_attempts=2,
+    )
+
+    if not resp.ok:
+        return {"sent": False, "reason": "webhook_error", "status_code": resp.status_code, "error": resp.error}
+
+    global _TASKMASTER_LAST_ALERT_AT_UTC
+    _TASKMASTER_LAST_ALERT_AT_UTC = datetime.datetime.now(datetime.UTC)
+    return {"sent": True, "status_code": resp.status_code}
+
+
+def run_taskmaster_watchdog() -> Dict[str, Any]:
+    """Scheduled every few minutes to keep founder execution cadence on track."""
+    try:
+        check = _taskmaster_compose_check()
+        check_id = _persist_taskmaster_check(check)
+        alert_result = _taskmaster_send_alert(check, check_id)
+        logging.info(
+            "[TaskMaster] status=%s score=%s stale=%s red=%s queue=%s id=%s",
+            check.get("status"),
+            check.get("score"),
+            len(((check.get("freshness") or {}).get("stale_agents") or [])),
+            len(((check.get("alerts") or {}).get("red") or [])),
+            ((check.get("pipeline") or {}).get("approval_queue", 0)),
+            check_id,
+        )
+        return {"check_id": check_id, "check": check, "alert": alert_result}
+    except Exception as e:
+        logging.error("[TaskMaster] watchdog failed: %s: %s", type(e).__name__, e)
+        return {
+            "check_id": None,
+            "check": {
+                "timestamp": datetime.datetime.now(CST).isoformat(),
+                "status": "red",
+                "score": 0.0,
+                "alerts": {
+                    "red": [f"taskmaster_internal_error:{type(e).__name__}: {e}"],
+                    "amber": [],
+                    "actions": ["Inspect application logs and restart scheduler if needed."],
+                },
+            },
+        }
 
 
 # ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────
@@ -1625,6 +2501,18 @@ scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, ti
     id="quality_snapshot_daily", name="📈 Daily Quality Snapshot",
     replace_existing=True, misfire_grace_time=3600)
 
+# Task Master watchdog — runs every few minutes to keep execution cadence visible.
+if TASKMASTER_ENABLED:
+    scheduler.add_job(
+        run_taskmaster_watchdog,
+        IntervalTrigger(minutes=TASKMASTER_INTERVAL_MINUTES, timezone=CST),
+        id="taskmaster_watchdog",
+        name=f"Task Master Watchdog ({TASKMASTER_INTERVAL_MINUTES}m)",
+        replace_existing=True,
+        misfire_grace_time=120,
+        max_instances=1,
+    )
+
 # ONE-TIME TEST at 7:56 PM CST for live demo
 from apscheduler.triggers.date import DateTrigger
 test_time = datetime.datetime.now(CST).replace(hour=19, minute=56, second=0, microsecond=0)
@@ -1664,6 +2552,9 @@ RUN_NOW_SCOPES = {
     "quality": [
         ("quality_snapshot_daily", run_quality_snapshot_daily),
     ],
+    "taskmaster": [
+        ("taskmaster_watchdog", run_taskmaster_watchdog),
+    ],
     "all": [
         ("alex_daily_briefing", run_alex_daily_briefing),
         ("dek_daily_briefing", run_dek_daily_briefing),
@@ -1680,6 +2571,7 @@ RUN_NOW_SCOPES = {
         ("atlas_intel", run_atlas_intel),
         ("phoenix_delivery", run_phoenix_delivery),
         ("quality_snapshot_daily", run_quality_snapshot_daily),
+        ("taskmaster_watchdog", run_taskmaster_watchdog),
     ],
 }
 
@@ -1762,6 +2654,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestContextMiddleware)
 
+pitwall_assets_dir = Path(__file__).parent / "static" / "pitwall-react"
+pitwall_assets_mount = pitwall_assets_dir / "assets"
+if pitwall_assets_mount.exists():
+    app.mount("/pitwall-static/assets", StaticFiles(directory=pitwall_assets_mount), name="pitwall-react-assets")
+
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -1806,6 +2703,9 @@ def normalize_agent_id(agent_name: str) -> str:
 
 @app.get("/")
 async def root():
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
     return {"status": "ok", "engine": "revenue", "version": SETTINGS.app_version}
 
 
@@ -2506,6 +3406,115 @@ async def get_metrics():
     }
 
 
+@app.get("/api/taskmaster/status")
+async def get_taskmaster_status(run_check: bool = False):
+    """Return current Task Master status; optionally run a fresh check."""
+    if run_check:
+        result = run_taskmaster_watchdog()
+        return {
+            "source": "fresh",
+            "taskmaster_enabled": TASKMASTER_ENABLED,
+            "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
+            "result": result,
+        }
+
+    if _TASKMASTER_HISTORY:
+        latest = _TASKMASTER_HISTORY[0]
+        return {
+            "source": "memory",
+            "taskmaster_enabled": TASKMASTER_ENABLED,
+            "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
+            "result": {"check_id": latest.get("check_id"), "check": latest},
+        }
+
+    if DATABASE_URL:
+        try:
+            rows = fetch_all(
+                """
+                SELECT check_id, details
+                FROM taskmaster_checks
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            )
+            if rows:
+                check_id, details = rows[0]
+                payload = json.loads(details or "{}")
+                payload["check_id"] = check_id
+                _TASKMASTER_HISTORY.appendleft(payload)
+                return {
+                    "source": "database",
+                    "taskmaster_enabled": TASKMASTER_ENABLED,
+                    "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
+                    "result": {"check_id": check_id, "check": payload},
+                }
+        except Exception as e:
+            logging.warning("[TaskMaster] status read from DB failed: %s", e)
+
+    result = run_taskmaster_watchdog()
+    return {
+        "source": "fresh_fallback",
+        "taskmaster_enabled": TASKMASTER_ENABLED,
+        "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
+        "result": result,
+    }
+
+
+@app.get("/api/taskmaster/history")
+async def get_taskmaster_history(limit: int = 25):
+    """Return recent Task Master checks from memory and Postgres if available."""
+    limit = max(1, min(limit, 200))
+
+    if DATABASE_URL:
+        try:
+            rows = fetch_all(
+                """
+                SELECT check_id, details, created_at
+                FROM taskmaster_checks
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            checks: List[Dict[str, Any]] = []
+            for check_id, details, created_at in rows:
+                payload = json.loads(details or "{}")
+                payload["check_id"] = check_id
+                payload["created_at"] = str(created_at)
+                checks.append(payload)
+            return {"count": len(checks), "checks": checks, "source": "database"}
+        except Exception as e:
+            logging.warning("[TaskMaster] history read from DB failed: %s", e)
+
+    return {
+        "count": min(limit, len(_TASKMASTER_HISTORY)),
+        "checks": list(_TASKMASTER_HISTORY)[:limit],
+        "source": "memory",
+    }
+
+
+@app.post("/api/taskmaster/run")
+async def run_taskmaster_now(authorization: Optional[str] = Header(None)):
+    """Force Task Master to run now (authenticated)."""
+    validate_key(authorization)
+    return run_taskmaster_watchdog()
+
+
+@app.post("/api/taskmaster/alert/test")
+async def test_taskmaster_alert(authorization: Optional[str] = Header(None)):
+    """Force-send a Task Master alert regardless of cooldown/status (authenticated)."""
+    validate_key(authorization)
+    check = _taskmaster_compose_check()
+    check_id = _persist_taskmaster_check(check)
+    alert = _taskmaster_send_alert(check, check_id, force=True)
+    return {
+        "status": "ok",
+        "check_id": check_id,
+        "alert": alert,
+        "check": check,
+    }
+
+
 @app.get("/api/quality/now")
 async def get_quality_now(
     hours: int = 24,
@@ -3003,6 +4012,161 @@ async def get_agent_logs_by_date(agent_name: str):
     }
 
 
+@app.get("/api/pitwall/telemetry")
+async def get_pitwall_telemetry():
+    """Master telemetry feed for Pit Wall React app (auto-refresh friendly)."""
+    crm_config = crm_status_snapshot()
+    business_map = crm_config.get("business_crm_map", {})
+    recent_runs = _fetch_recent_runs_by_agent()
+
+    teams = []
+    for team_id in _pitwall_team_ids():
+        team_info = BUSINESSES.get(team_id, {})
+        provider = str(business_map.get(team_id, resolve_provider(team_id, team_info.get("agents", [""])[0] if team_info.get("agents") else "")))
+        kpis = _team_revenue_kpis(team_id)
+
+        agents = []
+        for agent_id in team_info.get("agents", []):
+            meta = PITWALL_AGENT_META.get(agent_id, {})
+            last_run = recent_runs.get(agent_id)
+            agents.append(
+                {
+                    "agent_id": agent_id,
+                    "name": _pitwall_display_name(agent_id),
+                    "role": meta.get("role", "Agent"),
+                    "lane": meta.get("lane", "Operations"),
+                    "last_run": last_run,
+                    "status": _derive_status_from_last_run(last_run),
+                }
+            )
+
+        teams.append(
+            {
+                "team_id": team_id,
+                "team_name": team_info.get("name", team_id),
+                "crm_provider": provider,
+                "sprint_status": "active" if any(a["status"] == "green" for a in agents) else "degraded",
+                "kpis": {
+                    "open_opps": kpis["open_opps"],
+                    "reply_rate": kpis["reply_rate"],
+                    "win_rate": kpis["win_rate"],
+                },
+                "agents": agents,
+            }
+        )
+
+    return {
+        "timestamp": _iso_now(),
+        "refresh_seconds": 60,
+        "railway": _fetch_railway_status(),
+        "activation_pipeline": _artifact_pipeline_counts(),
+        "teams": teams,
+    }
+
+
+@app.get("/api/pitwall/team/{team_id}")
+async def get_pitwall_team(team_id: str):
+    """Team-level telemetry and performance details."""
+    team_id = (team_id or "").strip().lower()
+    if team_id not in BUSINESSES:
+        raise HTTPException(status_code=404, detail=f"Unknown team_id '{team_id}'")
+
+    crm_config = crm_status_snapshot()
+    provider = str((crm_config.get("business_crm_map") or {}).get(team_id, "ghl"))
+    team_info = BUSINESSES[team_id]
+    kpis = _team_revenue_kpis(team_id)
+    first_agent = team_info.get("agents", [""])[0] if team_info.get("agents") else ""
+
+    latest_log = _latest_log_for_agent(first_agent)
+    priorities = _extract_signal_lines(latest_log, limit=4)
+    if not priorities:
+        priorities = ["No recent live priorities were parsed from agent logs."]
+
+    bottlenecks = _team_bottlenecks(team_id, provider)
+
+    recent_runs = _fetch_recent_runs_by_agent()
+    roster = []
+    for agent_id in team_info.get("agents", []):
+        meta = PITWALL_AGENT_META.get(agent_id, {})
+        last_run = recent_runs.get(agent_id)
+        roster.append(
+            {
+                "agent_id": agent_id,
+                "name": _pitwall_display_name(agent_id),
+                "role": meta.get("role", "Agent"),
+                "lane": meta.get("lane", "Operations"),
+                "status": _derive_status_from_last_run(last_run),
+                "last_run": last_run,
+            }
+        )
+
+    return {
+        "timestamp": _iso_now(),
+        "team_id": team_id,
+        "team_name": team_info.get("name", team_id),
+        "crm_provider": provider,
+        "live_status": "active" if any(r["status"] == "green" for r in roster) else "degraded",
+        "stage": "execution",
+        "sprint": "current",
+        "kpis": {
+            "open_opps": kpis["open_opps"],
+            "reply_rate": kpis["reply_rate"],
+            "win_rate": kpis["win_rate"],
+        },
+        "pipeline_activity": kpis["pipeline_activity"],
+        "priorities": priorities,
+        "bottlenecks": bottlenecks,
+        "crm_live_metrics": _crm_live_metrics(team_id, provider),
+        "agents": roster,
+    }
+
+
+@app.get("/api/pitwall/team/{team_id}/agent/{agent_id}")
+async def get_pitwall_agent(team_id: str, agent_id: str):
+    """Agent-level telemetry and brief details."""
+    team_id = (team_id or "").strip().lower()
+    agent_id = normalize_agent_id(agent_id)
+
+    if team_id not in BUSINESSES:
+        raise HTTPException(status_code=404, detail=f"Unknown team_id '{team_id}'")
+    if agent_id not in AGENTS:
+        raise HTTPException(status_code=404, detail=f"Unknown agent_id '{agent_id}'")
+    if agent_id not in BUSINESSES[team_id]["agents"]:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' is not part of team '{team_id}'")
+
+    last_runs = _fetch_recent_runs_by_agent()
+    last_run = last_runs.get(agent_id)
+    status = _derive_status_from_last_run(last_run)
+    meta = PITWALL_AGENT_META.get(agent_id, {})
+    grounded = _agent_grounded_focus_and_actions(team_id=team_id, agent_id=agent_id, last_run=last_run)
+    focus = grounded["focus"]
+    actions = grounded["next_actions"]
+    risks = _agent_risk_flags(team_id=team_id, agent_id=agent_id, last_run=last_run)
+
+    return {
+        "timestamp": _iso_now(),
+        "team_id": team_id,
+        "team_name": BUSINESSES[team_id]["name"],
+        "agent": {
+            "agent_id": agent_id,
+            "name": _pitwall_display_name(agent_id),
+            "role": meta.get("role", "Agent"),
+            "lane": meta.get("lane", "Operations"),
+            "status": status,
+            "last_run": last_run,
+            "initials": "".join([part[0] for part in _pitwall_display_name(agent_id).split() if part])[:2].upper(),
+        },
+        "focus": focus,
+        "next_actions": actions,
+        "risk_flags": risks,
+        "data_sources": {
+            "focus": "revenue_events aggregates + artifacts status + provider readiness + run freshness",
+            "next_actions": "artifacts status + provider readiness + run freshness + team KPI aggregates",
+            "risk_flags": "artifacts table + provider readiness + run freshness telemetry",
+        },
+    }
+
+
 @app.get("/dashboard")
 async def get_dashboard():
     """Serve the dashboard HTML."""
@@ -3013,14 +4177,35 @@ async def get_dashboard():
         return {"error": f"Dashboard not found at {dashboard_path}"}
 
 
-@app.get("/visual")
-async def get_visual():
-    """Serve the visual HTML page."""
+@app.get("/pit-wall")
+async def get_pit_wall():
+    """Serve React Pit Wall app when built, fallback to legacy static page."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+
     visual_path = Path(__file__).parent / "static" / "visual.html"
     if visual_path.exists():
         return FileResponse(str(visual_path), media_type="text/html")
-    else:
-        return {"error": f"Visual page not found at {visual_path}"}
+    return {"error": f"Pit Wall page not found at {visual_path}"}
+
+
+@app.get("/team/{team_id}")
+async def get_pit_wall_team_route(team_id: str):
+    """Serve React app for team-level client-side routes."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/team/{team_id}/agent/{agent_id}")
+async def get_pit_wall_agent_route(team_id: str, agent_id: str):
+    """Serve React app for agent-level client-side routes."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
 
 
 @app.get("/health")
