@@ -21,6 +21,7 @@ import datetime
 import json
 import asyncio
 import uuid
+import re
 from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
@@ -49,6 +50,7 @@ from services.approval_queue import (
 )
 from services.dispatch import dispatch_artifact
 from services.delivery_receipt import get_receipts
+from services.social_pipeline import run_zernio_social_pipeline, prepare_social_piece_with_creative_director
 
 # Load environment variables from .env file
 load_dotenv()
@@ -3063,7 +3065,12 @@ async def publish_content_to_ghl_social_endpoint(
         enriched_item = dict(item)
         enriched_item["business_key"] = "aiphoneguy"
         try:
-            publish_result = publish_content_to_ghl_social(enriched_item)
+            prep = prepare_social_piece_with_creative_director(
+                piece=enriched_item,
+                business_key="aiphoneguy",
+            )
+            creative_item = prep.get("piece", enriched_item)
+            publish_result = publish_content_to_ghl_social(creative_item)
             mark_content_published(item["id"])
             track_event(
                 "content_published_social",
@@ -3074,6 +3081,8 @@ async def publish_content_to_ghl_social_endpoint(
                     "provider": "ghl_social",
                     "platform": item.get("platform", ""),
                     "published_url": publish_result.get("url", ""),
+                    "generated_media": prep.get("generated_media", False),
+                    "media_url": prep.get("media_url", ""),
                 },
             )
             results.append(
@@ -3083,6 +3092,9 @@ async def publish_content_to_ghl_social_endpoint(
                     "platform": item.get("platform", ""),
                     "status": "published",
                     "url": publish_result.get("url", ""),
+                    "generated_media": prep.get("generated_media", False),
+                    "media_url": prep.get("media_url", ""),
+                    "creative_director": prep.get("creative_director", {}),
                 }
             )
             published += 1
@@ -3166,20 +3178,42 @@ async def publish_content_to_zernio_endpoint(
     try:
         profiles = get_zernio_profiles()
         matching_profile = None
+        business_key_norm = re.sub(r"[^a-z0-9]", "", business_key.lower())
+
         for p in profiles:
-            if business_key.lower() in (p.get("name") or "").lower():
+            profile_name_norm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
+            if profile_name_norm == business_key_norm:
                 matching_profile = p
                 break
+
+        if not matching_profile:
+            for p in profiles:
+                profile_name_norm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
+                if business_key_norm and business_key_norm in profile_name_norm:
+                    matching_profile = p
+                    break
+
+        if not matching_profile:
+            forced_profile_id = os.getenv(f"{business_key.upper()}_ZERNIO_PROFILE_ID", "").strip()
+            if forced_profile_id:
+                for p in profiles:
+                    if (p.get("_id") or "").strip() == forced_profile_id:
+                        matching_profile = p
+                        break
         
         if not matching_profile:
-            # If no matching profile found by name, log a warning and use first available
-            if profiles:
-                matching_profile = profiles[0]
-                logging.warning(f"[Zernio] No profile matching '{business_key}' found, using '{matching_profile.get('name')}'")
-            else:
-                raise ServiceCallError("No Zernio profiles configured")
+            available = [p.get("name", "") for p in profiles]
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"No Zernio profile matched business '{business_key}'. "
+                    f"Available profiles: {available}. "
+                    f"Set {business_key.upper()}_ZERNIO_PROFILE_ID to force profile mapping."
+                ),
+            )
         
         profile_id = matching_profile.get("_id")
+        profile_name = matching_profile.get("name", "")
     except Exception as e:
         logging.error(f"[Zernio] Failed to get profiles: {e}")
         raise HTTPException(
@@ -3194,11 +3228,20 @@ async def publish_content_to_zernio_endpoint(
                 logging.warning(f"[Zernio] Skipping content {item.get('id')} with unsupported platform '{platform}'")
                 continue
 
-            result = publish_content_piece_to_zernio(
+            pipeline_result = run_zernio_social_pipeline(
                 piece=item,
+                business_key=business_key,
                 profile_id=profile_id,
-                publish_now=True,  # Publish immediately from queue
+                publish_now=True,
+                publisher=publish_content_piece_to_zernio,
             )
+            raw_result = pipeline_result.get("post", {})
+            result = raw_result.get("post") if isinstance(raw_result.get("post"), dict) else raw_result
+
+            post_url = ""
+            platform_entries = result.get("platforms") if isinstance(result, dict) else None
+            if isinstance(platform_entries, list) and platform_entries:
+                post_url = platform_entries[0].get("platformPostUrl", "")
             
             mark_content_published(item["id"])
             track_event(
@@ -3218,6 +3261,11 @@ async def publish_content_to_zernio_endpoint(
                 "platform": platform,
                 "status": "published",
                 "zernio_post_id": result.get("_id", ""),
+                "post_status": result.get("status", "unknown"),
+                "post_url": post_url,
+                "media_url": pipeline_result.get("media_url"),
+                "generated_media": pipeline_result.get("generated_media", False),
+                "creative_director": pipeline_result.get("creative_director", {}),
             })
             published += 1
         except Exception as e:
@@ -3244,6 +3292,10 @@ async def publish_content_to_zernio_endpoint(
 
     return {
         "status": "ok",
+        "profile": {
+            "id": profile_id,
+            "name": profile_name,
+        },
         "published": published,
         "failed": failed,
         "results": results,
