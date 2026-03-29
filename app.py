@@ -3311,6 +3311,7 @@ async def publish_content_to_ghost_endpoint(
     for item in queued:
         enriched_item = dict(item)
         enriched_item["business_key"] = business_key
+        enriched_item = _normalize_content_pieces([enriched_item], business_key)[0]
         try:
             publish_result = publish_content_to_ghost(enriched_item)
             mark_content_published(item["id"])
