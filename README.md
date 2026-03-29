@@ -61,6 +61,27 @@ Behavior:
 - Sends title/body/slug/graphic payload to your GHL webhook
 - Marks successful items as published in `content_queue`
 
+### Ghost Publishing (Calling Digital)
+
+Paperclip can publish queued Calling Digital long-form content directly to Ghost
+through the Ghost Admin API.
+
+Required env vars for Calling Digital:
+
+- `CALLINGDIGITAL_GHOST_API_URL`: Ghost site base URL, e.g. `https://blog.calling.digital`
+- `CALLINGDIGITAL_GHOST_ADMIN_API_KEY`: Ghost Admin API key in `<id>:<secret>` format
+
+Operational endpoint:
+
+- `POST /content/publish/ghost/callingdigital?limit=5`
+
+Behavior:
+
+- Pulls queued content for `callingdigital`
+- Filters out social-only items and publishes blog/site items to Ghost
+- Marks successful items as published in `content_queue`
+- Designed to scale to future Ghost-backed businesses via `{BUSINESS}_GHOST_*` env vars
+
 ### Runtime Checks
 
 Startup now logs a single configuration summary and warning/fatal checks for:
@@ -76,6 +97,43 @@ Startup now logs a single configuration summary and warning/fatal checks for:
 - `GET /health/ready`: readiness probe (returns `503` when not ready)
 
 `/health/ready` is designed for deploy gates and can be wired into production monitoring.
+
+### Task Master Watchdog
+
+Paperclip now includes a Task Master watchdog that runs on an interval and checks
+whether execution is keeping pace while you are in active selling windows.
+
+Default behavior:
+
+- Runs every 5 minutes
+- Flags stale agents (default stale threshold: 180 minutes)
+- Flags CRM/email readiness blockers (missing keys/scopes)
+- Flags approval queue pressure and paused scheduler jobs
+- Persists checks in Postgres (`taskmaster_checks`) when available
+
+Task Master env controls:
+
+- `TASKMASTER_ENABLED` (default: `true`)
+- `TASKMASTER_INTERVAL_MINUTES` (default: `5`)
+- `TASKMASTER_STALE_AGENT_MINUTES` (default: `180`)
+- `TASKMASTER_WORK_START_HOUR` (default: `8`)
+- `TASKMASTER_WORK_END_HOUR` (default: `20`)
+- `TASKMASTER_WEEKDAYS_ONLY` (default: `true`)
+
+Task Master alert controls:
+
+- `TASKMASTER_ALERTS_ENABLED` (default: `false`)
+- `TASKMASTER_ALERT_ON_AMBER` (default: `false`)
+- `TASKMASTER_ALERT_COOLDOWN_MINUTES` (default: `30`)
+- `TASKMASTER_ALERT_WEBHOOK_URL` (required for outbound alert delivery)
+- `TASKMASTER_ALERT_WEBHOOK_AUTH` (optional Authorization header value)
+
+Task Master endpoints:
+
+- `GET /api/taskmaster/status` (optional `?run_check=true`)
+- `GET /api/taskmaster/history?limit=25`
+- `POST /api/taskmaster/run` (authenticated)
+- `POST /api/taskmaster/alert/test` (authenticated, bypasses cooldown)
 
 ### Service Reliability (Phase 2)
 

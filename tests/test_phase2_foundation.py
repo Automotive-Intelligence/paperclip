@@ -171,6 +171,71 @@ class FoundationEndpointsTests(unittest.TestCase):
         self.assertEqual(body['site']['published'], 1)
         self.assertEqual(body['social']['published'], 2)
 
+    @patch('app.ghost_publish_ready', return_value=False)
+    def test_ghost_publish_requires_config(self, _mock_ready):
+        resp = self.client.post('/content/publish/ghost/callingdigital')
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertIn('detail', body)
+
+    @patch('app.track_event')
+    @patch('app.mark_content_published')
+    @patch('app.publish_content_to_ghost')
+    @patch('app.get_content_queue')
+    @patch('app.ghost_publish_ready', return_value=True)
+    def test_ghost_publish_contract(
+        self,
+        _mock_ready,
+        mock_queue,
+        mock_publish,
+        mock_mark,
+        _mock_track,
+    ):
+        mock_queue.return_value = [
+            {
+                'id': 91,
+                'business_key': 'callingdigital',
+                'agent_name': 'sofia',
+                'platform': 'blog',
+                'content_type': 'article',
+                'title': 'Why Service Businesses Need Better Websites',
+                'body': 'Your website is often your first salesperson.',
+                'hashtags': '#marketing #webdesign',
+                'cta': 'Book a strategy call',
+                'funnel_stage': 'consideration',
+                'created_at': '2026-03-28T08:00:00Z',
+            },
+            {
+                'id': 92,
+                'business_key': 'callingdigital',
+                'agent_name': 'sofia',
+                'platform': 'linkedin',
+                'content_type': 'post',
+                'title': 'Short social post',
+                'body': 'Social body',
+                'hashtags': '',
+                'cta': '',
+                'funnel_stage': 'awareness',
+                'created_at': '2026-03-28T08:00:00Z',
+            },
+        ]
+        mock_publish.return_value = {
+            'status': 'published',
+            'slug': 'why-service-businesses-need-better-websites',
+            'url': 'https://blog.calling.digital/why-service-businesses-need-better-websites/',
+            'provider': 'ghost',
+        }
+
+        resp = self.client.post('/content/publish/ghost/callingdigital?limit=5')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'ok')
+        self.assertEqual(body['published'], 1)
+        self.assertEqual(body['failed'], 0)
+        self.assertEqual(len(body['results']), 1)
+        self.assertEqual(body['results'][0]['status'], 'published')
+        mock_mark.assert_called_once_with(91)
+
 
 class ParsingFallbackTests(unittest.TestCase):
     def test_parse_prospects_uses_heuristic_when_llm_fails(self):

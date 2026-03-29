@@ -75,6 +75,7 @@ from tools.ghl import (
     publish_content_to_ghl_social,
     ghl_social_publish_ready,
 )
+from tools.ghost import publish_content_to_ghost, ghost_publish_ready
 from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
 from tools.hubspot import hubspot_email_ready
 from tools.attio import attio_email_ready
@@ -3051,6 +3052,104 @@ async def publish_content_to_ghl_all(
         "status": "ok",
         "site": site_result,
         "social": social_result,
+    }
+
+
+@app.post("/content/publish/ghost/{business_key}")
+async def publish_content_to_ghost_endpoint(
+    business_key: str,
+    limit: int = 5,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish queued blog/site content for a Ghost-backed business such as Calling Digital."""
+    validate_key(authorization)
+    business_key = (business_key or "").strip().lower()
+    if not business_key:
+        raise HTTPException(status_code=400, detail="business_key is required.")
+
+    if limit < 1:
+        limit = 1
+    if limit > 25:
+        limit = 25
+
+    if not ghost_publish_ready(business_key):
+        env_url = f"{business_key.upper()}_GHOST_API_URL"
+        env_key = f"{business_key.upper()}_GHOST_ADMIN_API_KEY"
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ghost publishing is not configured for {business_key}. Set {env_url} and {env_key} in Railway.",
+        )
+
+    queued_all = get_content_queue(business_key=business_key, status="queued", limit=100)
+    social_platforms = {"linkedin", "twitter", "x", "instagram", "facebook", "tiktok", "youtube"}
+    queued = [q for q in queued_all if (q.get("platform") or "").strip().lower() not in social_platforms][:limit]
+    if not queued:
+        return {
+            "status": "ok",
+            "published": 0,
+            "failed": 0,
+            "results": [],
+            "message": f"No queued {business_key} Ghost content found.",
+        }
+
+    published = 0
+    failed = 0
+    results = []
+
+    for item in queued:
+        enriched_item = dict(item)
+        enriched_item["business_key"] = business_key
+        try:
+            publish_result = publish_content_to_ghost(enriched_item)
+            mark_content_published(item["id"])
+            track_event(
+                "content_published",
+                business_key=business_key,
+                agent_name=item.get("agent_name", "content"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghost",
+                    "published_url": publish_result.get("url", ""),
+                    "slug": publish_result.get("slug", ""),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "status": "published",
+                    "url": publish_result.get("url", ""),
+                    "slug": publish_result.get("slug", ""),
+                }
+            )
+            published += 1
+        except Exception as e:
+            failed += 1
+            logging.warning("[Content] Ghost publish failed for business=%s content_id=%s: %s", business_key, item.get("id"), e)
+            track_event(
+                "content_publish_failed",
+                business_key=business_key,
+                agent_name=item.get("agent_name", "content"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "ghost",
+                    "error": str(e),
+                },
+            )
+            results.append(
+                {
+                    "content_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
+
+    return {
+        "status": "ok",
+        "published": published,
+        "failed": failed,
+        "results": results,
     }
 
 
