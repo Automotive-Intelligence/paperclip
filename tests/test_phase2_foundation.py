@@ -236,6 +236,49 @@ class FoundationEndpointsTests(unittest.TestCase):
         self.assertEqual(body['results'][0]['status'], 'published')
         mock_mark.assert_called_once_with(91)
 
+    @patch('app.track_event')
+    @patch('app.mark_content_published')
+    @patch('app.publish_content_piece_to_zernio')
+    @patch('app.get_zernio_profiles')
+    @patch('app.get_content_queue')
+    @patch('app.zernio_ready', return_value=True)
+    def test_zernio_publish_contract_accepts_body_field(
+        self,
+        _mock_ready,
+        mock_queue,
+        mock_profiles,
+        mock_publish,
+        mock_mark,
+        _mock_track,
+    ):
+        mock_queue.return_value = [
+            {
+                'id': 482,
+                'business_key': 'callingdigital',
+                'agent_name': 'sofia',
+                'platform': 'linkedin',
+                'content_type': 'post',
+                'title': 'Dallas AI adoption',
+                'body': 'Dallas ranks behind peers in AI adoption. Here is what to do next.',
+                'hashtags': '#dallas #ai',
+                'cta': 'Book a strategy call',
+                'funnel_stage': 'awareness',
+                'created_at': '2026-03-29T08:00:00Z',
+            }
+        ]
+        mock_profiles.return_value = [{'_id': 'profile-1', 'name': 'Calling Digital'}]
+        mock_publish.return_value = {'_id': 'zpost-1'}
+
+        resp = self.client.post('/content/publish/zernio/callingdigital?limit=1')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['status'], 'ok')
+        self.assertEqual(body['published'], 1)
+        self.assertEqual(body['failed'], 0)
+        self.assertEqual(len(body['results']), 1)
+        self.assertEqual(body['results'][0]['status'], 'published')
+        mock_mark.assert_called_once_with(482)
+
 
 class ParsingFallbackTests(unittest.TestCase):
     @patch('app.track_event')

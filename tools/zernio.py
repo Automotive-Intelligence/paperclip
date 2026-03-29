@@ -574,30 +574,33 @@ def publish_content_piece_to_zernio(
 ) -> Dict[str, Any]:
     """
     Publish a parsed content piece (from agents) to Zernio.
-    
+
+    Supports both parser output (`body`) and direct social payload (`content`).
+
     Expects piece to have:
-    - content: Post text
+    - content or body: Post text
     - platform: Single platform name
-    - media_url: Optional media URL
+    - media_url/image_url: Optional media URL
     - scheduled_for: Optional scheduling timestamp
-    
+
     Args:
         piece: Content piece dict from agent output
         profile_id: Zernio profile ID (business profile)
         publish_now: Publish immediately instead of scheduling
         scheduled_for: Override piece's scheduled_for time
     """
-    content = piece.get("content", "").strip()
+    content = (piece.get("content") or piece.get("body") or "").strip()
     if not content:
-        raise ValueError("Content piece must have 'content' field")
+        raise ValueError("Content piece must have 'content' or 'body' field")
 
     platform = piece.get("platform", "").lower()
     if not platform:
         raise ValueError("Content piece must have 'platform' field")
 
     media_urls = []
-    if piece.get("media_url"):
-        media_urls.append(piece["media_url"])
+    media_url = piece.get("media_url") or piece.get("image_url")
+    if media_url:
+        media_urls.append(media_url)
 
     # Determine scheduling
     schedule_time = scheduled_for or piece.get("scheduled_for")
