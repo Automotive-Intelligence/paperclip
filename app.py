@@ -76,6 +76,13 @@ from tools.ghl import (
     ghl_social_publish_ready,
 )
 from tools.ghost import publish_content_to_ghost, ghost_publish_ready
+from tools.zernio import (
+    zernio_ready,
+    list_zernio_accounts,
+    publish_to_zernio,
+    get_zernio_profiles,
+    publish_content_piece_to_zernio,
+)
 from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
 from tools.hubspot import hubspot_email_ready
 from tools.attio import attio_email_ready
@@ -1276,6 +1283,56 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         }
 
 
+def _default_content_cta_url(business_key: str) -> str:
+    env_key = f"{(business_key or '').strip().upper()}_PRIMARY_CTA_URL"
+    configured = (os.getenv(env_key) or "").strip()
+    if configured:
+        return configured
+
+    defaults = {
+        "callingdigital": "https://calling.digital",
+        "autointelligence": "https://automotiveintelligence.io",
+        "aiphoneguy": "https://theaiphoneguy.ai",
+    }
+    return defaults.get((business_key or "").strip().lower(), "")
+
+
+def _normalize_content_pieces(pieces: List[Dict[str, Any]], business_key: str) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    business_key = (business_key or "").strip().lower()
+    cta_url = _default_content_cta_url(business_key)
+
+    for piece in pieces:
+        current = dict(piece)
+        body = (current.get("body") or "").strip()
+        cta = (current.get("cta") or "").strip()
+        title = (current.get("title") or "").strip()
+
+        if business_key == "callingdigital":
+            # Nova is an internal operator, not the public-facing brand.
+            body = body.replace("Nova AI Consulting", "Calling Digital")
+            body = body.replace("Nova AI", "Calling Digital")
+            cta = cta.replace("Nova AI Consulting", "Calling Digital")
+            cta = cta.replace("Nova AI", "Calling Digital")
+            title = title.replace("Nova AI Consulting", "Calling Digital")
+            title = title.replace("Nova AI", "Calling Digital")
+
+        if cta_url:
+            for placeholder in ("[Link]", "[link]", "(link)", "(Link)"):
+                body = body.replace(placeholder, cta_url)
+                cta = cta.replace(placeholder, cta_url)
+
+        if business_key == "callingdigital" and not cta and cta_url:
+            cta = f"Book a free strategy call → {cta_url}"
+
+        current["title"] = title
+        current["body"] = body
+        current["cta"] = cta
+        normalized.append(current)
+
+    return normalized
+
+
 def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: str):
     """
     Content pipeline executor. Takes any content agent's output and:
@@ -1293,6 +1350,7 @@ def _execute_content_pipeline(agent_name: str, raw_output: str, business_key: st
                 "queued": 0,
             }
 
+        pieces = _normalize_content_pieces(pieces, business_key)
         queued = queue_content(business_key, agent_name, pieces)
         if queued:
             track_event(
@@ -2102,19 +2160,24 @@ def run_sofia_content():
     try:
         task = Task(
             description=(
-                "Search for trending topics in digital marketing, AI for business, and Dallas business news. "
+                "Search for trending topics in digital marketing, AI for business, Dallas business news, "
+                "and small-business buyer questions that lead to service inquiries. "
                 "Search for what other marketing agencies are publishing and what content is performing well. "
                 "Design 3 content pieces for Calling Digital's full-funnel strategy: "
                 "one AWARENESS piece (thought leadership or educational), "
                 "one CONSIDERATION piece (case study, comparison, or guide), "
                 "one CONVERSION piece (offer or CTA). "
                 "Also identify one AI education content angle that warms up existing clients "
-                "for the Nova AI consulting upsell. "
+                "for Calling Digital's AI services. "
+                "CRITICAL: Public-facing content must use the Calling Digital brand name, never Nova AI Consulting. "
+                "CRITICAL: Do not use placeholder links like [Link] or [link]. Use a concrete CTA destination or write the CTA without a URL. "
+                "CRITICAL: Prioritize topics Dallas-area SMB owners actually search for before they hire an agency: "
+                "website redesign cost, lead generation, SEO for local businesses, ads ROI, CRM follow-up, AI automation for SMBs. "
                 "For each: platform, hook, format, key message, and CTA."
             ),
             expected_output=(
                 "Daily content plan: (1) 3 fully detailed content ideas with platform/hook/format/message/CTA. "
-                "(2) One AI education piece idea for the consulting upsell pipeline. "
+                "(2) One AI education piece idea for the Calling Digital AI services pipeline. "
                 "(3) One social post ready to publish for Calling Digital."
             ),
             agent=sofia,
@@ -2583,11 +2646,12 @@ RUN_NOW_SCOPES = {
 async def lifespan(app: FastAPI):
     # ── Startup configuration checks
     logging.info(
-        "[Startup] env=%s strict=%s postgres=%s ghl=%s llm_model=%s llm_key=%s",
+        "[Startup] env=%s strict=%s postgres=%s ghl=%s zernio=%s llm_model=%s llm_key=%s",
         SETTINGS.environment,
         SETTINGS.strict_startup,
         SETTINGS.postgres_enabled,
         SETTINGS.ghl_ready,
+        zernio_ready(),
         SETTINGS.llm_model,
         SETTINGS.llm_api_key_present,
     )
@@ -2614,6 +2678,22 @@ async def lifespan(app: FastAPI):
             init_revenue_tables()
     except Exception as e:
         logging.warning(f"[Revenue] Init failed — revenue tracking disabled: {e}")
+
+    # ── Zernio social media integration init
+    try:
+        if zernio_ready():
+            profiles = get_zernio_profiles()
+            logging.info(f"[Zernio] Initialized with {len(profiles)} profile(s)")
+            for profile in profiles:
+                try:
+                    accounts = list_zernio_accounts(profile.get("_id"))
+                    logging.info(f"[Zernio] Profile '{profile.get('name')}': {len(accounts)} account(s)")
+                except Exception as e:
+                    logging.warning(f"[Zernio] Could not list accounts for profile {profile.get('_id')}: {e}")
+        else:
+            logging.info("[Zernio] Not configured (ZERNIO_API_KEY not set)")
+    except Exception as e:
+        logging.warning(f"[Zernio] Init failed — social publishing via Zernio disabled: {e}")
 
     # ── Scheduler — never crash startup if APScheduler misfires
     try:
@@ -3029,6 +3109,138 @@ async def publish_content_to_ghl_social_endpoint(
                     "error": str(e),
                 }
             )
+
+    return {
+        "status": "ok",
+        "published": published,
+        "failed": failed,
+        "results": results,
+    }
+
+
+@app.post("/content/publish/zernio/{business_key}")
+async def publish_content_to_zernio_endpoint(
+    business_key: Optional[str] = None,
+    limit: int = 5,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish queued social content via Zernio to 14+ platforms (Twitter/X, Instagram, Facebook, LinkedIn, TikTok, YouTube, etc.)"""
+    validate_key(authorization)
+    
+    if not zernio_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="Zernio is not configured. Set ZERNIO_API_KEY environment variable.",
+        )
+
+    if limit < 1:
+        limit = 1
+    if limit > 25:
+        limit = 25
+
+    # Map business keys to Zernio profile names for route purposes
+    business_key = (business_key or "aiphoneguy").strip().lower()
+    
+    # Get queued content for this business
+    queued_all = get_content_queue(business_key=business_key, status="queued", limit=100)
+    social_platforms = {
+        "twitter", "x", "instagram", "facebook", "linkedin", "tiktok", "youtube",
+        "pinterest", "reddit", "bluesky", "threads", "googlebusiness", "telegram", "snapchat"
+    }
+    queued = [q for q in queued_all if (q.get("platform") or "").strip().lower() in social_platforms][:limit]
+    
+    if not queued:
+        return {
+            "status": "ok",
+            "published": 0,
+            "failed": 0,
+            "results": [],
+            "message": f"No queued {business_key} social content found.",
+        }
+
+    published = 0
+    failed = 0
+    results = []
+
+    # Get Zernio profiles and find the one matching this business
+    try:
+        profiles = get_zernio_profiles()
+        matching_profile = None
+        for p in profiles:
+            if business_key.lower() in (p.get("name") or "").lower():
+                matching_profile = p
+                break
+        
+        if not matching_profile:
+            # If no matching profile found by name, log a warning and use first available
+            if profiles:
+                matching_profile = profiles[0]
+                logging.warning(f"[Zernio] No profile matching '{business_key}' found, using '{matching_profile.get('name')}'")
+            else:
+                raise ServiceCallError("No Zernio profiles configured")
+        
+        profile_id = matching_profile.get("_id")
+    except Exception as e:
+        logging.error(f"[Zernio] Failed to get profiles: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to retrieve Zernio profiles: {e}",
+        )
+
+    for item in queued:
+        try:
+            platform = (item.get("platform") or "").strip().lower()
+            if not platform or platform not in social_platforms:
+                logging.warning(f"[Zernio] Skipping content {item.get('id')} with unsupported platform '{platform}'")
+                continue
+
+            result = publish_content_piece_to_zernio(
+                piece=item,
+                profile_id=profile_id,
+                publish_now=True,  # Publish immediately from queue
+            )
+            
+            mark_content_published(item["id"])
+            track_event(
+                "content_published_social",
+                business_key=business_key,
+                agent_name=item.get("agent_name", "unknown"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "zernio",
+                    "platform": platform,
+                    "zernio_post_id": result.get("_id", ""),
+                },
+            )
+            results.append({
+                "content_id": item.get("id"),
+                "title": item.get("title", ""),
+                "platform": platform,
+                "status": "published",
+                "zernio_post_id": result.get("_id", ""),
+            })
+            published += 1
+        except Exception as e:
+            failed += 1
+            logging.error(f"[Zernio] Publish failed for content_id={item.get('id')}: {e}")
+            track_event(
+                "content_publish_failed_social",
+                business_key=business_key,
+                agent_name=item.get("agent_name", "unknown"),
+                metadata={
+                    "content_id": item.get("id"),
+                    "provider": "zernio",
+                    "platform": item.get("platform", ""),
+                    "error": str(e),
+                },
+            )
+            results.append({
+                "content_id": item.get("id"),
+                "title": item.get("title", ""),
+                "platform": item.get("platform", ""),
+                "status": "failed",
+                "error": str(e),
+            })
 
     return {
         "status": "ok",

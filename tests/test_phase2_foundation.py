@@ -238,6 +238,38 @@ class FoundationEndpointsTests(unittest.TestCase):
 
 
 class ParsingFallbackTests(unittest.TestCase):
+    @patch('app.track_event')
+    @patch('app.queue_content')
+    @patch('app.parse_content_pieces')
+    def test_callingdigital_content_pipeline_normalizes_brand_and_links(
+        self,
+        mock_parse,
+        mock_queue,
+        _mock_track,
+    ):
+        mock_parse.return_value = [
+            {
+                'platform': 'blog',
+                'content_type': 'article',
+                'title': 'Why Nova AI Consulting Matters',
+                'body': 'Nova AI Consulting helps firms modernize marketing. Learn more here [Link]',
+                'hashtags': '',
+                'cta': 'Book a strategy call → [Link]',
+                'funnel_stage': 'consideration',
+            }
+        ]
+        mock_queue.return_value = 1
+
+        result = app._execute_content_pipeline('sofia', 'raw', 'callingdigital')
+
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['queued'], 1)
+        queued_pieces = mock_queue.call_args[0][2]
+        self.assertEqual(queued_pieces[0]['title'], 'Why Calling Digital Matters')
+        self.assertIn('Calling Digital helps firms modernize marketing.', queued_pieces[0]['body'])
+        self.assertIn('https://calling.digital', queued_pieces[0]['body'])
+        self.assertIn('https://calling.digital', queued_pieces[0]['cta'])
+
     def test_parse_prospects_uses_heuristic_when_llm_fails(self):
         raw = (
             '1. Business Name: One Hour HVAC, Type: HVAC, City: Dallas, '
