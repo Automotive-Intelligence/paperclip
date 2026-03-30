@@ -9,4 +9,3 @@ requests
 groq
 litellm
 python-dotenv
-zernio>=0.1.0
