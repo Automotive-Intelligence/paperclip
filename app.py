@@ -147,6 +147,7 @@ from agents.autointelligence.ryan_data import ryan_data
 from agents.autointelligence.chase import chase
 from agents.autointelligence.atlas import atlas
 from agents.autointelligence.phoenix import phoenix
+from agents.coo.coo_agent import run_coo_command
 
 
 CST = pytz.timezone("America/Chicago")
@@ -2631,6 +2632,11 @@ def run_all_agents_test():
 
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
+# COO Command — 7:45 (runs before all other agents)
+scheduler.add_job(run_coo_command, CronTrigger(hour=7, minute=45, timezone=CST),
+    id="coo_command_daily", name="COO Command Daily Ops",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing)
 scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -4779,6 +4785,25 @@ async def get_pit_wall_agent_route(team_id: str, agent_id: str):
     if react_index.exists():
         return FileResponse(str(react_index), media_type="text/html")
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/ops-report")
+async def ops_report():
+    """Latest COO Command ops report. Pulls most recent from PostgreSQL."""
+    try:
+        rows = fetch_all(
+            "SELECT content, created_at FROM agent_logs "
+            "WHERE agent_name = 'command' AND log_type = 'ops_report' "
+            "ORDER BY created_at DESC LIMIT 1"
+        )
+        if not rows:
+            return JSONResponse(content={"status": "no_report", "message": "No ops report generated yet."})
+        import json as _json
+        report = _json.loads(rows[0][0])
+        report["retrieved_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return JSONResponse(content=report)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
 
 
 @app.get("/health")
