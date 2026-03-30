@@ -4787,6 +4787,109 @@ async def get_pit_wall_agent_route(team_id: str, agent_id: str):
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
 
 
+@app.get("/api/pitwall/ops-dashboard")
+async def pitwall_ops_dashboard():
+    """Aggregated data feed for the Pit Wall ops dashboard."""
+    try:
+        # Agent health: last run time + status for all agents
+        recent_runs = _fetch_recent_runs_by_agent()
+        agent_health = []
+        for agent_id in PITWALL_AGENT_META:
+            last_run = recent_runs.get(agent_id)
+            meta = PITWALL_AGENT_META.get(agent_id, {})
+            status = _derive_status_from_last_run(last_run)
+            # Get last log preview
+            preview = ""
+            try:
+                rows = fetch_all(
+                    "SELECT LEFT(content, 200), created_at FROM agent_logs "
+                    "WHERE agent_name = %s ORDER BY created_at DESC LIMIT 1",
+                    (agent_id,),
+                )
+                if rows:
+                    preview = rows[0][0]
+            except Exception:
+                pass
+            agent_health.append({
+                "agent_id": agent_id,
+                "name": _pitwall_display_name(agent_id),
+                "role": meta.get("role", "Agent"),
+                "last_run": last_run,
+                "status": status,
+                "log_preview": preview,
+            })
+
+        # CRM push counts today
+        crm_today = {}
+        try:
+            rows = fetch_all(
+                "SELECT agent_name, status, COUNT(*) FROM crm_push_logs "
+                "WHERE created_at >= CURRENT_DATE GROUP BY agent_name, status"
+            )
+            for agent, status, count in rows:
+                if agent not in crm_today:
+                    crm_today[agent] = {"created": 0, "duplicate_skipped": 0}
+                crm_today[agent][status] = crm_today[agent].get(status, 0) + count
+        except Exception:
+            pass
+
+        # CRM push counts this week
+        crm_week = {}
+        try:
+            rows = fetch_all(
+                "SELECT agent_name, status, COUNT(*) FROM crm_push_logs "
+                "WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' GROUP BY agent_name, status"
+            )
+            for agent, status, count in rows:
+                if agent not in crm_week:
+                    crm_week[agent] = {"created": 0, "duplicate_skipped": 0}
+                crm_week[agent][status] = crm_week[agent].get(status, 0) + count
+        except Exception:
+            pass
+
+        # Latest COO report
+        coo_report = None
+        try:
+            rows = fetch_all(
+                "SELECT content FROM agent_logs "
+                "WHERE agent_name = 'command' AND log_type = 'ops_report' "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+            if rows:
+                import json as _json
+                coo_report = _json.loads(rows[0][0])
+        except Exception:
+            pass
+
+        return JSONResponse(content={
+            "timestamp": _iso_now(),
+            "refresh_seconds": 60,
+            "agent_health": agent_health,
+            "crm_today": crm_today,
+            "crm_week": crm_week,
+            "coo_report": coo_report,
+            "businesses": {
+                "aiphoneguy": {
+                    "name": "The AI Phone Guy",
+                    "sales_agent": "tyler",
+                    "crm": "GoHighLevel",
+                },
+                "callingdigital": {
+                    "name": "Calling Digital",
+                    "sales_agent": "marcus",
+                    "crm": "Attio",
+                },
+                "autointelligence": {
+                    "name": "Automotive Intelligence",
+                    "sales_agent": "ryan_data",
+                    "crm": "HubSpot",
+                },
+            },
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/ops-report")
 async def ops_report():
     """Latest COO Command ops report. Pulls most recent from PostgreSQL."""

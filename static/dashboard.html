@@ -2,401 +2,230 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🚀 Paperclip Agent Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AIBOS Pit Wall</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        .header { background: white; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
-        .header h1 { color: #333; font-size: 28px; display: flex; align-items: center; gap: 10px; }
-        .header-right { display: flex; gap: 15px; align-items: center; }
-        .status-online { width: 12px; height: 12px; border-radius: 50%; background: #10b981; animation: pulse 2s infinite; }
-        .time { font-size: 14px; color: #666; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
-        .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .card h2 { color: #667eea; font-size: 14px; font-weight: 600; text-transform: uppercase; margin-bottom: 15px; }
-        .metric { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
-        .metric-label { color: #666; font-size: 14px; }
-        .metric-value { font-size: 24px; font-weight: bold; color: #667eea; }
-        .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-        .agent-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; transition: transform 0.2s, cursor 0.2s; cursor: pointer; }
-        .agent-card:hover { transform: translateY(-2px); box-shadow: 0 8px 12px rgba(102, 126, 234, 0.4); }
-        .agent-card h3 { font-size: 16px; margin-bottom: 8px; }
-        .agent-card .type { font-size: 12px; opacity: 0.8; text-transform: uppercase; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; }
-        .tab { padding: 10px 15px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; color: #999; border-bottom: 3px solid transparent; transition: all 0.2s; }
-        .tab.active { color: #667eea; border-bottom-color: #667eea; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .job-item { display: flex; justify-content: space-between; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 10px; border-left: 4px solid #667eea; }
-        .log-viewer { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; }
-        .refresh-btn { background: #667eea; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-        .refresh-btn:hover { background: #5568d3; }
-        .loading { text-align: center; padding: 20px; color: #999; }
-        .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #f0f0f0; border-top-color: #667eea; border-radius: 50%; animation: spin 0.8s linear infinite; }
-        
-        /* Modal styles */
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
-        .modal.show { display: flex; }
-        .modal-content { background: white; border-radius: 12px; width: 90%; max-width: 1000px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #e5e7eb; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px 12px 0 0; }
-        .modal-header h2 { font-size: 20px; }
-        .modal-close { background: none; border: none; color: white; font-size: 24px; cursor: pointer; }
-        .modal-body { flex: 1; display: flex; overflow: hidden; }
-        .modal-sidebar { width: 200px; border-right: 1px solid #e5e7eb; overflow-y: auto; padding: 0; }
-        .modal-sidebar-item { padding: 12px; border-bottom: 1px solid #e5e7eb; cursor: pointer; font-size: 13px; color: #333; }
-        .modal-sidebar-item.active { background: #f0f0f0; color: #667eea; font-weight: 600; }
-        .modal-sidebar-item:hover { background: #f9f9f9; }
-        .modal-viewer { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        .modal-controls { display: flex; gap: 10px; padding: 12px; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
-        .modal-copy-btn { background: #667eea; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
-        .modal-copy-btn:hover { background: #5568d3; }
-        .modal-log-content { flex: 1; background: #1e1e1e; color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 12px; padding: 15px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.4; }
-        .modal-file-info { padding: 10px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #666; }
-        .empty-state { padding: 40px; text-align: center; color: #999; }
-        
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        :root {
+            --bg: #0a0e17; --surface: #131a2b; --surface2: #1a2332;
+            --border: #1e2d42; --text: #e2e8f0; --text2: #8899aa;
+            --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+            --blue: #3b82f6; --cyan: #06b6d4; --purple: #a855f7;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 12px; }
+        .pit-wall { max-width: 800px; margin: 0 auto; }
+
+        /* Header */
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; margin-bottom: 12px; }
+        .header h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; }
+        .header h1 span { color: var(--cyan); }
+        .header-right { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2); }
+        .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+        /* Alerts */
+        .alerts { margin-bottom: 16px; }
+        .alert { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px; color: #fca5a5; display: flex; align-items: center; gap: 8px; }
+        .alert::before { content: "!"; background: var(--red); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+
+        /* Business sections */
+        .biz-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+        .biz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .biz-name { font-size: 15px; font-weight: 700; }
+        .biz-crm { font-size: 11px; color: var(--text2); background: var(--surface2); padding: 3px 8px; border-radius: 4px; }
+        .metrics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+        .metric-box { background: var(--surface2); border-radius: 8px; padding: 10px; text-align: center; }
+        .metric-val { font-size: 24px; font-weight: 700; color: var(--cyan); }
+        .metric-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+        /* Agent health */
+        .agent-health { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+        .agent-health h2 { font-size: 14px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+        .agent-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .agent-row:last-child { border-bottom: none; }
+        .agent-info { display: flex; align-items: center; gap: 8px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .status-dot.green { background: var(--green); }
+        .status-dot.red { background: var(--red); }
+        .status-dot.yellow { background: var(--yellow); }
+        .agent-name { font-size: 13px; font-weight: 600; }
+        .agent-role { font-size: 11px; color: var(--text2); }
+        .agent-time { font-size: 11px; color: var(--text2); text-align: right; }
+        .agent-preview { font-size: 11px; color: var(--text2); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+
+        /* COO Report */
+        .coo-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+        .coo-section h2 { font-size: 14px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+        .coo-priority { background: var(--surface2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.5; color: var(--text); }
+
+        /* Footer */
+        .footer { text-align: center; padding: 16px 0; font-size: 11px; color: var(--text2); }
+        .refresh-note { font-size: 10px; color: var(--text2); opacity: 0.6; }
+
+        /* Loading */
+        .loading { text-align: center; padding: 40px; color: var(--text2); }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="pit-wall">
         <div class="header">
-            <h1><span style="font-size: 32px;">📊</span> Agent Dashboard</h1>
+            <h1><span>AIBOS</span> Pit Wall</h1>
             <div class="header-right">
-                <div class="time" id="current-time"></div>
-                <div class="status-online" style="display: flex; align-items: center; gap: 5px;"></div>
-                <span>Online</span>
-                <button class="refresh-btn" onclick="refreshDashboard()">↻ Refresh</button>
+                <div class="pulse"></div>
+                <span id="clock"></span>
             </div>
         </div>
 
-        <div class="grid">
-            <div class="card">
-                <h2>📈 System Status</h2>
-                <div class="metric"><span class="metric-label">Jobs Scheduled</span><span class="metric-value" id="jobs-count">-</span></div>
-                <div class="metric"><span class="metric-label">Agents Active</span><span class="metric-value" id="agents-count">15</span></div>
-                <div class="metric"><span class="metric-label">API Status</span><span class="metric-value" style="color: #10b981; font-size: 14px;">✓ Online</span></div>
-            </div>
-            <div class="card">
-                <h2>💼 Today's Activity</h2>
-                <div class="metric"><span class="metric-label">Emails Sent</span><span class="metric-value" id="emails-sent">-</span></div>
-                <div class="metric"><span class="metric-label">Prospects Created</span><span class="metric-value" id="prospects-created">-</span></div>
-                <div class="metric"><span class="metric-label">Content Generated</span><span class="metric-value" id="content-created">-</span></div>
-            </div>
-            <div class="card">
-                <h2>🔄 Performance</h2>
-                <div class="metric"><span class="metric-label">Avg Response Time</span><span class="metric-value" style="font-size: 14px;">0.92s</span></div>
-                <div class="metric"><span class="metric-label">Last Test Pass</span><span class="metric-value" style="color: #10b981; font-size: 14px;">✓ 14/14</span></div>
-                <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" style="font-size: 14px;">100%</span></div>
-            </div>
+        <div class="alerts" id="alerts"></div>
+        <div id="businesses"></div>
+        <div class="agent-health" id="agent-health">
+            <h2>Agent Health</h2>
+            <div class="loading">Loading...</div>
         </div>
-
-        <div class="card" style="margin-bottom: 20px;">
-            <h2>🤖 Active Agents (15) - Click to View Logs</h2>
-            <div class="agent-grid" id="agents-grid">
-                <!-- Populated by JavaScript -->
-            </div>
+        <div class="coo-section" id="coo-section">
+            <h2>COO Command Report</h2>
+            <div class="loading">Waiting for first report...</div>
         </div>
-
-        <div class="tabs">
-            <button class="tab active" onclick="switchTab('jobs')">📋 Scheduled Jobs</button>
-            <button class="tab" onclick="switchTab('logs')">📝 Recent Logs</button>
-            <button class="tab" onclick="switchTab('test')">🧪 Test Results</button>
-        </div>
-
-        <div id="jobs-tab" class="tab-content active">
-            <div class="card">
-                <h2>Next Scheduled Jobs</h2>
-                <div id="jobs-list">
-                    <div class="job-item">
-                        <div>
-                            <div style="font-weight: 600; color: #333;">🧪 Master Test Suite - All Agents</div>
-                            <div style="font-size: 12px; color: #999;">Today 18:30 CST</div>
-                        </div>
-                        <div style="color: #999; font-size: 12px;">Scheduled</div>
-                    </div>
-                    <div class="job-item">
-                        <div>
-                            <div style="font-weight: 600; color: #333;">Alex Daily Briefing</div>
-                            <div style="font-size: 12px; color: #999;">Tomorrow 08:00 CST</div>
-                        </div>
-                        <div style="color: #999; font-size: 12px;">Scheduled</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="logs-tab" class="tab-content" style="display: none;">
-            <div class="card">
-                <h2>Recent Logs</h2>
-                <div class="log-viewer" id="log-viewer-content">
-                    <div style="color: #999;">Loading logs...</div>
-                </div>
-            </div>
-        </div>
-
-        <div id="test-tab" class="tab-content" style="display: none;">
-            <div class="card">
-                <h2>Latest Test Results</h2>
-                <div id="test-results-content" style="padding: 20px; color: #999; text-align: center;">Loading test results...</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Agent Logs Modal -->
-    <div id="agentModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modalTitle">Agent Logs</h2>
-                <button class="modal-close" onclick="closeAgentModal()">✕</button>
-            </div>
-            <div class="modal-body">
-                <div class="modal-sidebar" id="modalSidebar">
-                    <!-- Date list populated by JavaScript -->
-                </div>
-                <div class="modal-viewer">
-                    <div class="modal-file-info" id="modalFileInfo">
-                        Select a date to view logs
-                    </div>
-                    <div class="modal-controls">
-                        <button class="modal-copy-btn" onclick="copyModalContent()">📋 Copy All</button>
-                    </div>
-                    <div class="modal-log-content" id="modalLogContent">
-                        <div class="empty-state">Select a date to view logs</div>
-                    </div>
-                </div>
-            </div>
+        <div class="footer">
+            <div class="refresh-note">Auto-refreshes every 60s</div>
         </div>
     </div>
 
     <script>
-        // Use the current page's origin so this works on Railway and locally
-        const API_BASE = window.location.origin === 'null' || window.location.origin === 'file://' 
-            ? 'http://127.0.0.1:8000' 
-            : window.location.origin;
-        const agents = [
-            { name: "Alex", type: "CEO - Briefing" },
-            { name: "Tyler", type: "Sales - Prospecting" },
-            { name: "Zoe", type: "Marketing - Content" },
-            { name: "Jennifer", type: "CS - Retention" },
-            { name: "Dek", type: "CEO - Briefing" },
-            { name: "Marcus", type: "Sales - Prospecting" },
-            { name: "Sofia", type: "Marketing - Content" },
-            { name: "Carlos", type: "CS - Retention" },
-            { name: "Michael Meta", type: "CEO - Briefing" },
-            { name: "Ryan Data", type: "Sales - Prospecting" },
-            { name: "Chase", type: "Marketing - Content" },
-            { name: "Nova", type: "Intel - Specialized" },
-            { name: "Atlas", type: "Intel - Specialized" },
-            { name: "Phoenix", type: "Intel - Delivery" },
-        ];
+        const API = window.location.origin;
 
-        function renderAgentGrid() {
-            const grid = document.getElementById('agents-grid');
-            grid.innerHTML = agents.map(agent => `
-                <div class="agent-card" onclick="openAgentModal('${agent.name}')">
-                    <h3>${agent.name}</h3>
-                    <div class="type">${agent.type}</div>
-                </div>
-            `).join('');
-        }
-
-        async function openAgentModal(agentName) {
-            document.getElementById('modalTitle').textContent = `${agentName} - Logs`;
-            const modal = document.getElementById('agentModal');
-            modal.classList.add('show');
-            
-            try {
-                const response = await fetch(`${API_BASE}/api/agent-logs/${agentName}`);
-                if (!response.ok) throw new Error('Failed to load logs');
-                
-                const data = await response.json();
-                const sidebar = document.getElementById('modalSidebar');
-                sidebar.innerHTML = '';
-                
-                if (data.dates.length === 0) {
-                    sidebar.innerHTML = '<div class="empty-state" style="padding: 20px;">No logs found</div>';
-                    return;
-                }
-                
-                data.dates.forEach((date, index) => {
-                    const item = document.createElement('div');
-                    item.className = `modal-sidebar-item ${index === 0 ? 'active' : ''}`;
-                    item.textContent = `📅 ${date}`;
-                    item.onclick = () => showAgentLog(data, date, agentName);
-                    sidebar.appendChild(item);
-                });
-                
-                // Auto-load first date
-                if (data.dates.length > 0) {
-                    showAgentLog(data, data.dates[0], agentName);
-                }
-            } catch (error) {
-                console.error('Error loading logs:', error);
-                document.getElementById('modalLogContent').innerHTML = `<div style="color: #cd5c5c;">Error loading logs: ${error.message}</div>`;
-            }
-        }
-
-        function showAgentLog(data, selectedDate, agentName) {
-            // Update active item
-            document.querySelectorAll('.modal-sidebar-item').forEach((item, index) => {
-                item.classList.toggle('active', data.dates[index] === selectedDate);
-            });
-            
-            const logs = data.logs_by_date[selectedDate] || [];
-            const content = document.getElementById('modalLogContent');
-            const fileInfo = document.getElementById('modalFileInfo');
-            
-            if (logs.length === 0) {
-                content.innerHTML = '<div class="empty-state">No logs for this date</div>';
-                fileInfo.textContent = 'No logs';
-                return;
-            }
-            
-            const log = logs[0]; // Show the first (most recent) log for this date
-            fileInfo.textContent = `📄 ${log.filename} | Size: ${log.size_kb} KB | Created: ${log.timestamp}`;
-            content.textContent = log.content;
-            
-            // Store current content for copy
-            window.currentLogContent = log.content;
-        }
-
-        function closeAgentModal() {
-            document.getElementById('agentModal').classList.remove('show');
-        }
-
-        function copyModalContent() {
-            const content = window.currentLogContent || document.getElementById('modalLogContent').textContent;
-            if (!content || content.includes('Select a date') || content.includes('Error loading')) {
-                alert('No content to copy');
-                return;
-            }
-            navigator.clipboard.writeText(content).then(() => {
-                alert('✓ Copied to clipboard!');
-            }).catch(err => {
-                console.error('Copy failed:', err);
-            });
-        }
-
-        function updateTime() {
+        function relTime(iso) {
+            if (!iso) return 'Never';
+            const d = new Date(iso);
             const now = new Date();
-            document.getElementById('current-time').textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        }
-        setInterval(updateTime, 1000);
-        updateTime();
-
-        function switchTab(name) {
-            document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-            document.getElementById(name + '-tab').style.display = 'block';
-            event.target.classList.add('active');
+            const mins = Math.round((now - d) / 60000);
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return mins + 'm ago';
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return hrs + 'h ago';
+            return Math.round(hrs / 24) + 'd ago';
         }
 
-        async function fetchData(endpoint) {
+        function updateClock() {
+            document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+        }
+        setInterval(updateClock, 10000);
+        updateClock();
+
+        async function refresh() {
             try {
-                const response = await fetch(`${API_BASE}${endpoint}`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return await response.json();
-            } catch (error) {
-                console.error(`Error fetching ${endpoint}:`, error);
-                return null;
+                const res = await fetch(API + '/api/pitwall/ops-dashboard');
+                if (!res.ok) throw new Error('API error');
+                const d = await res.json();
+                renderAlerts(d.coo_report);
+                renderBusinesses(d);
+                renderAgentHealth(d.agent_health);
+                renderCOO(d.coo_report);
+            } catch (e) {
+                console.error('Refresh failed:', e);
             }
         }
 
-        async function refreshDashboard() {
-            try {
-                const [agentsData, jobsData, logsData, resultsData, metricsData, revenueData] = await Promise.all([
-                    fetchData('/api/agents'),
-                    fetchData('/api/jobs'),
-                    fetchData('/api/logs?limit=15'),
-                    fetchData('/api/test-results'),
-                    fetchData('/api/metrics'),
-                    fetchData('/revenue?days=1')
-                ]);
-
-                if (metricsData) {
-                    document.getElementById('jobs-count').textContent = metricsData.jobs_registered || 27;
-                }
-
-                if (revenueData) {
-                    document.getElementById('prospects-created').textContent = revenueData.prospects_created ?? 0;
-                    document.getElementById('emails-sent').textContent = revenueData.emails_sent ?? 0;
-                    document.getElementById('content-created').textContent = revenueData.content_queued ?? 0;
-                }
-
-                if (jobsData && jobsData.jobs) {
-                    const jobsList = document.getElementById('jobs-list');
-                    jobsList.innerHTML = '';
-                    jobsData.jobs.slice(0, 8).forEach(job => {
-                        const item = document.createElement('div');
-                        item.className = 'job-item';
-                        item.innerHTML = `
-                            <div>
-                                <div style="font-weight: 600; color: #333;">${job.name}</div>
-                                <div style="font-size: 12px; color: #999;">${job.next_run}</div>
-                            </div>
-                            <div style="color: #999; font-size: 12px;">Scheduled</div>
-                        `;
-                        jobsList.appendChild(item);
-                    });
-                }
-
-                if (logsData && logsData.entries) {
-                    const logViewer = document.getElementById('log-viewer-content');
-                    logViewer.innerHTML = '';
-                    if (logsData.entries.length > 0) {
-                        logsData.entries.slice(-10).reverse().forEach(entry => {
-                            const div = document.createElement('div');
-                            div.style.color = entry.line.includes('ERROR') ? '#cd5c5c' : (entry.line.includes('WARNING') ? '#dcdcaa' : '#7ec699');
-                            div.textContent = entry.line.substring(0, 120);
-                            logViewer.appendChild(div);
-                        });
-                    } else {
-                        logViewer.innerHTML = '<div style="color: #7ec699;">[INFO] No recent logs</div>';
-                    }
-                }
-
-                if (resultsData && resultsData.results) {
-                    const results = resultsData.results;
-                    const testEl = document.getElementById('test-results-content');
-                    if (testEl) {
-                        let agentCards = '';
-                        if (results.execution_times) {
-                            agentCards = Object.entries(results.execution_times)
-                                .sort((a, b) => a[1] - b[1])
-                                .map(([agent, time]) => `<div style="padding:10px;background:#f0fdf4;border:1px solid #10b981;border-radius:6px;"><div style="font-weight:600;color:#10b981;">✓ ${agent}</div><div style="font-size:12px;color:#999;">${time.toFixed(3)}s</div></div>`)
-                                .join('');
-                        }
-                        testEl.innerHTML = `
-                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:15px;">
-                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Pass Rate</div><div style="font-size:28px;font-weight:bold;color:#10b981;">✓ ${results.pass_rate || 'N/A'}</div></div>
-                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Duration</div><div style="font-size:28px;font-weight:bold;color:#667eea;">${(results.total_duration_seconds || 0).toFixed(2)}s</div></div>
-                                <div><div style="font-size:12px;color:#999;text-transform:uppercase;">Run Time</div><div style="font-size:12px;color:#666;">${new Date().toLocaleString()}</div></div>
-                            </div>
-                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">${agentCards}</div>
-                        `;
-                    }
-                } else {
-                    const testEl = document.getElementById('test-results-content');
-                    if (testEl) testEl.innerHTML = '<div style="color:#999;padding:20px;text-align:center;">No test runs yet — tests run daily at 6:30 PM CST</div>';
-                }
-
-            } catch (error) {
-                console.error('Dashboard refresh error:', error);
-            }
+        function renderAlerts(coo) {
+            const el = document.getElementById('alerts');
+            if (!coo || !coo.alerts || coo.alerts.length === 0) { el.innerHTML = ''; return; }
+            el.innerHTML = coo.alerts.map(a => `<div class="alert">${a.message}</div>`).join('');
         }
 
-        // Close modal when clicking outside
-        document.getElementById('agentModal').addEventListener('click', (e) => {
-            if (e.target.id === 'agentModal') closeAgentModal();
-        });
+        function renderBusinesses(d) {
+            const el = document.getElementById('businesses');
+            const bizdefs = [
+                { key: 'aiphoneguy', name: 'The AI Phone Guy', crm: 'GoHighLevel', agent: 'tyler' },
+                { key: 'callingdigital', name: 'Calling Digital', crm: 'Attio', agent: 'marcus' },
+                { key: 'autointelligence', name: 'Automotive Intelligence', crm: 'HubSpot', agent: 'ryan_data' },
+            ];
+            el.innerHTML = bizdefs.map(biz => {
+                const today = (d.crm_today || {})[biz.agent] || {};
+                const week = (d.crm_week || {})[biz.agent] || {};
+                const created_today = today.created || 0;
+                const created_week = week.created || 0;
+                return `
+                <div class="biz-section">
+                    <div class="biz-header">
+                        <div class="biz-name">${biz.name}</div>
+                        <div class="biz-crm">${biz.crm}</div>
+                    </div>
+                    <div class="metrics-row">
+                        <div class="metric-box">
+                            <div class="metric-val">${created_today}</div>
+                            <div class="metric-label">Prospects Today</div>
+                        </div>
+                        <div class="metric-box">
+                            <div class="metric-val">${created_week}</div>
+                            <div class="metric-label">This Week</div>
+                        </div>
+                        <div class="metric-box">
+                            <div class="metric-val">${(today.duplicate_skipped || 0) + created_today}</div>
+                            <div class="metric-label">Total Pushes</div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
 
-        // Initial render
-        renderAgentGrid();
-        setTimeout(refreshDashboard, 800);
-        setInterval(refreshDashboard, 30000);
+        function renderAgentHealth(agents) {
+            const el = document.getElementById('agent-health');
+            if (!agents || agents.length === 0) {
+                el.innerHTML = '<h2>Agent Health</h2><div class="loading">No agent data</div>';
+                return;
+            }
+            const rows = agents.map(a => {
+                const dotClass = a.status === 'green' ? 'green' : (a.status === 'yellow' ? 'yellow' : 'red');
+                const preview = (a.log_preview || '').substring(0, 80);
+                return `
+                <div class="agent-row">
+                    <div class="agent-info">
+                        <div class="status-dot ${dotClass}"></div>
+                        <div>
+                            <div class="agent-name">${a.name}</div>
+                            <div class="agent-role">${a.role}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="agent-time">${relTime(a.last_run)}</div>
+                        ${preview ? `<div class="agent-preview">${preview.replace(/</g,'&lt;')}</div>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
+            el.innerHTML = `<h2>Agent Health (${agents.length})</h2>${rows}`;
+        }
+
+        function renderCOO(report) {
+            const el = document.getElementById('coo-section');
+            if (!report) {
+                el.innerHTML = '<h2>COO Command</h2><div class="loading">No report yet</div>';
+                return;
+            }
+            const gen = report.generated_at ? new Date(report.generated_at).toLocaleString() : 'Unknown';
+            el.innerHTML = `
+                <h2>COO Command</h2>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:10px;">Generated: ${gen}</div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
+                    <div class="metric-box">
+                        <div class="metric-val" style="color:var(--green)">${report.agents_ran || 0}</div>
+                        <div class="metric-label">Agents Ran</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val" style="color:${(report.agents_missed || 0) > 0 ? 'var(--red)' : 'var(--green)'}">${report.agents_missed || 0}</div>
+                        <div class="metric-label">Missed</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-val" style="color:${(report.alert_count || 0) > 0 ? 'var(--yellow)' : 'var(--green)'}">${report.alert_count || 0}</div>
+                        <div class="metric-label">Alerts</div>
+                    </div>
+                </div>
+                <div class="coo-priority">${report.priority_recommendation || 'No recommendation'}</div>
+            `;
+        }
+
+        // Initial load + auto-refresh
+        refresh();
+        setInterval(refresh, 60000);
     </script>
 </body>
 </html>
