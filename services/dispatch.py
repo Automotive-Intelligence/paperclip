@@ -1,46 +1,18 @@
-delivery receipt, and updates artifact status in Postgres.
-
-# EMAIL ARCHITECTURE — Phase 1
-# ================================
-# Outreach email routes through CRM only.
-# APG → GoHighLevel workflows
-# CD → Attio sequences  
-# AI → HubSpot workflows
-#
-# Resend is NOT active in Phase 1.
-# Do not implement direct email sending 
-# from Paperclip agents at this time.
-#
-# FUTURE: Resend integration planned for 
-# Phase 2 when AIBOS native email layer 
-# is ready to build.
-# See PHASE_ROADMAP.md for full details.
-# ================================
-
-# TODO Phase 2: Wire Resend send_email() tool
-# to agent task output for autonomous sending
-# outside of CRM workflow dependency.
-# Domain verification status:
-# theaiphoneguy.ai — verified in Resend
-# callingdigital.com — verified in Resend  
-# automotiveintelligence.io — pending 
-# re-verification after DNS fix March 2026
-
 """
-services/dispatch.py — Channel Adapter Router for AIBOS Artifacts
+services/dispatch.py - Channel Adapter Router for AIBOS Artifacts
 
+Creates a delivery receipt, and updates artifact status in Postgres.
 
-# AIBOS Operating Foundation
-# ================================
+Email routes through CRM only in Phase 1 (GHL/Attio/HubSpot).
 
 Adapter availability:
-    email   → GHL send_email (contact_id required in artifact.metadata)
-    crm     → crm_router.push_prospects_to_crm (prospects list in metadata)
-    sms     → GHL SMS endpoint (contact_id + phone required in metadata)
-    linkedin → stub (future)
-    twitter  → stub (future)
-    meta     → stub (future)
-    google   → stub (future)
+    email    - GHL send_email (contact_id required in artifact.metadata)
+    crm      - crm_router.push_prospects_to_crm (prospects list in metadata)
+    sms      - GHL SMS endpoint (contact_id + phone required in metadata)
+    linkedin - stub (future)
+    twitter  - stub (future)
+    meta     - stub (future)
+    google   - stub (future)
 
 All adapters produce a DeliveryReceipt regardless of success/failure so the
 feedback loop is never broken.
