@@ -333,6 +333,24 @@ def init_db():
     except DatabaseError as e:
         logging.error(f"[DB] icp_discards table init failed: {e}")
 
+    # ── CRM Push Logs table ──────────────────────────────────────────────
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS crm_push_logs (
+                id              SERIAL PRIMARY KEY,
+                agent_name      TEXT        NOT NULL,
+                crm_provider    TEXT        NOT NULL,
+                business_name   TEXT        NOT NULL,
+                status          TEXT        NOT NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_crm_push_logs_agent
+                ON crm_push_logs (agent_name, created_at DESC);
+        """)
+        logging.info("[DB] crm_push_logs table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] crm_push_logs table init failed: {e}")
+
 
 def persist_log(agent_name: str, log_type: str, content: str):
     """Write an agent run result to Postgres (primary). Filesystem writes skipped on Railway."""
