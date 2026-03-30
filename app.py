@@ -17,6 +17,7 @@
 import os
 import glob
 import logging
+import sys
 import datetime
 import json
 import asyncio
@@ -2715,6 +2716,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+
+    # Global exception handler for unhandled errors
+    from fastapi.responses import JSONResponse
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logging.error(f"[GLOBAL EXCEPTION] {request.url}: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {exc}"},
+        )
     title="Paperclip Multi-Agent Revenue Engine",
     description=(
         "AI-native revenue platform powering The AI Phone Guy, Calling Digital, "
@@ -3137,6 +3153,7 @@ async def publish_content_to_zernio_endpoint(
     authorization: Optional[str] = Header(None),
 ):
     """Publish queued social content via Zernio to 14+ platforms (Twitter/X, Instagram, Facebook, LinkedIn, TikTok, YouTube, etc.)"""
+    logging.info(f"[Zernio] Endpoint called for business_key={business_key}, limit={limit}")
     validate_key(authorization)
     
     if not zernio_ready():
