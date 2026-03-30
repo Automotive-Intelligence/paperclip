@@ -264,19 +264,17 @@ def create_artifact(
     # automotiveintelligence.io — pending 
     # re-verification after DNS fix March 2026
 
-    """
-    services/artifact.py — Standard Output Contract for AIBOS Agent Artifacts
+    Standard Output Contract for AIBOS Agent Artifacts.
 
-    Every piece of content an agent produces — an email, a CRM update, a social
-    post, a report — is an Artifact. This module defines the canonical schema and
-    """
+    Every piece of content an agent produces -- an email, a CRM update, a social
+    post, a report -- is an Artifact. This module defines the canonical schema.
 
     Design rules:
         - An Artifact is immutable once created (fields set at construction).
-        - Risk tier drives the approval path: low → auto, medium → queue, high → escalate.
+        - Risk tier drives the approval path: low=auto, medium=queue, high=escalate.
         - The moral gate (evaluate_action_morally) is called at creation time.
             A failing moral gate forces the artifact to "escalated" immediately.
-        - Confidence is 0.0–1.0 and comes from the producing agent.
+        - Confidence is 0.0-1.0 and comes from the producing agent.
             Low confidence bumps auto-dispatch threshold even on low-risk artifacts.
     """
     if artifact_type not in ARTIFACT_TYPES:
