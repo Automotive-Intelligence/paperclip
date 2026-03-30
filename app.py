@@ -1,3 +1,47 @@
+from fastapi import Security
+# ── Admin Migration Endpoint ─────────────────────────────────────────────
+
+@app.post("/admin/migrate_agentlogs_to_contentqueue")
+async def migrate_agentlogs_to_contentqueue(authorization: Optional[str] = Header(None)):
+    """Migrate all AI Phone Guy agent_logs to content_queue with status='review' for manual vetting."""
+    # Simple API key check (reuse validate_key if available)
+    validate_key(authorization)
+    AGENT_NAME = "aiphoneguy"
+    migrated = 0
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Postgres not configured.")
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content, created_at FROM agent_logs WHERE agent_name = %s ORDER BY created_at DESC",
+                    (AGENT_NAME,),
+                )
+                rows = cur.fetchall()
+                for row in rows:
+                    content, created_at = row
+                    # Insert as status='review' for vetting
+                    cur.execute(
+                        "INSERT INTO content_queue (business_key, agent_name, platform, content_type, title, body, hashtags, cta, funnel_stage, status, created_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'review', %s)",
+                        (
+                            AGENT_NAME,
+                            "zoe",
+                            "facebook",
+                            "post",
+                            "AI Phone Guy Dashboard Migration",
+                            content[:100],  # Use first 100 chars as body preview
+                            "#AI #PhoneGuy #Migration",
+                            "Call now for your AI phone demo!",
+                            "awareness",
+                            created_at,
+                        ),
+                    )
+                    migrated += 1
+            conn.commit()
+        return {"status": "ok", "migrated": migrated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
 # AIBOS Operating Foundation
 # ================================
 # This system is built on servant leadership.
@@ -91,6 +135,32 @@ from tools.hubspot import hubspot_email_ready
 from tools.attio import attio_email_ready
 from tools.outbound_email import email_delivery_mode, unified_email_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
+
+# EMAIL ARCHITECTURE — Phase 1
+# ================================
+# Outreach email routes through CRM only.
+# APG → GoHighLevel workflows
+# CD → Attio sequences  
+# AI → HubSpot workflows
+#
+# Resend is NOT active in Phase 1.
+# Do not implement direct email sending 
+# from Paperclip agents at this time.
+#
+# FUTURE: Resend integration planned for 
+# Phase 2 when AIBOS native email layer 
+# is ready to build.
+# See PHASE_ROADMAP.md for full details.
+# ================================
+
+# TODO Phase 2: Wire Resend send_email() tool
+# to agent task output for autonomous sending
+# outside of CRM workflow dependency.
+# Domain verification status:
+# theaiphoneguy.ai — verified in Resend
+# callingdigital.com — verified in Resend  
+# automotiveintelligence.io — pending 
+# re-verification after DNS fix March 2026
 from tools.contact_enricher import enrich_prospects
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,

@@ -236,21 +236,48 @@ def create_artifact(
     """
     Create a validated, morally-gated Artifact.
 
-    Args:
-        agent_id:           ID of the producing agent (e.g. "tyler", "marcus").
-        business_key:       Business this belongs to ("aiphoneguy", etc.).
-        artifact_type:      One of ARTIFACT_TYPES.
-        audience:           One of AUDIENCE_TYPES.
         intent:             One of INTENT_TYPES.
-        content:            The actual payload (email body, post text, etc.).
-        subject:            Optional subject/headline.
-        channel_candidates: Ordered list of dispatch channels. Defaults to type-based guess.
-        confidence:         Agent's self-assessed confidence 0.0–1.0.
-        risk_level:         Override risk computation. Leave None to auto-derive.
-        metadata:           Arbitrary agent context dict.
 
-    Returns:
-        Artifact instance with status, risk, and approval fields set.
+    # EMAIL ARCHITECTURE — Phase 1
+    # ================================
+    # Outreach email routes through CRM only.
+    # APG → GoHighLevel workflows
+    # CD → Attio sequences  
+    # AI → HubSpot workflows
+    #
+    # Resend is NOT active in Phase 1.
+    # Do not implement direct email sending 
+    # from Paperclip agents at this time.
+    #
+    # FUTURE: Resend integration planned for 
+    # Phase 2 when AIBOS native email layer 
+    # is ready to build.
+    # See PHASE_ROADMAP.md for full details.
+    # ================================
+
+    # TODO Phase 2: Wire Resend send_email() tool
+    # to agent task output for autonomous sending
+    # outside of CRM workflow dependency.
+    # Domain verification status:
+    # theaiphoneguy.ai — verified in Resend
+    # callingdigital.com — verified in Resend  
+    # automotiveintelligence.io — pending 
+    # re-verification after DNS fix March 2026
+
+    """
+    services/artifact.py — Standard Output Contract for AIBOS Agent Artifacts
+
+    Every piece of content an agent produces — an email, a CRM update, a social
+    post, a report — is an Artifact. This module defines the canonical schema and
+    """
+
+    Design rules:
+        - An Artifact is immutable once created (fields set at construction).
+        - Risk tier drives the approval path: low → auto, medium → queue, high → escalate.
+        - The moral gate (evaluate_action_morally) is called at creation time.
+            A failing moral gate forces the artifact to "escalated" immediately.
+        - Confidence is 0.0–1.0 and comes from the producing agent.
+            Low confidence bumps auto-dispatch threshold even on low-risk artifacts.
     """
     if artifact_type not in ARTIFACT_TYPES:
         raise ValueError(f"Unknown artifact_type '{artifact_type}'. Valid: {sorted(ARTIFACT_TYPES)}")
