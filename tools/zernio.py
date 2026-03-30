@@ -161,6 +161,71 @@ def _zernio_request(
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Media Upload (Presigned)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def upload_media_to_zernio(
+    file_bytes: bytes,
+    filename: str,
+    mime_type: str = "image/png",
+) -> str:
+    """
+    Upload media to Zernio via presigned URL and return the public CDN URL.
+
+    Flow: POST /media/presign → PUT binary to uploadUrl → return publicUrl
+
+    Args:
+        file_bytes: Raw file bytes (PNG, JPEG, MP4, etc.)
+        filename: Target filename (e.g. "post-image.png")
+        mime_type: MIME type (default "image/png")
+
+    Returns:
+        Public URL string ready to use in mediaItems
+
+    Raises:
+        ServiceCallError on any failure
+    """
+    # Step 1: Request presigned upload URL
+    presign_resp = _zernio_request(
+        "POST",
+        "/media/presign",
+        {"filename": filename, "contentType": mime_type},
+    )
+
+    upload_url = presign_resp.get("uploadUrl")
+    public_url = presign_resp.get("publicUrl")
+
+    if not upload_url or not public_url:
+        raise _zernio_service_error(
+            "media_presign",
+            "Zernio presign response missing uploadUrl or publicUrl",
+            status_code=200,
+            retryable=False,
+            details={"response": presign_resp},
+        )
+
+    # Step 2: PUT binary directly to presigned URL (no auth header)
+    try:
+        put_resp = requests.put(
+            upload_url,
+            data=file_bytes,
+            headers={"Content-Type": mime_type},
+            timeout=60,
+        )
+        put_resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise _zernio_service_error(
+            "media_upload",
+            f"Failed to PUT media to presigned URL: {e}",
+            retryable=True,
+        )
+
+    logging.info(f"[Zernio] Media uploaded: {public_url} ({len(file_bytes)} bytes)")
+    return public_url
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Profile Management
 # ────────────────────────────────────────────────────────────────────────────
 
