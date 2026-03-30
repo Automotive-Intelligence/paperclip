@@ -2785,22 +2785,13 @@ async def lifespan(app: FastAPI):
     logging.info("[Scheduler] Shut down.")
 
 
-app = FastAPI(
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)]
-    )
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
-    # Global exception handler for unhandled errors
-    from fastapi.responses import JSONResponse
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
-        logging.error(f"[GLOBAL EXCEPTION] {request.url}: {exc}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Internal server error: {exc}"},
-        )
+app = FastAPI(
     title="Paperclip Multi-Agent Revenue Engine",
     description=(
         "AI-native revenue platform powering The AI Phone Guy, Calling Digital, "
@@ -2810,6 +2801,16 @@ app = FastAPI(
     version=SETTINGS.app_version,
     lifespan=lifespan,
 )
+
+# Global exception handler for unhandled errors
+from fastapi.responses import JSONResponse
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logging.error(f"[GLOBAL EXCEPTION] {request.url}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {exc}"},
+    )
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
