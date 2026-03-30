@@ -3690,6 +3690,14 @@ async def sales_email_templates_report(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-coo")
+async def run_coo_now(authorization: Optional[str] = Header(None)):
+    """Trigger COO Command ops report immediately."""
+    validate_key(authorization)
+    result = await asyncio.to_thread(run_coo_command)
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/run-now")
 async def run_now(
     scope: str = "sales",
