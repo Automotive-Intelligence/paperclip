@@ -1,0 +1,237 @@
+"""
+tools/icp_guardrails.py - ICP validation for sales agent prospects.
+
+Each sales agent has a defined Ideal Customer Profile. Prospects that
+fall outside the ICP are discarded before CRM push, and the discard
+reason is logged to PostgreSQL.
+"""
+
+import logging
+import re
+from typing import Dict, List, Optional, Tuple
+
+from services.database import execute_query
+
+logger = logging.getLogger(__name__)
+
+# ── ICP Definitions ──────────────────────────────────────────────────────────
+
+TYLER_ICP = {
+    "agent": "tyler",
+    "target_cities": [
+        "aubrey", "celina", "prosper", "pilot point", "little elm",
+    ],
+    "target_industries": [
+        "plumber", "plumbing", "hvac", "heating", "cooling", "air conditioning",
+        "roofer", "roofing", "dental", "dentist", "dental office",
+        "personal injury", "pi law", "law firm", "attorney",
+    ],
+    "max_employees": 10,
+    "exclude_keywords": [
+        "franchise", "franchisee", "chain", "live chat", "chatbot",
+        "ai receptionist", "ai phone", "virtual receptionist",
+    ],
+}
+
+MARCUS_ICP = {
+    "agent": "marcus",
+    "target_area": "dallas",
+    "target_industries": [
+        "professional services", "consulting", "accounting", "legal",
+        "local retail", "retail", "service business", "services",
+        "restaurant", "salon", "spa", "fitness", "gym",
+        "medical", "clinic", "real estate", "insurance",
+    ],
+    "min_employees": 2,
+    "max_employees": 25,
+    "exclude_keywords": [
+        "enterprise", "national chain", "fortune 500", "in-house marketing",
+        "marketing team", "marketing department", "corporate",
+    ],
+}
+
+RYAN_DATA_ICP = {
+    "agent": "ryan_data",
+    "target_area": "dfw",
+    "target_signals": [
+        "ownership change", "new gm", "general manager", "declining reviews",
+        "job posting", "bdc", "low response", "hiring",
+    ],
+    "exclude_keywords": [
+        "ai tool", "ai phone", "virtual assistant", "chatbot",
+        "buy here pay here", "bhph", "auction only", "auction-only",
+        "wholesale only",
+    ],
+}
+
+ICP_MAP = {
+    "tyler": TYLER_ICP,
+    "marcus": MARCUS_ICP,
+    "ryan_data": RYAN_DATA_ICP,
+}
+
+
+# ── ICP Task Prompt Blocks ───────────────────────────────────────────────────
+# Injected into each agent's CrewAI task description so the LLM self-filters.
+
+TYLER_ICP_BLOCK = (
+    "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+    "ONLY prospect businesses that match ALL of the following criteria:\n"
+    "- Located in the DFW 380 Corridor: Aubrey, Celina, Prosper, Pilot Point, or Little Elm TX\n"
+    "- Industry: Plumbers, HVAC, Roofers, Dental offices, or Personal Injury Law Firms\n"
+    "- Owner-operated, 1-10 employees\n"
+    "- Signals: Has a phone number, no AI receptionist, Google reviews under 4.5 stars or under 50 reviews\n"
+    "EXCLUDE: Franchises, chains, businesses with live chat on website, businesses already using AI tools\n"
+    "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+    "=== END ICP GUARDRAILS ===\n"
+)
+
+MARCUS_ICP_BLOCK = (
+    "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+    "ONLY prospect businesses that match ALL of the following criteria:\n"
+    "- Located in the Dallas TX metro area\n"
+    "- Industry: Professional services, local retail, or service businesses\n"
+    "- Business size: 2-25 employees\n"
+    "- Signals: Active social media but low engagement, no clear digital strategy, running ads without tracking\n"
+    "EXCLUDE: Enterprise companies, national chains, businesses with in-house marketing teams\n"
+    "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+    "=== END ICP GUARDRAILS ===\n"
+)
+
+RYAN_DATA_ICP_BLOCK = (
+    "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+    "ONLY prospect dealerships that match ALL of the following criteria:\n"
+    "- DFW franchised or independent car dealerships\n"
+    "- Signals: Ownership changes, new GM appointments, declining Google reviews, "
+    "job postings for BDC roles, low response rates on third-party leads\n"
+    "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, auction-only operations\n"
+    "If a dealership does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+    "=== END ICP GUARDRAILS ===\n"
+)
+
+ICP_PROMPT_BLOCKS = {
+    "tyler": TYLER_ICP_BLOCK,
+    "marcus": MARCUS_ICP_BLOCK,
+    "ryan_data": RYAN_DATA_ICP_BLOCK,
+}
+
+
+# ── Validation Logic ─────────────────────────────────────────────────────────
+
+def _lower(val) -> str:
+    return str(val or "").lower().strip()
+
+
+def _matches_any(text: str, keywords: list) -> bool:
+    text = text.lower()
+    return any(kw in text for kw in keywords)
+
+
+def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
+    """
+    Validate a parsed prospect dict against the agent's ICP.
+
+    Returns:
+        (True, "") if prospect passes ICP.
+        (False, reason) if prospect fails ICP.
+    """
+    icp = ICP_MAP.get(agent_name)
+    if not icp:
+        return True, ""
+
+    biz_name = _lower(prospect.get("business_name", ""))
+    city = _lower(prospect.get("city", ""))
+    biz_type = _lower(prospect.get("business_type", ""))
+    reason = _lower(prospect.get("reason", ""))
+    all_text = f"{biz_name} {city} {biz_type} {reason}"
+
+    # ── Tyler ICP checks ──
+    if agent_name == "tyler":
+        # City check
+        if city and not any(c in city for c in icp["target_cities"]):
+            return False, f"City '{city}' not in 380 Corridor target cities"
+
+        # Industry check
+        if biz_type and not _matches_any(biz_type, icp["target_industries"]):
+            return False, f"Industry '{biz_type}' not in Tyler's target industries"
+
+        # Exclusion check
+        if _matches_any(all_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+            return False, f"Excluded: matched exclusion keywords {matched}"
+
+    # ── Marcus ICP checks ──
+    elif agent_name == "marcus":
+        # Exclusion check
+        if _matches_any(all_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+            return False, f"Excluded: matched exclusion keywords {matched}"
+
+    # ── Ryan Data ICP checks ──
+    elif agent_name == "ryan_data":
+        # Exclusion check
+        if _matches_any(all_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+            return False, f"Excluded: matched exclusion keywords {matched}"
+
+        # Must be a dealership
+        dealership_terms = ["dealer", "dealership", "auto", "motor", "cars"]
+        if biz_type and not _matches_any(biz_type, dealership_terms):
+            return False, f"Business type '{biz_type}' does not appear to be a dealership"
+
+    return True, ""
+
+
+def validate_and_filter_prospects(
+    prospects: list,
+    agent_name: str,
+) -> Tuple[List[dict], List[dict]]:
+    """
+    Validate a list of parsed prospects against ICP.
+
+    Returns:
+        (valid_prospects, discarded_prospects_with_reasons)
+    """
+    valid = []
+    discarded = []
+
+    for p in prospects:
+        passed, reason = validate_prospect(p, agent_name)
+        if passed:
+            valid.append(p)
+        else:
+            p_copy = dict(p)
+            p_copy["_discard_reason"] = reason
+            discarded.append(p_copy)
+            logger.info(
+                "[ICP] Discarded %s prospect '%s': %s",
+                agent_name, p.get("business_name", "unknown"), reason,
+            )
+
+    if discarded:
+        log_icp_discards(agent_name, discarded)
+
+    logger.info(
+        "[ICP] %s: %d passed, %d discarded out of %d prospects",
+        agent_name, len(valid), len(discarded), len(prospects),
+    )
+    return valid, discarded
+
+
+def log_icp_discards(agent_name: str, discarded: list) -> None:
+    """Log each discarded prospect to the icp_discards table."""
+    for p in discarded:
+        try:
+            execute_query(
+                "INSERT INTO icp_discards (agent_name, business_name, city, business_type, reason) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (
+                    agent_name,
+                    (p.get("business_name") or "")[:255],
+                    (p.get("city") or "")[:128],
+                    (p.get("business_type") or "")[:128],
+                    (p.get("_discard_reason") or "")[:512],
+                ),
+            )
+        except Exception as e:
+            logger.error("[ICP] Failed to log discard for %s: %s", p.get("business_name"), e)

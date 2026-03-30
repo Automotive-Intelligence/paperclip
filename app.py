@@ -1,47 +1,3 @@
-from fastapi import Security
-# ── Admin Migration Endpoint ─────────────────────────────────────────────
-
-@app.post("/admin/migrate_agentlogs_to_contentqueue")
-async def migrate_agentlogs_to_contentqueue(authorization: Optional[str] = Header(None)):
-    """Migrate all AI Phone Guy agent_logs to content_queue with status='review' for manual vetting."""
-    # Simple API key check (reuse validate_key if available)
-    validate_key(authorization)
-    AGENT_NAME = "aiphoneguy"
-    migrated = 0
-    if not DATABASE_URL:
-        raise HTTPException(status_code=503, detail="Postgres not configured.")
-    try:
-        with _db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT content, created_at FROM agent_logs WHERE agent_name = %s ORDER BY created_at DESC",
-                    (AGENT_NAME,),
-                )
-                rows = cur.fetchall()
-                for row in rows:
-                    content, created_at = row
-                    # Insert as status='review' for vetting
-                    cur.execute(
-                        "INSERT INTO content_queue (business_key, agent_name, platform, content_type, title, body, hashtags, cta, funnel_stage, status, created_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'review', %s)",
-                        (
-                            AGENT_NAME,
-                            "zoe",
-                            "facebook",
-                            "post",
-                            "AI Phone Guy Dashboard Migration",
-                            content[:100],  # Use first 100 chars as body preview
-                            "#AI #PhoneGuy #Migration",
-                            "Call now for your AI phone demo!",
-                            "awareness",
-                            created_at,
-                        ),
-                    )
-                    migrated += 1
-            conn.commit()
-        return {"status": "ok", "migrated": migrated}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
 # AIBOS Operating Foundation
 # ================================
 # This system is built on servant leadership.
@@ -162,6 +118,7 @@ from tools.email_engine import parse_prospects, parse_retention_actions, parse_c
 # automotiveintelligence.io — pending 
 # re-verification after DNS fix March 2026
 from tools.contact_enricher import enrich_prospects
+from tools.icp_guardrails import validate_and_filter_prospects
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
     queue_content, get_content_queue, mark_content_published,
@@ -356,6 +313,25 @@ def init_db():
         logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots, taskmaster_checks).")
     except DatabaseError as e:
         logging.error(f"[DB] Activation Layer table init failed: {e}")
+
+    # ── ICP Discards table ───────────────────────────────────────────────
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS icp_discards (
+                id              SERIAL PRIMARY KEY,
+                agent_name      TEXT        NOT NULL,
+                business_name   TEXT        NOT NULL,
+                city            TEXT,
+                business_type   TEXT,
+                reason          TEXT        NOT NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_icp_discards_agent
+                ON icp_discards (agent_name, created_at DESC);
+        """)
+        logging.info("[DB] icp_discards table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] icp_discards table init failed: {e}")
 
 
 def persist_log(agent_name: str, log_type: str, content: str):
@@ -1247,6 +1223,26 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 "raw_preview": raw_preview,
             }
 
+        # ── ICP validation: discard off-profile prospects ──
+        prospects, icp_discarded = validate_and_filter_prospects(prospects, agent_name)
+        if not prospects:
+            logging.warning(f"[Pipeline] All prospects discarded by ICP for {agent_name}.")
+            return {
+                "status": "ok",
+                "parsed_prospects": len(icp_discarded),
+                "icp_discarded": len(icp_discarded),
+                "crm_provider": provider,
+                "crm_created": 0,
+                "duplicate_skipped": 0,
+                "ghl_created": 0,
+                "emails_attempted": 0,
+                "emails_sent": 0,
+                "emails_failed": 0,
+                "provider_not_email_capable": 0,
+                "failed": 0,
+                "raw_preview": raw_preview,
+            }
+
         # ── Contact enrichment: fill gaps in email/phone/name via web search ──
         prospects = enrich_prospects(prospects, only_missing_email=False)
 
@@ -1324,6 +1320,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         return {
             "status": "ok",
             "parsed_prospects": len(prospects),
+            "icp_discarded": len(icp_discarded),
             "crm_provider": crm_provider,
             "crm_created": created,
             "duplicate_skipped": duplicate_skipped,
@@ -2048,146 +2045,211 @@ def run_michael_meta_daily_briefing():
 # ── Sales Prospecting ── 8:30, 8:32, 8:34 CST ──────────────────────────────
 # NOW REVENUE-ACTIVE: Parse → GHL Contact → Send Email → Create Opportunity → Track
 
+def _run_tyler_crew():
+    """Run Tyler's CrewAI prospecting and return raw output."""
+    task = Task(
+        description=(
+            "Search for local service businesses in Aubrey, Celina, Prosper, Pilot Point, "
+            "and Little Elm TX -- HVAC, plumbing, roofing, dental, and personal injury law. "
+            "Search for news about businesses expanding, opening new locations, or hiring. "
+            "Look for buying signals: Google reviews mentioning missed calls, slow response, "
+            "or after-hours availability issues. "
+            "For each of your 5 targets, you MUST search the web to find: "
+            "(1) the business owner or manager's FIRST AND LAST NAME, "
+            "(2) a direct email address for that person or the business, "
+            "(3) the business phone number, "
+            "(4) the business website URL. "
+            "Search '[business name] [city] TX owner email contact' and '[business name] [city] website'. "
+            "Include any found contact info in your report — real names and emails, not placeholders. "
+            "Compile 5 high-priority outreach targets for today with a personalized COLD EMAIL "
+            "for each — NOT SMS. Use the Observation > Problem > Proof > Ask framework. "
+            "Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', "
+            "'after-hours voicemail'). Opening line should reference a specific observation about "
+            "the business. CTA should be interest-based ('Worth a quick look?'), not a meeting request. "
+            "Also draft one follow-up email angle for each prospect (different value angle for touch 2). "
+            "CRITICAL: Write your complete report directly in your final response. "
+            "Do NOT say 'see above', 'see search results', or reference prior tool output. "
+            "Your final answer must contain all 5 prospect entries written out in full."
+            "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+            "ONLY prospect businesses that match ALL of the following criteria:\n"
+            "- Located in the DFW 380 Corridor: Aubrey, Celina, Prosper, Pilot Point, or Little Elm TX\n"
+            "- Industry: Plumbers, HVAC, Roofers, Dental offices, or Personal Injury Law Firms\n"
+            "- Owner-operated, 1-10 employees\n"
+            "- Signals: Has a phone number, no AI receptionist, Google reviews under 4.5 stars or under 50 reviews\n"
+            "EXCLUDE: Franchises, chains, businesses with live chat on website, businesses already using AI tools\n"
+            "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+            "=== END ICP GUARDRAILS ==="
+        ),
+        expected_output=(
+            "Daily prospecting report with exactly 5 entries written inline — not referenced. "
+            "Each entry: Business Name, Business Type, City, Owner/Contact Name, Email, Phone, Website, "
+            "Reason for Targeting, Cold Email Subject, Cold Email Body, Follow-up Angle. "
+            "Format each entry with labeled fields. Contact info is REQUIRED — search for it. "
+            "All outreach via cold email only."
+        ),
+        agent=tyler,
+    )
+    crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+    result = crew.kickoff()
+    return str(result)
+
+
 def run_tyler_prospecting():
-    try:
-        task = Task(
-            description=(
-                "Search for local service businesses in Aubrey, Celina, Prosper, Pilot Point, "
-                "and Little Elm TX -- HVAC, plumbing, roofing, dental, and personal injury law. "
-                "Search for news about businesses expanding, opening new locations, or hiring. "
-                "Look for buying signals: Google reviews mentioning missed calls, slow response, "
-                "or after-hours availability issues. "
-                "For each of your 5 targets, you MUST search the web to find: "
-                "(1) the business owner or manager's FIRST AND LAST NAME, "
-                "(2) a direct email address for that person or the business, "
-                "(3) the business phone number, "
-                "(4) the business website URL. "
-                "Search '[business name] [city] TX owner email contact' and '[business name] [city] website'. "
-                "Include any found contact info in your report — real names and emails, not placeholders. "
-                "Compile 5 high-priority outreach targets for today with a personalized COLD EMAIL "
-                "for each — NOT SMS. Use the Observation > Problem > Proof > Ask framework. "
-                "Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', "
-                "'after-hours voicemail'). Opening line should reference a specific observation about "
-                "the business. CTA should be interest-based ('Worth a quick look?'), not a meeting request. "
-                "Also draft one follow-up email angle for each prospect (different value angle for touch 2). "
-                "CRITICAL: Write your complete report directly in your final response. "
-                "Do NOT say 'see above', 'see search results', or reference prior tool output. "
-                "Your final answer must contain all 5 prospect entries written out in full."
-            ),
-            expected_output=(
-                "Daily prospecting report with exactly 5 entries written inline — not referenced. "
-                "Each entry: Business Name, Business Type, City, Owner/Contact Name, Email, Phone, Website, "
-                "Reason for Targeting, Cold Email Subject, Cold Email Body, Follow-up Angle. "
-                "Format each entry with labeled fields. Contact info is REQUIRED — search for it. "
-                "All outreach via cold email only."
-            ),
-            agent=tyler,
-        )
-        crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        raw_output = str(result)
-        persist_log("tyler", "prospecting", raw_output)
-        logging.info("[Scheduler] Tyler prospecting complete.")
+    max_icp_attempts = 3
+    for attempt in range(1, max_icp_attempts + 1):
+        try:
+            raw_output = _run_tyler_crew()
+            persist_log("tyler", "prospecting", raw_output)
+            logging.info("[Scheduler] Tyler prospecting complete (attempt %d).", attempt)
 
-        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        pipeline_result = _execute_sales_pipeline("tyler", raw_output, "aiphoneguy")
-        return {"agent": "tyler", "pipeline": pipeline_result}
+            pipeline_result = _execute_sales_pipeline("tyler", raw_output, "aiphoneguy")
 
-    except Exception as e:
-        logging.error(f"[Scheduler] Tyler prospecting failed: {type(e).__name__}: {e}")
-        return {"agent": "tyler", "status": "error", "error": f"{type(e).__name__}: {e}"}
+            if pipeline_result.get("icp_discarded") and pipeline_result.get("crm_created", 0) == 0 and attempt < max_icp_attempts:
+                logging.warning("[ICP] Tyler attempt %d: all prospects discarded, retrying.", attempt)
+                continue
+
+            return {"agent": "tyler", "pipeline": pipeline_result}
+
+        except Exception as e:
+            logging.error(f"[Scheduler] Tyler prospecting failed (attempt {attempt}): {type(e).__name__}: {e}")
+            if attempt == max_icp_attempts:
+                return {"agent": "tyler", "status": "error", "error": f"{type(e).__name__}: {e}"}
+    return {"agent": "tyler", "status": "error", "error": "ICP retry exhausted"}
+
+
+def _run_marcus_crew():
+    """Run Marcus's CrewAI prospecting and return raw output."""
+    task = Task(
+        description=(
+            "Search for small and mid-size businesses in Dallas that need digital marketing help — "
+            "businesses with outdated websites, weak social presence, no Google reviews strategy, "
+            "or recent funding/expansion news. Look for buying signals: businesses posting about "
+            "marketing struggles, hiring marketing roles, or launching new services. "
+            "For each of your 5 targets, you MUST search the web to find: "
+            "(1) the business owner or marketing decision-maker's FIRST AND LAST NAME, "
+            "(2) a direct email address for that person or the business, "
+            "(3) the business phone number, "
+            "(4) the business website URL. "
+            "Search '[business name] Dallas owner email contact' and '[business name] website contact'. "
+            "Include any found contact info in your report — real names and emails, not placeholders. "
+            "Compile 5 high-priority outreach targets for today with a consultative cold email "
+            "for each — lead with their problem, not your service. Use an educational, diagnostic tone. "
+            "Subject lines should be consultative (e.g. 'quick audit for [business]', 'your website traffic'). "
+            "Include a follow-up email angle for each prospect. "
+            "Flag any that are also strong candidates for The AI Phone Guy bundle upsell."
+            "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+            "ONLY prospect businesses that match ALL of the following criteria:\n"
+            "- Located in the Dallas TX metro area\n"
+            "- Industry: Professional services, local retail, or service businesses\n"
+            "- Business size: 2-25 employees\n"
+            "- Signals: Active social media but low engagement, no clear digital strategy, running ads without tracking\n"
+            "EXCLUDE: Enterprise companies, national chains, businesses with in-house marketing teams\n"
+            "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+            "=== END ICP GUARDRAILS ==="
+        ),
+        expected_output=(
+            "Daily prospecting report: (1) 5 outreach targets with company name, industry, city, "
+            "owner/contact name, email, phone, website, key pain point, "
+            "a cold email (subject + body), and a follow-up email angle. "
+            "(2) Bundle opportunities flagged for Dek. "
+            "Contact info is REQUIRED for each target — search for it. "
+            "IMPORTANT: All outreach is via cold email only."
+        ),
+        agent=marcus,
+    )
+    crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+    result = crew.kickoff()
+    return str(result)
 
 
 def run_marcus_prospecting():
-    try:
-        task = Task(
-            description=(
-                "Search for small and mid-size businesses in Dallas that need digital marketing help — "
-                "businesses with outdated websites, weak social presence, no Google reviews strategy, "
-                "or recent funding/expansion news. Look for buying signals: businesses posting about "
-                "marketing struggles, hiring marketing roles, or launching new services. "
-                "For each of your 5 targets, you MUST search the web to find: "
-                "(1) the business owner or marketing decision-maker's FIRST AND LAST NAME, "
-                "(2) a direct email address for that person or the business, "
-                "(3) the business phone number, "
-                "(4) the business website URL. "
-                "Search '[business name] Dallas owner email contact' and '[business name] website contact'. "
-                "Include any found contact info in your report — real names and emails, not placeholders. "
-                "Compile 5 high-priority outreach targets for today with a consultative cold email "
-                "for each — lead with their problem, not your service. Use an educational, diagnostic tone. "
-                "Subject lines should be consultative (e.g. 'quick audit for [business]', 'your website traffic'). "
-                "Include a follow-up email angle for each prospect. "
-                "Flag any that are also strong candidates for The AI Phone Guy bundle upsell."
-            ),
-            expected_output=(
-                "Daily prospecting report: (1) 5 outreach targets with company name, industry, city, "
-                "owner/contact name, email, phone, website, key pain point, "
-                "a cold email (subject + body), and a follow-up email angle. "
-                "(2) Bundle opportunities flagged for Dek. "
-                "Contact info is REQUIRED for each target — search for it. "
-                "IMPORTANT: All outreach is via cold email only."
-            ),
-            agent=marcus,
-        )
-        crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        raw_output = str(result)
-        persist_log("marcus", "prospecting", raw_output)
-        logging.info("[Scheduler] Marcus prospecting complete.")
+    max_icp_attempts = 3
+    for attempt in range(1, max_icp_attempts + 1):
+        try:
+            raw_output = _run_marcus_crew()
+            persist_log("marcus", "prospecting", raw_output)
+            logging.info("[Scheduler] Marcus prospecting complete (attempt %d).", attempt)
 
-        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        pipeline_result = _execute_sales_pipeline("marcus", raw_output, "callingdigital")
-        return {"agent": "marcus", "pipeline": pipeline_result}
+            pipeline_result = _execute_sales_pipeline("marcus", raw_output, "callingdigital")
 
-    except Exception as e:
-        logging.error(f"[Scheduler] Marcus prospecting failed: {type(e).__name__}: {e}")
-        return {"agent": "marcus", "status": "error", "error": f"{type(e).__name__}: {e}"}
+            if pipeline_result.get("icp_discarded") and pipeline_result.get("crm_created", 0) == 0 and attempt < max_icp_attempts:
+                logging.warning("[ICP] Marcus attempt %d: all prospects discarded, retrying.", attempt)
+                continue
+
+            return {"agent": "marcus", "pipeline": pipeline_result}
+
+        except Exception as e:
+            logging.error(f"[Scheduler] Marcus prospecting failed (attempt {attempt}): {type(e).__name__}: {e}")
+            if attempt == max_icp_attempts:
+                return {"agent": "marcus", "status": "error", "error": f"{type(e).__name__}: {e}"}
+    return {"agent": "marcus", "status": "error", "error": "ICP retry exhausted"}
+
+
+def _run_ryan_data_crew():
+    """Run Ryan Data's CrewAI prospecting and return raw output."""
+    task = Task(
+        description=(
+            "Search for car dealerships in the Dallas-Fort Worth area showing AI readiness signals: "
+            "job postings for digital transformation or BDC roles, news about expansion or new ownership, "
+            "Google reviews mentioning slow response times, or recent tech vendor changes. "
+            "Search for news about target dealership groups. "
+            "For each of your 5 targets, you MUST search the web to find: "
+            "(1) the BDC manager, General Manager, or owner's FIRST AND LAST NAME, "
+            "(2) a direct email address for that person or the dealership, "
+            "(3) the dealership phone number, "
+            "(4) the dealership website URL. "
+            "Search '[dealership name] [city] BDC manager general manager email contact'. "
+            "Include any found contact info in your report — real names and emails, not placeholders. "
+            "Identify 5 high-priority dealership targets for outreach today with personalized cold emails "
+            "positioning the free AI Readiness Assessment offer. "
+            "Subject lines should reference automotive/dealership context. "
+            "Body should position the free assessment as the entry point. "
+            "Include a follow-up email angle for each prospect."
+            "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
+            "ONLY prospect dealerships that match ALL of the following criteria:\n"
+            "- DFW franchised or independent car dealerships\n"
+            "- Signals: Ownership changes, new GM appointments, declining Google reviews, "
+            "job postings for BDC roles, low response rates on third-party leads\n"
+            "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, auction-only operations\n"
+            "If a dealership does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
+            "=== END ICP GUARDRAILS ==="
+        ),
+        expected_output=(
+            "Daily prospecting report: (1) 5 dealership targets with name, group affiliation, city, "
+            "contact name (BDC/GM/owner), email, phone, website, AI readiness signal found, "
+            "a cold email (subject + body), and a follow-up email angle. "
+            "(2) Pipeline notes on any previously contacted dealers showing new activity. "
+            "Contact info is REQUIRED for each target — search for it. "
+            "IMPORTANT: All outreach is via cold email only."
+        ),
+        agent=ryan_data,
+    )
+    crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+    result = crew.kickoff()
+    return str(result)
 
 
 def run_ryan_data_prospecting():
-    try:
-        task = Task(
-            description=(
-                "Search for car dealerships in the Dallas-Fort Worth area showing AI readiness signals: "
-                "job postings for digital transformation or BDC roles, news about expansion or new ownership, "
-                "Google reviews mentioning slow response times, or recent tech vendor changes. "
-                "Search for news about target dealership groups. "
-                "For each of your 5 targets, you MUST search the web to find: "
-                "(1) the BDC manager, General Manager, or owner's FIRST AND LAST NAME, "
-                "(2) a direct email address for that person or the dealership, "
-                "(3) the dealership phone number, "
-                "(4) the dealership website URL. "
-                "Search '[dealership name] [city] BDC manager general manager email contact'. "
-                "Include any found contact info in your report — real names and emails, not placeholders. "
-                "Identify 5 high-priority dealership targets for outreach today with personalized cold emails "
-                "positioning the free AI Readiness Assessment offer. "
-                "Subject lines should reference automotive/dealership context. "
-                "Body should position the free assessment as the entry point. "
-                "Include a follow-up email angle for each prospect."
-            ),
-            expected_output=(
-                "Daily prospecting report: (1) 5 dealership targets with name, group affiliation, city, "
-                "contact name (BDC/GM/owner), email, phone, website, AI readiness signal found, "
-                "a cold email (subject + body), and a follow-up email angle. "
-                "(2) Pipeline notes on any previously contacted dealers showing new activity. "
-                "Contact info is REQUIRED for each target — search for it. "
-                "IMPORTANT: All outreach is via cold email only."
-            ),
-            agent=ryan_data,
-        )
-        crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
-        raw_output = str(result)
-        persist_log("ryan_data", "prospecting", raw_output)
-        logging.info("[Scheduler] Ryan Data prospecting complete.")
+    max_icp_attempts = 3
+    for attempt in range(1, max_icp_attempts + 1):
+        try:
+            raw_output = _run_ryan_data_crew()
+            persist_log("ryan_data", "prospecting", raw_output)
+            logging.info("[Scheduler] Ryan Data prospecting complete (attempt %d).", attempt)
 
-        # ── REVENUE PIPELINE: Parse → GHL → Email → Track ──
-        pipeline_result = _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
-        return {"agent": "ryan_data", "pipeline": pipeline_result}
+            pipeline_result = _execute_sales_pipeline("ryan_data", raw_output, "autointelligence")
 
-    except Exception as e:
-        logging.error(f"[Scheduler] Ryan Data prospecting failed: {type(e).__name__}: {e}")
-        return {"agent": "ryan_data", "status": "error", "error": f"{type(e).__name__}: {e}"}
+            if pipeline_result.get("icp_discarded") and pipeline_result.get("crm_created", 0) == 0 and attempt < max_icp_attempts:
+                logging.warning("[ICP] Ryan Data attempt %d: all prospects discarded, retrying.", attempt)
+                continue
+
+            return {"agent": "ryan_data", "pipeline": pipeline_result}
+
+        except Exception as e:
+            logging.error(f"[Scheduler] Ryan Data prospecting failed (attempt {attempt}): {type(e).__name__}: {e}")
+            if attempt == max_icp_attempts:
+                return {"agent": "ryan_data", "status": "error", "error": f"{type(e).__name__}: {e}"}
+    return {"agent": "ryan_data", "status": "error", "error": "ICP retry exhausted"}
 
 
 # ── Marketing Content ── 9:00, 9:02, 9:04 CST ──────────────────────────────
@@ -3645,6 +3707,47 @@ async def run_now(
             "results": results,
         }
     )
+
+
+@app.post("/admin/migrate_agentlogs_to_contentqueue")
+async def migrate_agentlogs_to_contentqueue(authorization: Optional[str] = Header(None)):
+    """Migrate all AI Phone Guy agent_logs to content_queue with status='review' for manual vetting."""
+    validate_key(authorization)
+    AGENT_NAME = "aiphoneguy"
+    migrated = 0
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Postgres not configured.")
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content, created_at FROM agent_logs WHERE agent_name = %s ORDER BY created_at DESC",
+                    (AGENT_NAME,),
+                )
+                rows = cur.fetchall()
+                for row in rows:
+                    content, created_at = row
+                    cur.execute(
+                        "INSERT INTO content_queue (business_key, agent_name, platform, content_type, title, body, hashtags, cta, funnel_stage, status, created_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'review', %s)",
+                        (
+                            AGENT_NAME,
+                            "zoe",
+                            "facebook",
+                            "post",
+                            "AI Phone Guy Dashboard Migration",
+                            content[:100],
+                            "#AI #PhoneGuy #Migration",
+                            "Call now for your AI phone demo!",
+                            "awareness",
+                            created_at,
+                        ),
+                    )
+                    migrated += 1
+            conn.commit()
+        return {"status": "ok", "migrated": migrated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {e}")
 
 
 # ── GHL Webhook Receiver ────────────────────────────────────────────────────
