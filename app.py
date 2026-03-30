@@ -2778,6 +2778,9 @@ RUN_NOW_SCOPES = {
     "taskmaster": [
         ("taskmaster_watchdog", run_taskmaster_watchdog),
     ],
+    "coo": [
+        ("coo_command", run_coo_command),
+    ],
     "all": [
         ("alex_daily_briefing", run_alex_daily_briefing),
         ("dek_daily_briefing", run_dek_daily_briefing),
