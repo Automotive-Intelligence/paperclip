@@ -179,6 +179,20 @@ def _overlay_text_on_image(
             fill=(20, 20, 20),
         )
 
+    # Overlay business logo (top-left for carousel slides).
+    if business_key:
+        try:
+            from services.social_pipeline import _resolve_logo_path
+            logo_path = _resolve_logo_path(business_key)
+            if logo_path:
+                logo = Image.open(logo_path).convert("RGBA")
+                max_w, max_h = 140, 60
+                ratio = min(max_w / logo.width, max_h / logo.height, 1.0)
+                logo = logo.resize((int(logo.width * ratio), int(logo.height * ratio)))
+                img.alpha_composite(logo, (margin, margin))
+        except Exception as e:
+            logging.warning("[Carousel] Logo overlay failed for %s: %s", business_key, e)
+
     # Convert back to RGB for PNG export.
     final = img.convert("RGB")
     out = io.BytesIO()

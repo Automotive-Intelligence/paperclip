@@ -91,6 +91,9 @@ LOGO_CANDIDATES = {
         "assets/logos/callingdigital.jpg",
     ],
     "autointelligence": [
+        "assets/logos/automotiveintelligence.png",
+        "assets/logos/automotiveintelligence.webp",
+        "assets/logos/automotiveintelligence.jpg",
         "assets/logos/autointelligence.png",
         "assets/logos/autointelligence.webp",
         "assets/logos/autointelligence.jpg",
@@ -330,6 +333,40 @@ def _publish_with_callable(
     )
 
 
+def _overlay_logo(image_bytes: bytes, business_key: str) -> bytes:
+    """
+    Composite the business logo onto image bytes (bottom-right corner).
+    Works on both AI-generated and PIL-generated images.
+    Returns the composited PNG bytes, or original bytes if logo unavailable.
+    """
+    logo_path = _resolve_logo_path(business_key)
+    if not logo_path:
+        return image_bytes
+
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        logo = Image.open(logo_path).convert("RGBA")
+
+        # Scale logo to fit — max 200px wide, 80px tall.
+        max_w, max_h = 200, 80
+        ratio = min(max_w / logo.width, max_h / logo.height, 1.0)
+        logo = logo.resize((int(logo.width * ratio), int(logo.height * ratio)))
+
+        # Position: bottom-right with padding.
+        x = img.width - logo.width - 70
+        y = img.height - logo.height - 145
+        img.alpha_composite(logo, (x, y))
+
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="PNG")
+        return out.getvalue()
+    except Exception as e:
+        logging.warning("[SocialPipeline] Logo overlay failed for %s: %s", business_key, e)
+        return image_bytes
+
+
 def _try_ai_image_generation(
     piece: Dict[str, Any],
     business_key: str,
@@ -338,7 +375,7 @@ def _try_ai_image_generation(
 ) -> Optional[bytes]:
     """
     Attempt AI image generation via Replicate FLUX.
-    Returns PNG bytes on success, None on failure or if unavailable.
+    Returns PNG bytes (with logo overlay) on success, None on failure or if unavailable.
     """
     try:
         from tools.image_gen import build_image_prompt, generate_image_bytes, image_gen_ready
@@ -367,7 +404,13 @@ def _try_ai_image_generation(
             business_key=business_key,
             platform=platform,
         )
-        logging.info("[SocialPipeline] AI image generated for content_id=%s", piece.get("id"))
+
+        # Overlay business logo on the AI-generated image.
+        logo_toggle = (directives.get("image_logo") or "on").strip().lower()
+        if logo_toggle not in {"off", "false", "0", "no"}:
+            image_bytes = _overlay_logo(image_bytes, business_key)
+
+        logging.info("[SocialPipeline] AI image generated (with logo) for content_id=%s", piece.get("id"))
         return image_bytes
     except Exception as e:
         logging.warning("[SocialPipeline] AI image gen failed for content_id=%s: %s", piece.get("id"), e)
