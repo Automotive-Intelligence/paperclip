@@ -4009,6 +4009,32 @@ async def test_creative_pipeline(
     })
 
 
+@app.get("/admin/zernio-profiles")
+async def list_all_zernio_profiles(authorization: Optional[str] = Header(None)):
+    """List all Zernio profiles and their connected accounts for debugging."""
+    validate_key(authorization)
+    if not zernio_ready():
+        raise HTTPException(status_code=503, detail="Zernio not configured.")
+    profiles = get_zernio_profiles()
+    result = []
+    for p in profiles:
+        pid = p.get("_id", "")
+        name = p.get("name", "")
+        try:
+            accounts = list_zernio_accounts(pid)
+        except Exception:
+            accounts = []
+        result.append({
+            "profile_id": pid,
+            "name": name,
+            "accounts": [
+                {"platform": a.get("platform"), "username": a.get("username", a.get("name", ""))}
+                for a in accounts
+            ],
+        })
+    return {"profiles": result}
+
+
 @app.post("/admin/migrate_agentlogs_to_contentqueue")
 async def migrate_agentlogs_to_contentqueue(authorization: Optional[str] = Header(None)):
     """Migrate all AI Phone Guy agent_logs to content_queue with status='review' for manual vetting."""
