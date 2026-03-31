@@ -4,7 +4,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from tools.zernio import publish_content_piece_to_zernio, upload_media_to_zernio
 
@@ -107,7 +107,8 @@ LOGO_CANDIDATES = {
 
 
 DIRECTIVE_PATTERN = re.compile(
-    r"\[\[\s*(image_headline|image_subhead|image_style|image_palette|image_logo)\s*:\s*(.*?)\s*\]\]",
+    r"\[\[\s*(image_headline|image_subhead|image_style|image_palette|image_logo"
+    r"|image_prompt|content_type|video_prompt|carousel_slides)\s*:\s*(.*?)\s*\]\]",
     re.IGNORECASE,
 )
 
@@ -329,12 +330,182 @@ def _publish_with_callable(
     )
 
 
+def _try_ai_image_generation(
+    piece: Dict[str, Any],
+    business_key: str,
+    platform: str,
+    directives: Dict[str, str],
+) -> Optional[bytes]:
+    """
+    Attempt AI image generation via Replicate FLUX.
+    Returns PNG bytes on success, None on failure or if unavailable.
+    """
+    try:
+        from tools.image_gen import build_image_prompt, generate_image_bytes, image_gen_ready
+    except ImportError:
+        return None
+
+    if not image_gen_ready():
+        return None
+
+    try:
+        # Use explicit image_prompt directive if provided by the agent.
+        custom_prompt = directives.get("image_prompt", "").strip()
+        if custom_prompt:
+            prompt = custom_prompt
+        else:
+            prompt = build_image_prompt(
+                headline=directives.get("image_headline", _auto_headline(_best_text(piece))),
+                subhead=directives.get("image_subhead", ""),
+                business_key=business_key,
+                content_type=directives.get("content_type", "social_post"),
+                platform=platform,
+            )
+
+        image_bytes = generate_image_bytes(
+            prompt=prompt,
+            business_key=business_key,
+            platform=platform,
+        )
+        logging.info("[SocialPipeline] AI image generated for content_id=%s", piece.get("id"))
+        return image_bytes
+    except Exception as e:
+        logging.warning("[SocialPipeline] AI image gen failed for content_id=%s: %s", piece.get("id"), e)
+        return None
+
+
+def _try_ai_video_generation(
+    piece: Dict[str, Any],
+    business_key: str,
+    platform: str,
+    directives: Dict[str, str],
+    image_url: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Attempt AI video generation via Replicate.
+    Returns video CDN URL on success, None on failure or if unavailable.
+    """
+    try:
+        from tools.video_gen import generate_video, generate_video_from_image, video_gen_ready
+    except ImportError:
+        return None
+
+    if not video_gen_ready():
+        return None
+
+    video_prompt = directives.get("video_prompt", "").strip()
+    if not video_prompt:
+        return None  # Only generate video when explicitly requested.
+
+    try:
+        if image_url:
+            # Image-to-video: animate the branded image.
+            result = generate_video_from_image(
+                image_url=image_url,
+                prompt=video_prompt,
+                business_key=business_key,
+                platform=platform,
+            )
+        else:
+            # Text-to-video: fully generative.
+            result = generate_video(
+                prompt=video_prompt,
+                business_key=business_key,
+                platform=platform,
+            )
+
+        video_url = result.get("url")
+        if not video_url:
+            return None
+
+        # Download and re-upload to Zernio CDN for consistent hosting.
+        from tools.video_gen import download_video_bytes
+
+        video_bytes = download_video_bytes(video_url)
+        slug = _slugify(_best_text(piece))[:30]
+        filename = (
+            f"{business_key}-{platform or 'social'}-{slug}-"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.mp4"
+        )
+        cdn_url = upload_media_to_zernio(
+            file_bytes=video_bytes,
+            filename=filename,
+            mime_type="video/mp4",
+        )
+        logging.info("[SocialPipeline] AI video generated and uploaded for content_id=%s", piece.get("id"))
+        return cdn_url
+    except Exception as e:
+        logging.warning("[SocialPipeline] AI video gen failed for content_id=%s: %s", piece.get("id"), e)
+        return None
+
+
+def _try_carousel_generation(
+    piece: Dict[str, Any],
+    business_key: str,
+    platform: str,
+    directives: Dict[str, str],
+) -> Optional[List[str]]:
+    """
+    Attempt carousel generation if carousel_slides directive is present.
+    Returns list of CDN URLs on success, None otherwise.
+
+    Carousel slides directive format (JSON array in the directive value):
+    [[carousel_slides: [{"headline": "...", "body": "..."}, ...]]]
+    """
+    import json
+
+    raw_slides = directives.get("carousel_slides", "").strip()
+    # Also check piece-level carousel_slides field (from structured agent output).
+    if not raw_slides:
+        slides_data = piece.get("carousel_slides")
+        if not slides_data:
+            return None
+        if isinstance(slides_data, list):
+            parsed_slides = slides_data
+        else:
+            return None
+    else:
+        try:
+            parsed_slides = json.loads(raw_slides)
+        except (json.JSONDecodeError, TypeError):
+            logging.warning("[SocialPipeline] Invalid carousel_slides JSON: %s", raw_slides[:200])
+            return None
+
+    if not isinstance(parsed_slides, list) or len(parsed_slides) < 2:
+        return None
+
+    try:
+        from tools.carousel_builder import build_and_upload_carousel
+
+        urls = build_and_upload_carousel(
+            slides=parsed_slides,
+            business_key=business_key,
+            platform=platform,
+            cta=piece.get("cta", ""),
+        )
+        logging.info(
+            "[SocialPipeline] Carousel generated (%d slides) for content_id=%s",
+            len(urls),
+            piece.get("id"),
+        )
+        return urls
+    except Exception as e:
+        logging.warning("[SocialPipeline] Carousel gen failed for content_id=%s: %s", piece.get("id"), e)
+        return None
+
+
 def prepare_social_piece_with_creative_director(
     piece: Dict[str, Any],
     business_key: str,
 ) -> Dict[str, Any]:
     """
-    Apply Creative Director planning + optional media generation to a social piece.
+    Apply Creative Director planning + AI media generation to a social piece.
+
+    Generation priority:
+    1. Carousel (if carousel_slides directive/field present)
+    2. Video (if video_prompt directive present)
+    3. AI Image (if REPLICATE_API_TOKEN is set — FLUX generation)
+    4. PIL Branded Image (fallback — always available)
 
     This is provider-agnostic and can be used by Zernio, GHL, or other publishers.
     """
@@ -360,46 +531,83 @@ def prepare_social_piece_with_creative_director(
 
     generated_media = False
     media_url = pipeline_piece.get("media_url") or pipeline_piece.get("image_url")
+    media_type = "none"
+    carousel_urls: Optional[List[str]] = None
 
     if not has_media:
-        try:
-            text_for_image = _best_text(pipeline_piece)
-            image_bytes = _build_image_bytes(
-                text_for_image,
-                business_key,
-                directives=directives,
-                cta_text=pipeline_piece.get("cta", ""),
-            )
-            slug = _slugify(text_for_image)[:48]
-            filename = (
-                f"{business_key}-{platform or 'social'}-{slug}-"
-                f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.png"
-            )
-            media_url = upload_media_to_zernio(
-                file_bytes=image_bytes,
-                filename=filename,
-                mime_type="image/png",
-            )
+        # ── Priority 1: Carousel ──
+        carousel_urls = _try_carousel_generation(pipeline_piece, business_key, platform, directives)
+        if carousel_urls:
+            media_url = carousel_urls[0]  # Primary image for preview.
             pipeline_piece["media_url"] = media_url
+            pipeline_piece["media_urls"] = carousel_urls  # All slides for Zernio.
             generated_media = True
-            logging.info("[SocialPipeline] Generated and uploaded media for content_id=%s", piece.get("id"))
-        except Exception as e:
-            logging.warning(
-                "[SocialPipeline] Media generation/upload failed for content_id=%s: %s",
-                piece.get("id"),
-                e,
+            media_type = "carousel"
+        else:
+            # ── Priority 2: AI Image (FLUX) ──
+            ai_image_bytes = _try_ai_image_generation(pipeline_piece, business_key, platform, directives)
+            if ai_image_bytes:
+                image_source = "ai"
+            else:
+                # ── Priority 3: PIL Branded Image (fallback) ──
+                text_for_image = _best_text(pipeline_piece)
+                ai_image_bytes = _build_image_bytes(
+                    text_for_image,
+                    business_key,
+                    directives=directives,
+                    cta_text=pipeline_piece.get("cta", ""),
+                )
+                image_source = "pil"
+
+            # Upload image to Zernio CDN.
+            try:
+                slug = _slugify(_best_text(pipeline_piece))[:48]
+                filename = (
+                    f"{business_key}-{platform or 'social'}-{slug}-"
+                    f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.png"
+                )
+                media_url = upload_media_to_zernio(
+                    file_bytes=ai_image_bytes,
+                    filename=filename,
+                    mime_type="image/png",
+                )
+                pipeline_piece["media_url"] = media_url
+                generated_media = True
+                media_type = f"image_{image_source}"
+            except Exception as e:
+                logging.warning(
+                    "[SocialPipeline] Media upload failed for content_id=%s: %s",
+                    piece.get("id"),
+                    e,
+                )
+
+            # ── Priority 2b: Video (if video_prompt directive present) ──
+            # Video is generated AFTER image so we can use image-to-video.
+            video_url = _try_ai_video_generation(
+                pipeline_piece, business_key, platform, directives,
+                image_url=media_url,
             )
+            if video_url:
+                media_url = video_url
+                pipeline_piece["media_url"] = video_url
+                generated_media = True
+                media_type = "video"
 
     return {
         "piece": pipeline_piece,
         "media_url": media_url,
+        "media_urls": carousel_urls,
         "generated_media": generated_media,
+        "media_type": media_type,
         "platform": platform,
         "creative_director": {
             "style": directives.get("image_style", "clean"),
             "headline": directives.get("image_headline", ""),
             "subhead": directives.get("image_subhead", ""),
             "logo_enabled": (directives.get("image_logo") or "on").strip().lower() not in {"off", "false", "0", "no"},
+            "image_prompt": directives.get("image_prompt", ""),
+            "video_prompt": directives.get("video_prompt", ""),
+            "has_carousel": carousel_urls is not None,
         },
     }
 
@@ -414,10 +622,17 @@ def run_zernio_social_pipeline(
     """
     F1-style social pipeline: creative -> upload -> publish -> telemetry.
 
+    Supports single-image, video, and multi-image carousel posts.
     Returns pipeline metadata + final post response.
     """
     prep = prepare_social_piece_with_creative_director(piece=piece, business_key=business_key)
     pipeline_piece = prep["piece"]
+
+    # For carousels, ensure all media URLs are passed through to the publisher.
+    carousel_urls = prep.get("media_urls")
+    if carousel_urls and len(carousel_urls) > 1:
+        # Inject all carousel URLs so Zernio creates a multi-image post.
+        pipeline_piece["media_urls"] = carousel_urls
 
     publish_fn = publisher or publish_content_piece_to_zernio
     post_result = _publish_with_callable(
@@ -430,7 +645,9 @@ def run_zernio_social_pipeline(
     return {
         "post": post_result,
         "media_url": prep.get("media_url"),
+        "media_urls": carousel_urls,
         "generated_media": prep.get("generated_media", False),
+        "media_type": prep.get("media_type", "none"),
         "platform": prep.get("platform", ""),
         "creative_director": prep.get("creative_director", {}),
     }

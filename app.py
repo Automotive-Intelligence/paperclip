@@ -3744,6 +3744,271 @@ async def run_now(
     )
 
 
+@app.post("/admin/test-creative-pipeline")
+async def test_creative_pipeline(
+    publish: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Test the AI creative pipeline (image gen, video gen, carousel) for ALL businesses.
+
+    Generates a branded test post per business, runs it through the full social pipeline
+    (AI image generation via Replicate FLUX), and optionally publishes to each business's
+    connected Zernio platforms.
+
+    Query params:
+        publish (bool): If True, actually publish test posts to Zernio. Default False (dry-run).
+
+    Returns per-business results with:
+        - Agent used (content lead per business)
+        - Zernio profile matched
+        - Connected platforms discovered
+        - AI image generation result
+        - Publish result per platform (if publish=True)
+    """
+    validate_key(authorization)
+
+    # ── Agent-to-business mapping for content leads ──
+    CONTENT_LEADS = {
+        "aiphoneguy": {
+            "agent": "zoe",
+            "agent_name": "Zoe",
+            "role": "Head of Marketing",
+            "brand": "The AI Phone Guy",
+            "test_content": (
+                "AI-powered phone systems are transforming how local businesses handle calls. "
+                "Never miss another lead — your AI receptionist works 24/7. "
+                "Book a demo today and see the difference."
+            ),
+            "test_headline": "Never Miss a Call That Should Convert",
+            "platforms_to_test": ["instagram", "facebook", "linkedin", "twitter"],
+        },
+        "autointelligence": {
+            "agent": "chase",
+            "agent_name": "Chase",
+            "role": "Head of Marketing",
+            "brand": "Automotive Intelligence",
+            "test_content": (
+                "Dealerships using AI are booking 3x more service appointments. "
+                "Our AI platform analyzes your customer data and automates follow-up "
+                "so your team can focus on closing. See the data."
+            ),
+            "test_headline": "AI That Drives Appointments to Your Dealership",
+            "platforms_to_test": ["linkedin", "facebook", "instagram", "twitter"],
+        },
+        "callingdigital": {
+            "agent": "sofia",
+            "agent_name": "Sofia",
+            "role": "Head of Content & Creative",
+            "brand": "Calling Digital",
+            "test_content": (
+                "Small businesses in Dallas are growing 2x faster with the right digital strategy. "
+                "SEO, ads, AI automation — Calling Digital builds growth systems that actually work. "
+                "Let's talk about your goals."
+            ),
+            "test_headline": "Growth Systems for Serious Owners",
+            "platforms_to_test": ["instagram", "linkedin", "facebook", "twitter"],
+        },
+    }
+
+    all_results = {}
+    overall_ok = 0
+    overall_errors = 0
+
+    # Check AI readiness.
+    ai_image_available = False
+    ai_video_available = False
+    try:
+        from tools.image_gen import image_gen_ready
+        ai_image_available = image_gen_ready()
+    except ImportError:
+        pass
+    try:
+        from tools.video_gen import video_gen_ready
+        ai_video_available = video_gen_ready()
+    except ImportError:
+        pass
+
+    # Get all Zernio profiles once.
+    zernio_profiles = []
+    if zernio_ready():
+        try:
+            zernio_profiles = get_zernio_profiles()
+        except Exception as e:
+            logging.error(f"[TestCreative] Failed to get Zernio profiles: {e}")
+
+    for business_key, lead in CONTENT_LEADS.items():
+        biz_result = {
+            "business": business_key,
+            "brand": lead["brand"],
+            "content_agent": f"{lead['agent_name']} ({lead['role']})",
+            "ai_image_available": ai_image_available,
+            "ai_video_available": ai_video_available,
+            "zernio_profile": None,
+            "connected_platforms": [],
+            "image_generation": None,
+            "platform_results": [],
+        }
+
+        # ── Step 1: Match Zernio profile ──
+        matching_profile = None
+        biz_norm = re.sub(r"[^a-z0-9]", "", business_key.lower())
+
+        for p in zernio_profiles:
+            profile_norm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
+            if biz_norm in profile_norm or profile_norm in biz_norm:
+                matching_profile = p
+                break
+
+        if not matching_profile:
+            forced_id = os.getenv(f"{business_key.upper()}_ZERNIO_PROFILE_ID", "").strip()
+            if forced_id:
+                for p in zernio_profiles:
+                    if (p.get("_id") or "") == forced_id:
+                        matching_profile = p
+                        break
+
+        if matching_profile:
+            profile_id = matching_profile.get("_id")
+            biz_result["zernio_profile"] = {
+                "id": profile_id,
+                "name": matching_profile.get("name", ""),
+            }
+
+            # ── Step 2: Discover connected platforms ──
+            try:
+                accounts = list_zernio_accounts(profile_id)
+                connected = []
+                for acct in accounts:
+                    connected.append({
+                        "platform": acct.get("platform", "unknown"),
+                        "username": acct.get("username", acct.get("name", "unknown")),
+                        "account_id": acct.get("_id", ""),
+                    })
+                biz_result["connected_platforms"] = connected
+            except Exception as e:
+                biz_result["connected_platforms"] = [{"error": str(e)}]
+                accounts = []
+        else:
+            biz_result["zernio_profile"] = {"error": f"No profile matched. Set {business_key.upper()}_ZERNIO_PROFILE_ID."}
+            profile_id = None
+            accounts = []
+
+        # ── Step 3: Run creative pipeline (AI image gen) ──
+        test_piece = {
+            "id": f"test-{business_key}-creative",
+            "content": lead["test_content"],
+            "platform": "instagram",
+            "cta": f"Visit {lead['brand']}",
+        }
+
+        try:
+            prep = prepare_social_piece_with_creative_director(
+                piece=test_piece,
+                business_key=business_key,
+            )
+            biz_result["image_generation"] = {
+                "status": "ok",
+                "media_url": prep.get("media_url"),
+                "media_type": prep.get("media_type", "unknown"),
+                "generated_media": prep.get("generated_media", False),
+                "creative_director": prep.get("creative_director", {}),
+            }
+        except Exception as e:
+            biz_result["image_generation"] = {
+                "status": "error",
+                "error": str(e),
+            }
+            overall_errors += 1
+            all_results[business_key] = biz_result
+            continue
+
+        # ── Step 4: Publish test post to each connected platform (if publish=True) ──
+        if publish and profile_id and accounts:
+            media_url = prep.get("media_url")
+            for platform_name in lead["platforms_to_test"]:
+                # Find the account for this platform.
+                target_account = None
+                for acct in accounts:
+                    if acct.get("platform") == platform_name:
+                        target_account = acct
+                        break
+
+                if not target_account:
+                    biz_result["platform_results"].append({
+                        "platform": platform_name,
+                        "status": "skipped",
+                        "reason": f"No {platform_name} account connected for {lead['brand']}",
+                    })
+                    continue
+
+                try:
+                    platform_piece = dict(prep.get("piece", test_piece))
+                    platform_piece["platform"] = platform_name
+                    platform_piece["media_url"] = media_url
+
+                    result = publish_content_piece_to_zernio(
+                        piece=platform_piece,
+                        profile_id=profile_id,
+                        publish_now=True,
+                    )
+
+                    post_id = result.get("_id", "")
+                    post_status = result.get("status", "unknown")
+                    post_url = ""
+                    platforms_resp = result.get("platforms")
+                    if isinstance(platforms_resp, list) and platforms_resp:
+                        post_url = platforms_resp[0].get("platformPostUrl", "")
+
+                    biz_result["platform_results"].append({
+                        "platform": platform_name,
+                        "account": target_account.get("username", ""),
+                        "status": "published",
+                        "post_id": post_id,
+                        "post_status": post_status,
+                        "post_url": post_url,
+                        "media_url": media_url,
+                    })
+                    overall_ok += 1
+                except Exception as e:
+                    biz_result["platform_results"].append({
+                        "platform": platform_name,
+                        "status": "error",
+                        "error": str(e),
+                    })
+                    overall_errors += 1
+        elif not publish:
+            # Dry run — just report what would happen.
+            for platform_name in lead["platforms_to_test"]:
+                has_account = any(
+                    acct.get("platform") == platform_name for acct in accounts
+                )
+                biz_result["platform_results"].append({
+                    "platform": platform_name,
+                    "status": "dry_run",
+                    "account_connected": has_account,
+                    "would_publish": has_account,
+                    "media_url": prep.get("media_url"),
+                })
+
+        all_results[business_key] = biz_result
+
+    return JSONResponse(content={
+        "status": "completed",
+        "test_mode": "publish" if publish else "dry_run",
+        "timestamp": datetime.datetime.now(CST).isoformat(),
+        "ai_capabilities": {
+            "image_gen_replicate": ai_image_available,
+            "video_gen_replicate": ai_video_available,
+            "pil_fallback": True,
+        },
+        "businesses_tested": len(all_results),
+        "total_ok": overall_ok,
+        "total_errors": overall_errors,
+        "results": all_results,
+    })
+
+
 @app.post("/admin/migrate_agentlogs_to_contentqueue")
 async def migrate_agentlogs_to_contentqueue(authorization: Optional[str] = Header(None)):
     """Migrate all AI Phone Guy agent_logs to content_queue with status='review' for manual vetting."""

@@ -73,6 +73,8 @@ Quick reference for AI agents to discover tool capabilities and integration meth
 | similarweb | Competitive Intelligence | ✓ | - | [✓](clis/similarweb.js) | - | [similarweb.md](integrations/similarweb.md) |
 | airops | AI Content | ✓ | - | [✓](clis/airops.js) | - | [airops.md](integrations/airops.md) |
 | buffer | Social | ✓ | - | [✓](clis/buffer.js) | - | [buffer.md](integrations/buffer.md) |
+| zernio | Social | ✓ | - | - | ✓ | [zernio.md](integrations/zernio.md) |
+| replicate | AI Creative | ✓ | - | - | ✓ | [replicate.md](integrations/replicate.md) |
 | wistia | Video | ✓ | - | [✓](clis/wistia.js) | - | [wistia.md](integrations/wistia.md) |
 | trustpilot | Reviews | ✓ | - | [✓](clis/trustpilot.js) | - | [trustpilot.md](integrations/trustpilot.md) |
 | g2 | Reviews | ✓ | - | [✓](clis/g2.js) | - | [g2.md](integrations/g2.md) |
@@ -346,6 +348,16 @@ AI-powered content generation and optimization platforms.
 | **airops** | AI content workflows, SEO content | Flow-based automation |
 
 **Agent recommendation**: AirOps for building AI content workflows that generate SEO-optimized content at scale.
+
+### AI Creative (Image/Video Generation)
+
+AI-powered visual content creation for social media and marketing.
+
+| Tool | Best For | Notes |
+|------|----------|-------|
+| **replicate** | Text-to-image (FLUX), text-to-video (Kling/MiniMax), image editing | Single API for all visual AI |
+
+**Agent recommendation**: Replicate is the unified API for all AI-generated visual content. Use FLUX Schnell for fast social images, FLUX Pro for high-quality assets, and MiniMax/Kling for short-form video. Integrated into the social pipeline via `tools/image_gen.py`, `tools/video_gen.py`, and `tools/carousel_builder.py`.
 
 ### Partner Ecosystem
 
