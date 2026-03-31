@@ -4030,6 +4030,68 @@ async def test_creative_pipeline(
     })
 
 
+@app.get("/admin/test-replicate")
+async def test_replicate_directly(authorization: Optional[str] = Header(None)):
+    """Diagnose Replicate API — test auth, connectivity, and image generation."""
+    validate_key(authorization)
+    import traceback
+
+    results = {
+        "env_var_set": False,
+        "token_prefix": "",
+        "auth_test": None,
+        "image_generation": None,
+    }
+
+    # Step 1: Check env var
+    token = os.getenv("REPLICATE_API_TOKEN", "").strip()
+    results["env_var_set"] = bool(token)
+    results["token_prefix"] = token[:8] + "..." if len(token) > 8 else "(empty)"
+
+    if not token:
+        return results
+
+    # Step 2: Test auth — hit the account endpoint
+    import requests as req
+    try:
+        resp = req.get(
+            "https://api.replicate.com/v1/account",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        results["auth_test"] = {
+            "status_code": resp.status_code,
+            "body": resp.json() if resp.status_code == 200 else resp.text[:500],
+        }
+    except Exception as e:
+        results["auth_test"] = {"error": str(e), "traceback": traceback.format_exc()[-500:]}
+
+    # Step 3: Try actual image generation
+    try:
+        from tools.image_gen import generate_image
+        gen_result = generate_image(
+            prompt="A simple blue gradient background, minimal, clean",
+            business_key="callingdigital",
+            platform="instagram",
+            num_outputs=1,
+        )
+        results["image_generation"] = {
+            "status": "ok",
+            "urls": gen_result.get("urls", []),
+            "model": gen_result.get("model", ""),
+            "prompt_used": gen_result.get("prompt_used", ""),
+        }
+    except Exception as e:
+        results["image_generation"] = {
+            "status": "error",
+            "error": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()[-1000:],
+        }
+
+    return results
+
+
 @app.get("/admin/zernio-profiles")
 async def list_all_zernio_profiles(authorization: Optional[str] = Header(None)):
     """List all Zernio profiles and their connected accounts for debugging."""
