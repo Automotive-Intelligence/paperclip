@@ -3352,14 +3352,25 @@ async def publish_content_to_zernio_endpoint(
     results = []
 
     # Get Zernio profiles and find the one matching this business
+    # Known aliases handle cases where business_key doesn't substring-match the profile name
+    # (e.g. "autointelligence" vs "Automotive Intelligence").
+    PROFILE_ALIASES = {
+        "autointelligence": ["automotiveintelligence", "autointelligence", "automotive intelligence"],
+        "aiphoneguy": ["aiphoneguy", "theaiphoneguy", "ai phone guy"],
+        "callingdigital": ["callingdigital", "calling digital"],
+    }
     try:
         profiles = get_zernio_profiles()
         matching_profile = None
         business_key_norm = re.sub(r"[^a-z0-9]", "", business_key.lower())
+        aliases = PROFILE_ALIASES.get(business_key, [business_key_norm])
 
         for p in profiles:
             profile_name_norm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
             if profile_name_norm == business_key_norm:
+                matching_profile = p
+                break
+            if any(alias in profile_name_norm or profile_name_norm in alias for alias in aliases):
                 matching_profile = p
                 break
 
@@ -3851,11 +3862,21 @@ async def test_creative_pipeline(
         }
 
         # ── Step 1: Match Zernio profile ──
+        # Known aliases: business_key → possible Zernio profile name fragments.
+        PROFILE_ALIASES = {
+            "autointelligence": ["automotiveintelligence", "autointelligence", "automotive intelligence"],
+            "aiphoneguy": ["aiphoneguy", "theaiphoneguy", "ai phone guy"],
+            "callingdigital": ["callingdigital", "calling digital"],
+        }
         matching_profile = None
         biz_norm = re.sub(r"[^a-z0-9]", "", business_key.lower())
+        aliases = PROFILE_ALIASES.get(business_key, [biz_norm])
 
         for p in zernio_profiles:
             profile_norm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
+            if any(alias in profile_norm or profile_norm in alias for alias in aliases):
+                matching_profile = p
+                break
             if biz_norm in profile_norm or profile_norm in biz_norm:
                 matching_profile = p
                 break
