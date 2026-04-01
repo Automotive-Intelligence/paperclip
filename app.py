@@ -4092,6 +4092,87 @@ async def test_replicate_directly(authorization: Optional[str] = Header(None)):
     return results
 
 
+@app.post("/admin/test-zernio-post")
+async def test_zernio_single_post(
+    business_key: str = "callingdigital",
+    platform: str = "facebook",
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Publish a single test post to one platform and return the RAW Zernio response.
+    Useful for diagnosing why specific platforms fail silently.
+    """
+    validate_key(authorization)
+    import traceback
+
+    if not zernio_ready():
+        raise HTTPException(status_code=503, detail="Zernio not configured.")
+
+    # Find profile
+    PROFILE_ALIASES = {
+        "autointelligence": ["automotiveintelligence", "autointelligence"],
+        "aiphoneguy": ["aiphoneguy", "theaiphoneguy"],
+        "callingdigital": ["callingdigital"],
+    }
+    profiles = get_zernio_profiles()
+    aliases = PROFILE_ALIASES.get(business_key, [business_key])
+    matching_profile = None
+    for p in profiles:
+        pnorm = re.sub(r"[^a-z0-9]", "", (p.get("name") or "").lower())
+        if any(a in pnorm or pnorm in a for a in aliases):
+            matching_profile = p
+            break
+
+    if not matching_profile:
+        return {"error": f"No profile for {business_key}", "profiles": [p.get("name") for p in profiles]}
+
+    profile_id = matching_profile["_id"]
+
+    # Find account for this platform
+    accounts = list_zernio_accounts(profile_id)
+    target = [a for a in accounts if a.get("platform") == platform]
+    if not target:
+        return {
+            "error": f"No {platform} account connected",
+            "connected": [{"platform": a.get("platform"), "username": a.get("username")} for a in accounts],
+        }
+
+    account = target[0]
+
+    # Publish a simple test post
+    test_content = f"Test post from Paperclip AI Ops — {business_key} on {platform}. This is a systems check."
+    try:
+        raw_result = publish_to_zernio(
+            content=test_content,
+            platforms=[platform],
+            account_ids=[account["_id"]],
+            publish_now=True,
+        )
+        return {
+            "status": "ok",
+            "business": business_key,
+            "platform": platform,
+            "account": {
+                "id": account.get("_id"),
+                "username": account.get("username", account.get("name")),
+            },
+            "raw_zernio_response": raw_result,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "business": business_key,
+            "platform": platform,
+            "account": {
+                "id": account.get("_id"),
+                "username": account.get("username", account.get("name")),
+            },
+            "error": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()[-1000:],
+        }
+
+
 @app.get("/admin/zernio-profiles")
 async def list_all_zernio_profiles(authorization: Optional[str] = Header(None)):
     """List all Zernio profiles and their connected accounts for debugging."""
