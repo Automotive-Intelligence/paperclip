@@ -4050,6 +4050,28 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
 
     location_id = os.getenv("GHL_LOCATION_ID", "").strip()
 
+    results["ghl_user_id_set"] = bool(os.getenv("GHL_USER_ID", "").strip())
+
+    # Step 0: Try to get GHL users for this location
+    import requests as req
+    ghl_key = os.getenv("GHL_API_KEY", "").strip()
+    try:
+        resp = req.get(
+            f"https://services.leadconnectorhq.com/users/search?locationId={location_id}&limit=5",
+            headers={"Authorization": f"Bearer {ghl_key}", "Version": "2021-07-28"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            users_data = resp.json()
+            results["ghl_users"] = [
+                {"id": u.get("id"), "name": u.get("name"), "email": u.get("email")}
+                for u in users_data.get("users", [])[:5]
+            ]
+        else:
+            results["ghl_users"] = {"status": resp.status_code, "body": resp.text[:300]}
+    except Exception as e:
+        results["ghl_users"] = {"error": str(e)}
+
     # Step 1: Get connected social accounts
     try:
         accounts = _get_ghl_social_accounts(location_id)

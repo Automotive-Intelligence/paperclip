@@ -221,7 +221,7 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     # GHL Social Planner accounts have: id, platform ("facebook", "instagram", etc.), type ("page", "profile").
     override_ids = [x.strip() for x in os.getenv("GHL_SOCIAL_ACCOUNT_IDS", "").split(",") if x.strip()]
     if override_ids:
-        account_keys = [{"id": aid, "type": "page"} for aid in override_ids]
+        account_ids = override_ids
     else:
         accounts = _get_ghl_social_accounts(location_id)
         target_platform = _GHL_PLATFORM_MAP.get(platform, platform)
@@ -233,15 +233,20 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
                 "No GHL social accounts connected. Go to GHL → Social Planner → Accounts "
                 "and connect LinkedIn/Instagram/etc, or set GHL_SOCIAL_ACCOUNT_IDS."
             )
-        account_keys = [{"id": a["id"], "type": a.get("type", "page")} for a in matching[:3]]
+        account_ids = [a["id"] for a in matching[:3]]
+
+    # Resolve userId from the GHL API key owner.
+    user_id = os.getenv("GHL_USER_ID", "").strip()
 
     payload = {
-        "locationId": location_id,
+        "accountIds": account_ids,
         "summary": post_text,
         "status": "draft",
-        "accountKeys": account_keys,
         "type": "post",
     }
+
+    if user_id:
+        payload["userId"] = user_id
 
     if media_urls:
         payload["media"] = [{"url": u, "type": "image"} for u in media_urls]
@@ -255,10 +260,10 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
             timeout=20,
             api_version="2021-07-28",
         )
-    except ServiceCallError:
+    except ServiceCallError as orig_err:
         # Some GHL tenants reject media; fail open to text-only post instead of blocking publish.
         if media_urls:
-            logging.warning("[GHL] media rejected; retrying social post without media")
+            logging.warning("[GHL] media rejected; retrying social post without media. Error: %s", orig_err)
             fallback_payload = dict(payload)
             fallback_payload.pop("media", None)
             fallback_payload.pop("mediaUrls", None)
