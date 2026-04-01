@@ -248,8 +248,11 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     if user_id:
         payload["userId"] = user_id
 
+    # GHL requires media as an array — always include it (empty if no media).
     if media_urls:
-        payload["media"] = [{"url": u, "type": "image"} for u in media_urls]
+        payload["media"] = [{"url": u, "type": "image", "caption": ""} for u in media_urls]
+    else:
+        payload["media"] = []
 
     try:
         data = _ghl_request(
