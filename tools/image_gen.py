@@ -372,46 +372,90 @@ def build_image_prompt(
     """
     Build a well-structured image generation prompt from content metadata.
 
-    Agents can call this to convert their text output into a visual prompt
-    without needing to know prompt engineering details.
+    IMPORTANT: FLUX cannot render text reliably. This prompt describes the
+    VISUAL SCENE only — text is overlaid separately by PIL in the pipeline.
+    The headline/subhead are used to infer the *subject matter* of the image,
+    NOT to place text in the image.
 
     Args:
-        headline: Main text/topic of the content.
-        subhead: Supporting text or tagline.
+        headline: Main text/topic of the content (used to infer visual subject).
+        subhead: Supporting text or tagline (used to infer visual mood).
         business_key: Brand key for style context.
         content_type: Type of content (social_post, ad, blog_header, carousel_slide).
         platform: Target platform for style hints.
 
     Returns:
-        A prompt string optimized for FLUX image generation.
+        A prompt string optimized for FLUX background image generation.
     """
+    # CRITICAL: Tell FLUX to never render text, letters, words, or typography.
+    NO_TEXT = (
+        "ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS, NO NUMBERS, NO TYPOGRAPHY, "
+        "NO WRITING, NO CAPTIONS, NO LABELS, NO WATERMARKS anywhere in the image. "
+        "This is a background image only."
+    )
+
     parts = []
 
-    # Content type framing.
+    # Content type framing — describe the visual scene, not text.
     type_frames = {
-        "social_post": "A professional social media graphic",
-        "ad": "A high-converting digital advertisement",
-        "blog_header": "A clean blog header image",
-        "carousel_slide": "A presentation-style slide graphic",
+        "social_post": "A visually striking background photograph for a social media post",
+        "ad": "A bold, attention-grabbing background image for a digital advertisement",
+        "blog_header": "A clean, wide background photograph for a blog header",
+        "carousel_slide": "A clean background image for a presentation slide",
     }
-    parts.append(type_frames.get(content_type, "A professional marketing graphic"))
+    parts.append(type_frames.get(content_type, "A professional background photograph"))
 
-    # Topic.
+    # Convert headline into a visual subject — describe what to SHOW, not what to SAY.
+    # Extract key topic words and frame as a scene description.
+    TOPIC_VISUALS = {
+        "ai": "artificial intelligence technology, glowing circuits, modern tech environment",
+        "phone": "modern smartphone, communication technology, connected devices",
+        "call": "professional phone system, modern office communication",
+        "dealership": "sleek car showroom, modern automotive dealership interior",
+        "car": "luxury vehicles, modern automotive showroom",
+        "automotive": "modern car dealership, shiny vehicles on display floor",
+        "appointment": "professional business meeting, calendar, organized workspace",
+        "service": "professional service center, clean modern workspace",
+        "marketing": "modern creative workspace, digital screens with analytics",
+        "digital": "modern technology workspace, multiple screens, clean design",
+        "growth": "upward trending abstract visualization, success imagery",
+        "business": "modern professional office, clean corporate environment",
+        "seo": "modern workspace with analytics dashboards, search technology",
+        "lead": "professional networking, business connections, pipeline",
+        "dallas": "Dallas Texas skyline, modern urban landscape",
+        "client": "professional handshake, business partnership, trust",
+        "revenue": "modern financial dashboard, business growth visualization",
+    }
+
+    visual_subjects = []
     if headline:
-        parts.append(f"about: {headline}")
-    if subhead:
-        parts.append(f"with subtitle: {subhead}")
+        headline_lower = headline.lower()
+        for keyword, visual in TOPIC_VISUALS.items():
+            if keyword in headline_lower:
+                visual_subjects.append(visual)
+        if not visual_subjects:
+            # Generic fallback: describe a professional scene related to the topic.
+            parts.append(f"related to the concept of: {headline}")
+
+    if visual_subjects:
+        # Use top 2 most relevant visuals to avoid prompt overload.
+        parts.append("showing: " + ", ".join(visual_subjects[:2]))
 
     # Platform-specific style hints.
     if platform.lower() in ("instagram", "threads"):
-        parts.append("visually striking, social-media optimized, eye-catching composition")
+        parts.append("visually striking, vibrant, eye-catching composition, shallow depth of field")
     elif platform.lower() in ("linkedin",):
-        parts.append("corporate, professional, trustworthy, clean layout")
+        parts.append("corporate, professional, trustworthy, muted tones, clean composition")
     elif platform.lower() in ("tiktok", "youtube"):
-        parts.append("bold, dynamic, high-energy, attention-grabbing")
+        parts.append("bold, dynamic, high-energy, vivid colors")
+    else:
+        parts.append("professional, clean composition, balanced lighting")
 
     # Quality modifiers.
-    parts.append("high quality, sharp details, professional photography or illustration style")
-    parts.append("no text overlays, no watermarks, clean composition")
+    parts.append("high quality, sharp details, professional photography, cinematic lighting")
+    parts.append("soft bokeh background, clean negative space for text overlay")
+
+    # The critical no-text instruction.
+    parts.append(NO_TEXT)
 
     return ". ".join(parts) + "."

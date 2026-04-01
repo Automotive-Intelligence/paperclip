@@ -333,37 +333,144 @@ def _publish_with_callable(
     )
 
 
-def _overlay_logo(image_bytes: bytes, business_key: str) -> bytes:
+def _overlay_branding(
+    image_bytes: bytes,
+    business_key: str,
+    headline: str = "",
+    subhead: str = "",
+    cta_text: str = "",
+    logo_enabled: bool = True,
+) -> bytes:
     """
-    Composite the business logo onto image bytes (bottom-right corner).
-    Works on both AI-generated and PIL-generated images.
-    Returns the composited PNG bytes, or original bytes if logo unavailable.
+    Overlay clean, professional text + logo onto an AI-generated background.
+
+    FLUX generates a text-free background image. This function adds:
+    - Semi-transparent gradient for text readability
+    - Headline text (large, bold)
+    - Subhead / tagline (smaller)
+    - CTA bar at bottom
+    - Business logo (bottom-right)
+
+    Returns composited PNG bytes.
     """
-    logo_path = _resolve_logo_path(business_key)
-    if not logo_path:
-        return image_bytes
+    from PIL import Image, ImageDraw
 
     try:
-        from PIL import Image
-
         img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-        logo = Image.open(logo_path).convert("RGBA")
+        width, height = img.size
 
-        # Scale logo to fit — max 200px wide, 80px tall.
-        max_w, max_h = 200, 80
-        ratio = min(max_w / logo.width, max_h / logo.height, 1.0)
-        logo = logo.resize((int(logo.width * ratio), int(logo.height * ratio)))
+        # ── Dark gradient overlay for text contrast ──
+        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw_overlay = ImageDraw.Draw(overlay)
 
-        # Position: bottom-right with padding.
-        x = img.width - logo.width - 70
-        y = img.height - logo.height - 145
-        img.alpha_composite(logo, (x, y))
+        # Bottom gradient (covers lower 60% of image).
+        gradient_start = int(height * 0.4)
+        for y in range(gradient_start, height):
+            progress = (y - gradient_start) / (height - gradient_start)
+            alpha = int(160 * progress)
+            draw_overlay.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
 
+        # Top gradient for logo area (subtle).
+        for y in range(0, int(height * 0.15)):
+            alpha = int(80 * (1 - y / (height * 0.15)))
+            draw_overlay.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
+
+        img = Image.alpha_composite(img, overlay)
+        draw = ImageDraw.Draw(img)
+
+        # ── Load fonts ──
+        title_font = _load_font(54)
+        sub_font = _load_font(32)
+        cta_font = _load_font(28)
+
+        margin = 60
+
+        # ── Headline ──
+        if headline:
+            # Word-wrap headline.
+            words = headline.split()
+            lines = []
+            current = []
+            for word in words:
+                test_line = " ".join(current + [word])
+                if len(test_line) <= 30:
+                    current.append(word)
+                else:
+                    if current:
+                        lines.append(" ".join(current))
+                    current = [word]
+            if current:
+                lines.append(" ".join(current))
+
+            y = int(height * 0.48)
+            for line in lines[:3]:
+                draw.text((margin, y), line, font=title_font, fill=(255, 255, 255))
+                y += 68
+
+        # ── Subhead / tagline ──
+        if subhead:
+            sub_y = int(height * 0.48) + (len(lines[:3]) * 68) + 12 if headline else int(height * 0.55)
+            # Word-wrap subhead.
+            words = subhead.split()
+            sub_lines = []
+            current = []
+            for word in words:
+                test_line = " ".join(current + [word])
+                if len(test_line) <= 45:
+                    current.append(word)
+                else:
+                    if current:
+                        sub_lines.append(" ".join(current))
+                    current = [word]
+            if current:
+                sub_lines.append(" ".join(current))
+
+            for line in sub_lines[:2]:
+                draw.text((margin, sub_y), line, font=sub_font, fill=(220, 220, 220))
+                sub_y += 44
+
+        # ── CTA bar ──
+        if cta_text:
+            # Get brand accent color for CTA.
+            theme = BRAND_THEME.get(business_key, BRAND_THEME.get("callingdigital", {}))
+            accent = theme.get("accent", (255, 255, 255))
+
+            cta_y = height - margin - 55
+            draw.rounded_rectangle(
+                (margin, cta_y, width - margin, cta_y + 50),
+                radius=12,
+                fill=accent,
+            )
+            draw.text(
+                (margin + 20, cta_y + 10),
+                cta_text[:50],
+                font=cta_font,
+                fill=(18, 18, 18),
+            )
+
+        # ── Logo ──
+        if logo_enabled:
+            logo_path = _resolve_logo_path(business_key)
+            if logo_path:
+                try:
+                    logo = Image.open(logo_path).convert("RGBA")
+                    max_w, max_h = 180, 70
+                    ratio = min(max_w / logo.width, max_h / logo.height, 1.0)
+                    logo = logo.resize((int(logo.width * ratio), int(logo.height * ratio)))
+
+                    x = width - logo.width - margin
+                    y = margin
+                    img.alpha_composite(logo, (x, y))
+                except Exception as e:
+                    logging.warning("[SocialPipeline] Logo overlay failed for %s: %s", business_key, e)
+
+        # ── Export ──
         out = io.BytesIO()
-        img.convert("RGB").save(out, format="PNG")
+        img.convert("RGB").save(out, format="PNG", quality=95)
         return out.getvalue()
+
     except Exception as e:
-        logging.warning("[SocialPipeline] Logo overlay failed for %s: %s", business_key, e)
+        logging.warning("[SocialPipeline] Branding overlay failed for %s: %s", business_key, e)
         return image_bytes
 
 
@@ -374,8 +481,11 @@ def _try_ai_image_generation(
     directives: Dict[str, str],
 ) -> Optional[bytes]:
     """
-    Attempt AI image generation via Replicate FLUX.
-    Returns PNG bytes (with logo overlay) on success, None on failure or if unavailable.
+    Generate a branded social image:
+    1. FLUX creates a clean, text-free background photo
+    2. PIL overlays headline, subhead, CTA, and logo with crisp typography
+
+    Returns composited PNG bytes on success, None on failure or if unavailable.
     """
     try:
         from tools.image_gen import build_image_prompt, generate_image_bytes, image_gen_ready
@@ -389,6 +499,9 @@ def _try_ai_image_generation(
         # Use explicit image_prompt directive if provided by the agent.
         custom_prompt = directives.get("image_prompt", "").strip()
         if custom_prompt:
+            # Ensure no-text instruction even with custom prompts.
+            if "no text" not in custom_prompt.lower():
+                custom_prompt += ". ABSOLUTELY NO TEXT, NO WORDS, NO LETTERS in the image."
             prompt = custom_prompt
         else:
             prompt = build_image_prompt(
@@ -399,18 +512,30 @@ def _try_ai_image_generation(
                 platform=platform,
             )
 
+        # Step 1: FLUX generates a clean, text-free background.
         image_bytes = generate_image_bytes(
             prompt=prompt,
             business_key=business_key,
             platform=platform,
         )
 
-        # Overlay business logo on the AI-generated image.
+        # Step 2: PIL overlays crisp text + logo on the background.
+        headline = directives.get("image_headline", _auto_headline(_best_text(piece)))
+        subhead = directives.get("image_subhead", "")
+        cta = piece.get("cta", "")
         logo_toggle = (directives.get("image_logo") or "on").strip().lower()
-        if logo_toggle not in {"off", "false", "0", "no"}:
-            image_bytes = _overlay_logo(image_bytes, business_key)
+        logo_on = logo_toggle not in {"off", "false", "0", "no"}
 
-        logging.info("[SocialPipeline] AI image generated (with logo) for content_id=%s", piece.get("id"))
+        image_bytes = _overlay_branding(
+            image_bytes=image_bytes,
+            business_key=business_key,
+            headline=headline,
+            subhead=subhead,
+            cta_text=cta,
+            logo_enabled=logo_on,
+        )
+
+        logging.info("[SocialPipeline] AI image + branding overlay for content_id=%s", piece.get("id"))
         return image_bytes
     except Exception as e:
         logging.warning("[SocialPipeline] AI image gen failed for content_id=%s: %s", piece.get("id"), e)
