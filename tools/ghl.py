@@ -20,6 +20,7 @@ workflow triggers, and pipeline tracking across all 3 businesses.
 # Profit is the outcome of service, not the purpose.
 # ================================
 
+import json as json_module
 import os
 import logging
 import html
@@ -316,6 +317,10 @@ def _ghl_request(
         return response.data or {}
     if response.error is None:
         raise RuntimeError(f"ghl.{operation} failed with unknown error")
+    # Include response body in error message for debugging.
+    if response.data:
+        response.error.details = response.data
+        response.error.message = f"HTTP {response.status_code}: {json_module.dumps(response.data)[:500]}"
     raise ServiceCallError(response.error)
 
 
