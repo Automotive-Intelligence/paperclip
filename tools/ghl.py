@@ -100,8 +100,9 @@ def _get_ghl_social_accounts(location_id: str) -> list:
         data = _ghl_request(
             "get_social_accounts",
             "GET",
-            f"/social-media-posting/oauth/{location_id}/socialmedia/accounts",
+            f"/social-media-posting/oauth/{location_id}/accounts",
             timeout=10,
+            api_version="2021-07-28",
         )
         return data.get("accounts", [])
     except ServiceCallError as exc:
@@ -248,6 +249,7 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
             f"/social-media-posting/{location_id}/posts",
             json_body=payload,
             timeout=20,
+            api_version="2021-07-28",
         )
     except ServiceCallError:
         # Some GHL tenants reject mediaUrls; fail open to text-only post instead of blocking publish.
@@ -261,6 +263,7 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
                 f"/social-media-posting/{location_id}/posts",
                 json_body=fallback_payload,
                 timeout=20,
+                api_version="2021-07-28",
             )
         else:
             raise
@@ -274,12 +277,12 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     }
 
 
-def _get_headers() -> dict:
+def _get_headers(version: str = "2021-07-28") -> dict:
     """Fresh headers on each call in case env vars load after module import."""
     return {
         "Authorization": f"Bearer {os.getenv('GHL_API_KEY', '')}",
         "Content-Type": "application/json",
-        "Version": "2021-07-28",
+        "Version": version,
     }
 
 
@@ -291,13 +294,14 @@ def _ghl_request(
     params: Optional[dict] = None,
     json_body: Optional[dict] = None,
     timeout: int = 15,
+    api_version: str = "2021-07-28",
 ) -> dict:
     response = request_with_retry(
         provider="ghl",
         operation=operation,
         method=method,
         url=f"{GHL_BASE_URL}{path}",
-        headers=_get_headers(),
+        headers=_get_headers(version=api_version),
         params=params,
         json_body=json_body,
         timeout=timeout,

@@ -4063,7 +4063,30 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
             for a in accounts
         ]
     except Exception as e:
-        results["connected_accounts"] = {"error": str(e), "traceback": traceback.format_exc()[-500:]}
+        results["connected_accounts"] = {"error": str(e)}
+
+        # Try alternate GHL social API paths for debugging
+        import requests as req
+        ghl_key = os.getenv("GHL_API_KEY", "").strip()
+        alt_paths = [
+            f"/social-media-posting/oauth/{location_id}/accounts",
+            f"/social-media-posting/oauth/{location_id}/socialmedia/accounts",
+            f"/social-media-posting/{location_id}/accounts",
+        ]
+        results["api_path_probe"] = {}
+        for path in alt_paths:
+            try:
+                resp = req.get(
+                    f"https://services.leadconnectorhq.com{path}",
+                    headers={"Authorization": f"Bearer {ghl_key}", "Version": "2021-07-28"},
+                    timeout=10,
+                )
+                results["api_path_probe"][path] = {
+                    "status": resp.status_code,
+                    "body": resp.json() if resp.status_code == 200 else resp.text[:300],
+                }
+            except Exception as pe:
+                results["api_path_probe"][path] = {"error": str(pe)}
         return results
 
     # Step 2: Test post with AI image
