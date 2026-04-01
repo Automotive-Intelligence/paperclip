@@ -241,7 +241,7 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     payload = {
         "accountIds": account_ids,
         "summary": post_text,
-        "status": "draft",
+        "status": "published",
         "type": "post",
     }
 
