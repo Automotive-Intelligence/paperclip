@@ -4030,6 +4030,83 @@ async def test_creative_pipeline(
     })
 
 
+@app.get("/admin/test-ghl")
+async def test_ghl_social(authorization: Optional[str] = Header(None)):
+    """Diagnose GHL social publishing — check credentials, accounts, and test post."""
+    validate_key(authorization)
+    import traceback
+    from tools.ghl import _get_ghl_social_accounts, _GHL_PLATFORM_TYPE
+
+    results = {
+        "ghl_api_key_set": bool(os.getenv("GHL_API_KEY", "").strip()),
+        "ghl_location_id_set": bool(os.getenv("GHL_LOCATION_ID", "").strip()),
+        "ghl_social_ready": ghl_social_publish_ready(),
+        "connected_accounts": None,
+        "test_post": None,
+    }
+
+    if not results["ghl_social_ready"]:
+        return results
+
+    location_id = os.getenv("GHL_LOCATION_ID", "").strip()
+
+    # Step 1: Get connected social accounts
+    try:
+        accounts = _get_ghl_social_accounts(location_id)
+        results["connected_accounts"] = [
+            {
+                "id": a.get("id"),
+                "type": a.get("type"),
+                "name": a.get("name", a.get("displayName", "")),
+                "platform": a.get("platform", a.get("type", "")),
+            }
+            for a in accounts
+        ]
+    except Exception as e:
+        results["connected_accounts"] = {"error": str(e), "traceback": traceback.format_exc()[-500:]}
+        return results
+
+    # Step 2: Test post with AI image
+    if accounts:
+        try:
+            test_piece = {
+                "id": "test-ghl-aiphoneguy",
+                "title": "AI Phone Guy Systems Check",
+                "body": "AI-powered phone systems are changing how local businesses handle calls. Never miss a lead again.",
+                "content": "AI-powered phone systems are changing how local businesses handle calls. Never miss a lead again.",
+                "platform": "facebook",
+                "cta": "Book a Demo at theaiphoneguy.ai",
+                "hashtags": "#AIPhoneGuy #SmallBusiness #AI",
+            }
+
+            prep = prepare_social_piece_with_creative_director(
+                piece=test_piece,
+                business_key="aiphoneguy",
+            )
+
+            results["image_generation"] = {
+                "media_type": prep.get("media_type", "unknown"),
+                "media_url": prep.get("media_url"),
+                "generated_media": prep.get("generated_media", False),
+            }
+
+            creative_piece = prep.get("piece", test_piece)
+            post_result = publish_content_to_ghl_social(creative_piece)
+            results["test_post"] = {
+                "status": "ok",
+                "result": post_result,
+            }
+        except Exception as e:
+            results["test_post"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+                "traceback": traceback.format_exc()[-1000:],
+            }
+
+    return results
+
+
 @app.get("/admin/test-replicate")
 async def test_replicate_directly(authorization: Optional[str] = Header(None)):
     """Diagnose Replicate API — test auth, connectivity, and image generation."""
