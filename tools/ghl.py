@@ -83,14 +83,14 @@ def build_ghl_site_graphic_svg(title: str, subtitle: str = "AI Phone Guy") -> st
 
 
 # Map Paperclip platform names to GHL Social Planner account types
-_GHL_PLATFORM_TYPE = {
-    "linkedin": ["linkedin_business", "linkedin_profile"],
-    "facebook": ["facebook_page", "facebook_group"],
-    "instagram": ["instagram_business"],
-    "twitter": ["twitter_profile"],
-    "x": ["twitter_profile"],
-    "tiktok": ["tiktok_profile"],
-    "youtube": ["youtube_channel"],
+_GHL_PLATFORM_MAP = {
+    "linkedin": "linkedin",
+    "facebook": "facebook",
+    "instagram": "instagram",
+    "twitter": "twitter",
+    "x": "twitter",
+    "tiktok": "tiktok",
+    "youtube": "youtube",
 }
 
 
@@ -100,11 +100,13 @@ def _get_ghl_social_accounts(location_id: str) -> list:
         data = _ghl_request(
             "get_social_accounts",
             "GET",
-            f"/social-media-posting/oauth/{location_id}/accounts",
+            f"/social-media-posting/{location_id}/accounts",
             timeout=10,
             api_version="2021-07-28",
         )
-        return data.get("accounts", [])
+        # GHL wraps accounts inside a "results" object.
+        results = data.get("results", data)
+        return results.get("accounts", data.get("accounts", []))
     except ServiceCallError as exc:
         msg = str(exc)
         if "authorized for this scope" in msg.lower():
@@ -214,15 +216,15 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
         media_urls.extend([str(x).strip() for x in listed_media if str(x).strip()])
     media_urls = list(dict.fromkeys([u for u in media_urls if u]))
 
-    # Resolve which GHL social accounts to post to
+    # Resolve which GHL social accounts to post to.
+    # GHL Social Planner accounts have: id, platform ("facebook", "instagram", etc.), type ("page", "profile").
     override_ids = [x.strip() for x in os.getenv("GHL_SOCIAL_ACCOUNT_IDS", "").split(",") if x.strip()]
     if override_ids:
-        platform_type = _GHL_PLATFORM_TYPE.get(platform, ["linkedin_business"])[0]
-        account_keys = [{"id": aid, "type": platform_type} for aid in override_ids]
+        account_keys = [{"id": aid, "type": "page"} for aid in override_ids]
     else:
         accounts = _get_ghl_social_accounts(location_id)
-        target_types = _GHL_PLATFORM_TYPE.get(platform, [])
-        matching = [a for a in accounts if a.get("type") in target_types] if target_types else []
+        target_platform = _GHL_PLATFORM_MAP.get(platform, platform)
+        matching = [a for a in accounts if a.get("platform") == target_platform]
         if not matching:
             matching = accounts  # fall back to any connected account
         if not matching:
@@ -230,17 +232,18 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
                 "No GHL social accounts connected. Go to GHL → Social Planner → Accounts "
                 "and connect LinkedIn/Instagram/etc, or set GHL_SOCIAL_ACCOUNT_IDS."
             )
-        account_keys = [{"id": a["id"], "type": a.get("type", "linkedin_business")} for a in matching[:3]]
+        account_keys = [{"id": a["id"], "type": a.get("type", "page")} for a in matching[:3]]
 
     payload = {
         "locationId": location_id,
         "summary": post_text,
-        "status": "PUBLISHED",
+        "status": "draft",
         "accountKeys": account_keys,
+        "type": "post",
     }
 
     if media_urls:
-        payload["mediaUrls"] = media_urls
+        payload["media"] = [{"url": u, "type": "image"} for u in media_urls]
 
     try:
         data = _ghl_request(
@@ -252,10 +255,11 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
             api_version="2021-07-28",
         )
     except ServiceCallError:
-        # Some GHL tenants reject mediaUrls; fail open to text-only post instead of blocking publish.
+        # Some GHL tenants reject media; fail open to text-only post instead of blocking publish.
         if media_urls:
-            logging.warning("[GHL] mediaUrls rejected; retrying social post without media")
+            logging.warning("[GHL] media rejected; retrying social post without media")
             fallback_payload = dict(payload)
+            fallback_payload.pop("media", None)
             fallback_payload.pop("mediaUrls", None)
             data = _ghl_request(
                 "publish_social_post",

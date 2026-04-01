@@ -4035,7 +4035,7 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
     """Diagnose GHL social publishing — check credentials, accounts, and test post."""
     validate_key(authorization)
     import traceback
-    from tools.ghl import _get_ghl_social_accounts, _GHL_PLATFORM_TYPE
+    from tools.ghl import _get_ghl_social_accounts, _GHL_PLATFORM_MAP
 
     results = {
         "ghl_api_key_set": bool(os.getenv("GHL_API_KEY", "").strip()),
