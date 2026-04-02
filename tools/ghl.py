@@ -248,9 +248,12 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     if user_id:
         payload["userId"] = user_id
 
-    # GHL Social Planner media format.
+    # GHL Social Planner media — try multiple formats.
+    # GHL requires media as array of objects, not strings.
     if media_urls:
-        payload["media"] = [u for u in media_urls]
+        payload["media"] = [{"url": u} for u in media_urls]
+    else:
+        payload["media"] = []
 
     try:
         data = _ghl_request(
@@ -262,12 +265,11 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
             api_version="2021-07-28",
         )
     except ServiceCallError as orig_err:
-        # Some GHL tenants reject media; fail open to text-only post instead of blocking publish.
+        # Media format rejected — retry without media images but keep empty array.
         if media_urls:
             logging.warning("[GHL] media rejected; retrying social post without media. Error: %s", orig_err)
             fallback_payload = dict(payload)
-            fallback_payload.pop("media", None)
-            fallback_payload.pop("mediaUrls", None)
+            fallback_payload["media"] = []
             data = _ghl_request(
                 "publish_social_post",
                 "POST",
