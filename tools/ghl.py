@@ -227,8 +227,6 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
         target_platform = _GHL_PLATFORM_MAP.get(platform, platform)
         matching = [a for a in accounts if a.get("platform") == target_platform]
         if not matching:
-            matching = accounts  # fall back to any connected account
-        if not matching:
             raise RuntimeError(
                 "No GHL social accounts connected. Go to GHL → Social Planner → Accounts "
                 "and connect LinkedIn/Instagram/etc, or set GHL_SOCIAL_ACCOUNT_IDS."
@@ -248,10 +246,10 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
     if user_id:
         payload["userId"] = user_id
 
-    # GHL Social Planner media — try multiple formats.
-    # GHL requires media as array of objects, not strings.
+    # GHL Social Planner media format.
+    # GHL expects media as array of objects with url + type fields.
     if media_urls:
-        payload["media"] = [{"url": u} for u in media_urls]
+        payload["media"] = [{"url": u, "type": "image/png"} for u in media_urls]
     else:
         payload["media"] = []
 

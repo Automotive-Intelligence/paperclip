@@ -4136,6 +4136,11 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
             }
 
             creative_piece = prep.get("piece", test_piece)
+            results["payload_debug"] = {
+                "platform": creative_piece.get("platform"),
+                "has_media_url": bool(creative_piece.get("media_url")),
+                "media_url": creative_piece.get("media_url", "")[:100],
+            }
             post_result = publish_content_to_ghl_social(creative_piece)
             results["test_post"] = {
                 "status": "ok",
