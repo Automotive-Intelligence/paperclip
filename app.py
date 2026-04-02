@@ -4136,22 +4136,53 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
             }
 
             creative_piece = prep.get("piece", test_piece)
-            # Get the account IDs that will be targeted
-            from tools.ghl import _get_ghl_social_accounts, _GHL_PLATFORM_MAP
-            debug_accounts = _get_ghl_social_accounts(location_id)
-            debug_target = _GHL_PLATFORM_MAP.get("facebook", "facebook")
-            debug_matching = [a for a in debug_accounts if a.get("platform") == debug_target]
-            results["payload_debug"] = {
-                "platform": creative_piece.get("platform"),
-                "has_media_url": bool(creative_piece.get("media_url")),
-                "media_url": creative_piece.get("media_url", "")[:100],
-                "target_account_ids": [a["id"] for a in debug_matching],
-                "all_account_platforms": [a.get("platform") for a in debug_accounts],
+            media_url = prep.get("media_url", "")
+
+            # Try raw GHL API call with different media formats to find what works
+            import requests as req
+            ghl_key = os.getenv("GHL_API_KEY", "").strip()
+            user_id = os.getenv("GHL_USER_ID", "").strip()
+            fb_account_id = "69836b2494123f7e79dac361_ZoxVB4ibMZZ2lZ5QpXep_1075138305672977_page"
+
+            media_formats_to_try = {
+                "format_1_url_string_array": [media_url] if media_url else [],
+                "format_2_object_url_only": [{"url": media_url}] if media_url else [],
+                "format_3_object_url_type": [{"url": media_url, "type": "image"}] if media_url else [],
+                "format_4_object_full": [{"url": media_url, "type": "image", "name": "post.png"}] if media_url else [],
+                "format_5_empty": [],
             }
-            post_result = publish_content_to_ghl_social(creative_piece)
+
+            results["media_format_tests"] = {}
+            for fmt_name, fmt_value in media_formats_to_try.items():
+                test_payload = {
+                    "accountIds": [fb_account_id],
+                    "userId": user_id,
+                    "summary": f"GHL media format test ({fmt_name}) — systems check.",
+                    "status": "draft",
+                    "type": "post",
+                    "media": fmt_value,
+                }
+                try:
+                    resp = req.post(
+                        f"https://services.leadconnectorhq.com/social-media-posting/{location_id}/posts",
+                        json=test_payload,
+                        headers={"Authorization": f"Bearer {ghl_key}", "Version": "2021-07-28", "Content-Type": "application/json"},
+                        timeout=15,
+                    )
+                    results["media_format_tests"][fmt_name] = {
+                        "status_code": resp.status_code,
+                        "body": resp.text[:300],
+                    }
+                    # If it worked, stop testing
+                    if resp.status_code in (200, 201):
+                        results["media_format_tests"][fmt_name]["winner"] = True
+                        break
+                except Exception as e:
+                    results["media_format_tests"][fmt_name] = {"error": str(e)}
+
             results["test_post"] = {
-                "status": "ok",
-                "result": post_result,
+                "status": "media_format_test",
+                "result": "See media_format_tests for results",
             }
         except Exception as e:
             results["test_post"] = {
