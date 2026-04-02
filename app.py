@@ -4136,10 +4136,17 @@ async def test_ghl_social(authorization: Optional[str] = Header(None)):
             }
 
             creative_piece = prep.get("piece", test_piece)
+            # Get the account IDs that will be targeted
+            from tools.ghl import _get_ghl_social_accounts, _GHL_PLATFORM_MAP
+            debug_accounts = _get_ghl_social_accounts(location_id)
+            debug_target = _GHL_PLATFORM_MAP.get("facebook", "facebook")
+            debug_matching = [a for a in debug_accounts if a.get("platform") == debug_target]
             results["payload_debug"] = {
                 "platform": creative_piece.get("platform"),
                 "has_media_url": bool(creative_piece.get("media_url")),
                 "media_url": creative_piece.get("media_url", "")[:100],
+                "target_account_ids": [a["id"] for a in debug_matching],
+                "all_account_platforms": [a.get("platform") for a in debug_accounts],
             }
             post_result = publish_content_to_ghl_social(creative_piece)
             results["test_post"] = {

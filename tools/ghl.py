@@ -241,17 +241,18 @@ def publish_content_to_ghl_social(content_item: dict) -> dict:
         "summary": post_text,
         "status": "published",
         "type": "post",
+        "media": [],
     }
 
     if user_id:
         payload["userId"] = user_id
 
-    # GHL Social Planner media format.
-    # GHL expects media as array of objects with url + type fields.
+    # GHL Social Planner media — pass URLs directly in the media array.
     if media_urls:
-        payload["media"] = [{"url": u, "type": "image/png"} for u in media_urls]
-    else:
-        payload["media"] = []
+        payload["media"] = media_urls
+
+    logging.info("[GHL] Social post payload: accountIds=%s, platform=%s, media_count=%d",
+                 account_ids, platform, len(media_urls))
 
     try:
         data = _ghl_request(
