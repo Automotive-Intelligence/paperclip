@@ -3,649 +3,1096 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paperclip — System Map</title>
+<title>Pit Wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0d0f14;
-    color: #e2e8f0;
-    min-height: 100vh;
-    padding: 32px 24px 64px;
+  :root {
+    --bg: #070b12;
+    --panel: #0f1723;
+    --panel-2: #111d2b;
+    --line: #1f2c3d;
+    --ink: #e2ecff;
+    --muted: #85a0be;
+    --redline: #ff4b31;
+    --greenline: #37d67a;
+    --amber: #ffb020;
+    --blue: #4aa8ff;
   }
 
-  /* ── Header ──────────────────────────────────────────── */
+  body {
+    font-family: 'Rajdhani', sans-serif;
+    background:
+      radial-gradient(1100px 520px at 8% -10%, rgba(255, 75, 49, 0.18), transparent 65%),
+      radial-gradient(900px 460px at 92% 0%, rgba(74, 168, 255, 0.12), transparent 65%),
+      linear-gradient(180deg, #070b12 0%, #05080e 100%);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 30px 20px 64px;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap {
+    max-width: 1220px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
   .header {
     text-align: center;
-    margin-bottom: 48px;
+    margin-bottom: 26px;
   }
+
   .header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-    color: #fff;
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(28px, 4vw, 44px);
+    letter-spacing: 1.2px;
+    color: #ffffff;
   }
+
   .header p {
-    margin-top: 6px;
-    font-size: 14px;
-    color: #64748b;
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 18px;
   }
+
   .live-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    background: #052e16;
-    border: 1px solid #166534;
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 12px;
-    color: #4ade80;
-    margin-top: 12px;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 4px 14px;
+    border-radius: 999px;
+    border: 1px solid #204831;
+    background: rgba(8, 37, 23, 0.85);
+    color: #76e8ad;
+    font-size: 14px;
+    font-weight: 600;
+    max-width: 100%;
+    white-space: normal;
+    line-height: 1.35;
   }
+
   .live-dot {
-    width: 7px; height: 7px;
-    background: #4ade80;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
+    background: #49f29d;
     animation: pulse 1.8s infinite;
   }
+
   @keyframes pulse {
-    0%,100% { opacity: 1; }
-    50%      { opacity: 0.3; }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
 
-  /* ── Section labels ──────────────────────────────────── */
   .section-label {
-    text-align: center;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1.5px;
+    margin: 24px 0 12px;
     text-transform: uppercase;
-    color: #475569;
-    margin-bottom: 16px;
+    letter-spacing: 1.4px;
+    font-size: 12px;
+    color: #6f87a2;
+    text-align: center;
+    font-weight: 700;
   }
 
-  /* ── Businesses row ──────────────────────────────────── */
+  .hint {
+    text-align: center;
+    color: #90a8c4;
+    font-size: 15px;
+    margin-bottom: 14px;
+  }
+
   .businesses {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    max-width: 1100px;
-    margin: 0 auto 12px;
+    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 18px;
   }
 
   .business-card {
+    background: linear-gradient(150deg, #111c2b 0%, #0c1521 100%);
+    border: 1px solid var(--line);
     border-radius: 16px;
-    padding: 20px;
-    position: relative;
-    overflow: hidden;
-  }
-  .business-card::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 16px;
-    padding: 1px;
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
+    padding: 16px;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
   }
 
-  .biz-aiphoneguy { background: linear-gradient(135deg, #1e1b4b 0%, #0f0f1a 100%); }
-  .biz-aiphoneguy::before { background: linear-gradient(135deg, #6366f1, #1e1b4b); }
+  .business-card:hover {
+    transform: translateY(-2px);
+    border-color: #335071;
+  }
 
-  .biz-autointelligence { background: linear-gradient(135deg, #1a2820 0%, #0f1810 100%); }
-  .biz-autointelligence::before { background: linear-gradient(135deg, #22c55e, #1a2820); }
-
-  .biz-callingdigital { background: linear-gradient(135deg, #1c1917 0%, #0f0d0c 100%); }
-  .biz-callingdigital::before { background: linear-gradient(135deg, #f97316, #1c1917); }
+  .business-card.active {
+    border-color: #6fb2ff;
+    box-shadow: 0 0 0 2px rgba(111, 178, 255, 0.2) inset;
+  }
 
   .biz-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
+
   .biz-icon {
-    width: 36px; height: 36px;
-    border-radius: 10px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
+    font-size: 17px;
+    background: rgba(255, 255, 255, 0.08);
   }
-  .icon-aiphoneguy    { background: rgba(99,102,241,0.25); }
-  .icon-autointelligence { background: rgba(34,197,94,0.2); }
-  .icon-callingdigital   { background: rgba(249,115,22,0.2); }
 
   .biz-name {
-    font-size: 14px;
+    font-size: 18px;
     font-weight: 700;
-    color: #fff;
-  }
-  .biz-crm {
-    font-size: 11px;
-    color: #64748b;
-    margin-top: 1px;
+    color: #ffffff;
   }
 
-  .agent-list { display: flex; flex-direction: column; gap: 6px; }
+  .biz-crm {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .agent-list {
+    display: grid;
+    gap: 8px;
+  }
 
   .agent-chip {
+    width: 100%;
+    text-align: left;
     display: flex;
     align-items: center;
     gap: 8px;
+    border-radius: 10px;
+    border: 1px solid #243246;
+    background: rgba(255, 255, 255, 0.03);
     padding: 8px 10px;
-    border-radius: 8px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
+    color: inherit;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
   }
+
+  .agent-chip:hover {
+    border-color: #3d5574;
+  }
+
+  .agent-chip.active {
+    border-color: #ff785e;
+    background: rgba(255, 120, 94, 0.12);
+  }
+
   .agent-avatar {
-    width: 26px; height: 26px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
     flex-shrink: 0;
   }
-  .av-indigo { background: rgba(99,102,241,0.3); color: #a5b4fc; }
-  .av-green  { background: rgba(34,197,94,0.25); color: #86efac; }
-  .av-orange { background: rgba(249,115,22,0.25); color: #fdba74; }
 
-  .agent-info { flex: 1; min-width: 0; }
-  .agent-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: #e2e8f0;
+  .agent-info {
+    min-width: 0;
+    flex: 1;
   }
+
+  .agent-name {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
   .agent-role {
-    font-size: 10px;
-    color: #64748b;
+    font-size: 12px;
+    color: var(--muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  /* ── Arrow connector ─────────────────────────────────── */
+  .pit-console {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 16px;
+    margin: 8px 0 16px;
+  }
+
+  .console-card {
+    background: linear-gradient(160deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 16px;
+  }
+
+  .console-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 19px;
+    letter-spacing: 0.4px;
+    margin-bottom: 8px;
+  }
+
+  .meta-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .pill {
+    border-radius: 999px;
+    border: 1px solid #2a3c53;
+    padding: 3px 10px;
+    font-size: 12px;
+    color: #9fb8d4;
+    font-weight: 600;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .kpi {
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid #26384f;
+    border-radius: 10px;
+    padding: 9px;
+  }
+
+  .kpi-label {
+    font-size: 11px;
+    color: #7f9ab9;
+    text-transform: uppercase;
+    letter-spacing: 0.9px;
+    margin-bottom: 2px;
+  }
+
+  .kpi-value {
+    font-size: 19px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .block-title {
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 12px;
+    color: #7a94b2;
+    margin: 8px 0 6px;
+    font-weight: 700;
+  }
+
+  .list {
+    list-style: none;
+    display: grid;
+    gap: 6px;
+  }
+
+  .list li {
+    border: 1px solid #243548;
+    background: rgba(0, 0, 0, 0.16);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    color: #d8e5f6;
+    overflow-wrap: anywhere;
+  }
+
+  .list li.warn {
+    border-color: #5e3f1e;
+    background: rgba(97, 59, 22, 0.22);
+  }
+
+  .list li.danger {
+    border-color: #66302d;
+    background: rgba(106, 41, 37, 0.22);
+  }
+
   .arrow-row {
     display: flex;
-    justify-content: center;
     align-items: center;
     gap: 0;
-    padding: 8px 0;
-    max-width: 1100px;
-    margin: 0 auto;
+    margin: 10px 0;
   }
+
   .arrow-line {
     flex: 1;
     height: 2px;
-    background: linear-gradient(90deg, transparent, #334155, transparent);
+    background: linear-gradient(90deg, transparent, #2b3c51, transparent);
   }
+
   .arrow-label {
-    font-size: 11px;
-    color: #475569;
     padding: 4px 12px;
-    background: #161b22;
-    border: 1px solid #1e293b;
-    border-radius: 20px;
-    white-space: nowrap;
-  }
-
-  /* ── Pipeline row ────────────────────────────────────── */
-  .pipeline {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    max-width: 1100px;
-    margin: 0 auto 12px;
-  }
-
-  .pipe-card {
-    background: #161b22;
-    border: 1px solid #1e293b;
-    border-radius: 14px;
-    padding: 18px 16px;
-    text-align: center;
-    position: relative;
-  }
-  .pipe-card.highlight {
-    border-color: #334155;
-  }
-
-  .pipe-icon {
-    font-size: 26px;
-    margin-bottom: 10px;
-  }
-  .pipe-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #cbd5e1;
-    margin-bottom: 6px;
-  }
-  .pipe-desc {
-    font-size: 11px;
-    color: #475569;
-    line-height: 1.5;
-  }
-
-  .pipe-badge {
-    display: inline-flex;
-    gap: 4px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  .badge {
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-weight: 600;
-  }
-  .badge-auto   { background: #052e16; color: #4ade80; border: 1px solid #166534; }
-  .badge-queue  { background: #1c1917; color: #fb923c; border: 1px solid #431407; }
-  .badge-escalate { background: #2d1515; color: #f87171; border: 1px solid #7f1d1d; }
-  .badge-log    { background: #111827; color: #94a3b8; border: 1px solid #1e293b; }
-  .badge-email  { background: #0c1a2e; color: #60a5fa; border: 1px solid #1e3a5f; }
-  .badge-crm    { background: #1a1040; color: #a78bfa; border: 1px solid #2d1b69; }
-  .badge-sms    { background: #162020; color: #34d399; border: 1px solid #064e3b; }
-
-  /* ── Channels row ────────────────────────────────────── */
-  .channels {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    max-width: 1100px;
-    margin: 0 auto 12px;
-  }
-
-  .channel-card {
-    background: #0d1117;
-    border: 1px solid #1e293b;
-    border-radius: 12px;
-    padding: 14px 12px;
-    text-align: center;
-  }
-  .channel-icon { font-size: 22px; margin-bottom: 6px; }
-  .channel-name {
+    border-radius: 999px;
+    border: 1px solid #22344b;
+    background: #0f1622;
     font-size: 12px;
-    font-weight: 700;
-    color: #93c5fd;
-  }
-  .channel-dest {
-    font-size: 10px;
-    color: #475569;
-    margin-top: 3px;
-  }
-  .status-dot {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    margin-right: 4px;
-  }
-  .dot-live { background: #4ade80; }
-  .dot-soon { background: #f59e0b; }
-
-  /* ── Stats footer ────────────────────────────────────── */
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    max-width: 1100px;
-    margin: 0 auto;
-  }
-  .stat-card {
-    background: #0d1117;
-    border: 1px solid #1e293b;
-    border-radius: 12px;
-    padding: 16px;
+    color: #85a0be;
     text-align: center;
   }
-  .stat-value {
-    font-size: 28px;
-    font-weight: 800;
-    color: #fff;
-    line-height: 1;
-    margin-bottom: 6px;
-  }
-  .stat-label {
-    font-size: 11px;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .stat-green  { color: #4ade80; }
-  .stat-indigo { color: #818cf8; }
-  .stat-orange { color: #fb923c; }
-  .stat-blue   { color: #60a5fa; }
 
-  /* ── Risk tier legend ────────────────────────────────── */
   .risk-legend {
-    max-width: 1100px;
-    margin: 0 auto 12px;
-    background: #0d1117;
-    border: 1px solid #1e293b;
+    background: #0d141f;
+    border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 14px 20px;
+    padding: 12px 16px;
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
     flex-wrap: wrap;
+    margin-bottom: 12px;
   }
+
   .risk-legend-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: #475569;
     text-transform: uppercase;
     letter-spacing: 1px;
-    flex-shrink: 0;
+    color: #7089a3;
+    font-size: 12px;
+    font-weight: 700;
   }
+
   .risk-item {
+    font-size: 13px;
+    color: #9ab1c9;
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    flex-wrap: wrap;
   }
-  .risk-dot {
-    width: 10px; height: 10px;
+
+  .risk-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .risk-low { background: var(--greenline); }
+  .risk-medium { background: var(--amber); }
+  .risk-high { background: #ef6767; }
+
+  .pipeline, .channels, .stats {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .pipeline { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .channels { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .pipe-card, .channel-card, .stat-card {
+    background: #0d141f;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 13px;
+  }
+
+  .pipe-card { text-align: center; }
+
+  .pipe-icon { font-size: 24px; margin-bottom: 8px; }
+  .pipe-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .pipe-desc { font-size: 12px; color: #8ea8c3; line-height: 1.35; }
+
+  .pipe-badge {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .badge {
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    border: 1px solid;
+  }
+
+  .badge-auto { border-color: #1f5f3e; color: #8cf8b9; background: rgba(12, 61, 36, 0.4); }
+  .badge-queue { border-color: #6d4a1d; color: #ffd18b; background: rgba(94, 64, 23, 0.35); }
+  .badge-escalate { border-color: #71403d; color: #ffb4a9; background: rgba(91, 41, 37, 0.36); }
+  .badge-log { border-color: #31465f; color: #aac6e6; background: rgba(23, 35, 48, 0.6); }
+
+  .channel-card { text-align: center; }
+  .channel-icon { font-size: 22px; margin-bottom: 4px; }
+  .channel-name { font-size: 14px; font-weight: 700; }
+  .channel-dest { font-size: 12px; color: #86a2bf; }
+
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    flex-shrink: 0;
+    margin-right: 5px;
   }
-  .risk-low    { background: #4ade80; }
-  .risk-medium { background: #f59e0b; }
-  .risk-high   { background: #f87171; }
+
+  .dot-live { background: var(--greenline); }
+  .dot-soon { background: var(--amber); }
+
+  .stat-card { text-align: center; }
+
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 31px;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 11px;
+    color: #7995b1;
+  }
+
+  .stat-green { color: #6bf2a9; }
+  .stat-indigo { color: #8eb4ff; }
+  .stat-orange { color: #ffc36c; }
+  .stat-blue { color: #74c5ff; }
 
   .divider {
-    max-width: 1100px;
-    margin: 0 auto 32px;
-    border: none;
-    border-top: 1px solid #1e293b;
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 20px 0;
+  }
+
+  @media (max-width: 1050px) {
+    .businesses { grid-template-columns: 1fr; }
+    .pit-console { grid-template-columns: 1fr; }
+    .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .channels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 620px) {
+    body { padding: 18px 12px 40px; }
+    .header { margin-bottom: 20px; }
+    .header h1 { letter-spacing: 0.5px; }
+    .kpi-grid { grid-template-columns: 1fr; }
+    .pipeline, .channels, .stats { grid-template-columns: 1fr; }
+    .header p { font-size: 15px; }
+    .hint { font-size: 14px; }
+    .business-card, .console-card { padding: 13px; }
+    .live-badge {
+      width: 100%;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 12px;
+      font-size: 13px;
+    }
+    .agent-chip {
+      padding: 10px;
+      align-items: flex-start;
+      min-height: 44px;
+    }
+    .agent-role {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
+      line-height: 1.25;
+    }
+    .meta-row { gap: 6px; }
+    .pill {
+      font-size: 11px;
+      padding: 4px 8px;
+    }
+    .arrow-label {
+      border-radius: 10px;
+      font-size: 11px;
+      padding: 6px 10px;
+      max-width: 76%;
+    }
+  }
+
+  @media (max-width: 400px) {
+    body { padding: 14px 10px 32px; }
+    .section-label { font-size: 11px; }
+    .console-title { font-size: 17px; }
   }
 </style>
 </head>
 <body>
-
-<!-- ══ HEADER ══════════════════════════════════════════════════════ -->
-<div class="header">
-  <h1>Paperclip — System Map</h1>
-  <p>14 AI agents across 3 businesses, live on Railway</p>
-  <span class="live-badge">
-    <span class="live-dot"></span>
-    Production • paperclip-production-ba14.up.railway.app
-  </span>
-</div>
-
-<!-- ══ LAYER 1 — THE 3 BUSINESSES ══════════════════════════════════ -->
-<div class="section-label">Layer 1 — The 3 Businesses & Their Agents</div>
-<div class="businesses">
-
-  <!-- The AI Phone Guy -->
-  <div class="business-card biz-aiphoneguy">
-    <div class="biz-header">
-      <div class="biz-icon icon-aiphoneguy">📱</div>
-      <div>
-        <div class="biz-name">The AI Phone Guy</div>
-        <div class="biz-crm">CRM → GoHighLevel</div>
-      </div>
-    </div>
-    <div class="agent-list">
-      <div class="agent-chip">
-        <div class="agent-avatar av-indigo">JE</div>
-        <div class="agent-info">
-          <div class="agent-name">Jennifer</div>
-          <div class="agent-role">CEO</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-indigo">TY</div>
-        <div class="agent-info">
-          <div class="agent-name">Tyler</div>
-          <div class="agent-role">Head of Sales — Pipeline Predator</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-indigo">AL</div>
-        <div class="agent-info">
-          <div class="agent-name">Alex</div>
-          <div class="agent-role">Head of Marketing</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-indigo">ZO</div>
-        <div class="agent-info">
-          <div class="agent-name">Zoe</div>
-          <div class="agent-role">Head of Client Success</div>
-        </div>
-      </div>
-    </div>
+<div class="wrap">
+  <div class="header">
+    <h1>Pit Wall</h1>
+    <p>Click a business, then click a person for granular execution detail.</p>
+    <span class="live-badge">
+      <span class="live-dot"></span>
+      Production - paperclip-production-ba14.up.railway.app
+    </span>
   </div>
 
-  <!-- Automotive Intelligence -->
-  <div class="business-card biz-autointelligence">
-    <div class="biz-header">
-      <div class="biz-icon icon-autointelligence">🚗</div>
-      <div>
-        <div class="biz-name">Automotive Intelligence</div>
-        <div class="biz-crm">CRM → HubSpot</div>
-      </div>
-    </div>
-    <div class="agent-list">
-      <div class="agent-chip">
-        <div class="agent-avatar av-green">MM</div>
-        <div class="agent-info">
-          <div class="agent-name">Michael (Meta)</div>
-          <div class="agent-role">CEO</div>
+  <div class="section-label">Layer 1 - Team Grid</div>
+  <div class="hint">Business card sets the lane. Agent chip sets the active brief.</div>
+
+  <div class="businesses">
+    <section class="business-card" data-business="aiphoneguy">
+      <div class="biz-header">
+        <div class="biz-icon">📱</div>
+        <div>
+          <div class="biz-name">The AI Phone Guy</div>
+          <div class="biz-crm">CRM - GoHighLevel</div>
         </div>
       </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-green">CH</div>
-        <div class="agent-info">
-          <div class="agent-name">Chase</div>
-          <div class="agent-role">Chief Revenue Officer</div>
+      <div class="agent-list">
+        <button class="agent-chip" type="button" data-business="aiphoneguy" data-agent="alex"><span class="agent-avatar">AL</span><span class="agent-info"><span class="agent-name">Alex</span><span class="agent-role">CEO</span></span></button>
+        <button class="agent-chip" type="button" data-business="aiphoneguy" data-agent="tyler"><span class="agent-avatar">TY</span><span class="agent-info"><span class="agent-name">Tyler</span><span class="agent-role">Head of Sales</span></span></button>
+        <button class="agent-chip" type="button" data-business="aiphoneguy" data-agent="zoe"><span class="agent-avatar">ZO</span><span class="agent-info"><span class="agent-name">Zoe</span><span class="agent-role">Head of Marketing</span></span></button>
+        <button class="agent-chip" type="button" data-business="aiphoneguy" data-agent="jennifer"><span class="agent-avatar">JE</span><span class="agent-info"><span class="agent-name">Jennifer</span><span class="agent-role">Head of Client Success</span></span></button>
+      </div>
+    </section>
+
+    <section class="business-card" data-business="autointelligence">
+      <div class="biz-header">
+        <div class="biz-icon">🚗</div>
+        <div>
+          <div class="biz-name">Automotive Intelligence</div>
+          <div class="biz-crm">CRM - HubSpot</div>
         </div>
       </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-green">AT</div>
-        <div class="agent-info">
-          <div class="agent-name">Atlas</div>
-          <div class="agent-role">Head of Marketing</div>
+      <div class="agent-list">
+        <button class="agent-chip" type="button" data-business="autointelligence" data-agent="michael_meta"><span class="agent-avatar">MM</span><span class="agent-info"><span class="agent-name">Michael (Meta)</span><span class="agent-role">CEO</span></span></button>
+        <button class="agent-chip" type="button" data-business="autointelligence" data-agent="chase"><span class="agent-avatar">CH</span><span class="agent-info"><span class="agent-name">Chase</span><span class="agent-role">CRO</span></span></button>
+        <button class="agent-chip" type="button" data-business="autointelligence" data-agent="atlas"><span class="agent-avatar">AT</span><span class="agent-info"><span class="agent-name">Atlas</span><span class="agent-role">Head of Marketing</span></span></button>
+        <button class="agent-chip" type="button" data-business="autointelligence" data-agent="ryan_data"><span class="agent-avatar">RY</span><span class="agent-info"><span class="agent-name">Ryan</span><span class="agent-role">Research Analyst</span></span></button>
+        <button class="agent-chip" type="button" data-business="autointelligence" data-agent="phoenix"><span class="agent-avatar">PH</span><span class="agent-info"><span class="agent-name">Phoenix</span><span class="agent-role">Implementation Lead</span></span></button>
+      </div>
+    </section>
+
+    <section class="business-card" data-business="callingdigital">
+      <div class="biz-header">
+        <div class="biz-icon">📡</div>
+        <div>
+          <div class="biz-name">Calling Digital</div>
+          <div class="biz-crm">CRM - Attio</div>
         </div>
       </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-green">RY</div>
-        <div class="agent-info">
-          <div class="agent-name">Ryan</div>
-          <div class="agent-role">Research Analyst</div>
-        </div>
+      <div class="agent-list">
+        <button class="agent-chip" type="button" data-business="callingdigital" data-agent="dek"><span class="agent-avatar">DK</span><span class="agent-info"><span class="agent-name">Dek</span><span class="agent-role">CEO</span></span></button>
+        <button class="agent-chip" type="button" data-business="callingdigital" data-agent="marcus"><span class="agent-avatar">MA</span><span class="agent-info"><span class="agent-name">Marcus</span><span class="agent-role">Head of Sales and Biz Dev</span></span></button>
+        <button class="agent-chip" type="button" data-business="callingdigital" data-agent="carlos"><span class="agent-avatar">CA</span><span class="agent-info"><span class="agent-name">Carlos</span><span class="agent-role">Head of Content and Creative</span></span></button>
+        <button class="agent-chip" type="button" data-business="callingdigital" data-agent="sofia"><span class="agent-avatar">SO</span><span class="agent-info"><span class="agent-name">Sofia</span><span class="agent-role">Head of Client Success</span></span></button>
+        <button class="agent-chip" type="button" data-business="callingdigital" data-agent="nova"><span class="agent-avatar">NO</span><span class="agent-info"><span class="agent-name">Nova</span><span class="agent-role">Implementation Director</span></span></button>
       </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-green">PH</div>
-        <div class="agent-info">
-          <div class="agent-name">Phoenix</div>
-          <div class="agent-role">Head of Implementation</div>
-        </div>
-      </div>
-    </div>
+    </section>
   </div>
 
-  <!-- Calling Digital -->
-  <div class="business-card biz-callingdigital">
-    <div class="biz-header">
-      <div class="biz-icon icon-callingdigital">📡</div>
-      <div>
-        <div class="biz-name">Calling Digital</div>
-        <div class="biz-crm">CRM → Attio</div>
-      </div>
+  <section class="pit-console">
+    <article class="console-card">
+      <div class="console-title" id="businessTitle">Business Brief</div>
+      <div class="meta-row" id="businessMeta"></div>
+      <div class="kpi-grid" id="businessKpis"></div>
+      <div class="block-title">Top Priorities</div>
+      <ul class="list" id="businessPriorities"></ul>
+      <div class="block-title">Current Bottlenecks</div>
+      <ul class="list" id="businessBlockers"></ul>
+    </article>
+
+    <article class="console-card">
+      <div class="console-title" id="agentTitle">Agent Brief</div>
+      <div class="meta-row" id="agentMeta"></div>
+      <div class="block-title">Today Focus</div>
+      <ul class="list" id="agentFocus"></ul>
+      <div class="block-title">Immediate Next Actions</div>
+      <ul class="list" id="agentActions"></ul>
+      <div class="block-title">Risk Flags</div>
+      <ul class="list" id="agentRisks"></ul>
+    </article>
+  </section>
+
+  <div class="arrow-row">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">Every output is scored, approved, and dispatched</div>
+    <div class="arrow-line"></div>
+  </div>
+
+  <div class="section-label">Layer 2 - Activation Pipeline</div>
+
+  <div class="risk-legend">
+    <span class="risk-legend-title">Risk tiers</span>
+    <div class="risk-item"><span class="risk-dot risk-low"></span>Low + high confidence -> auto approved</div>
+    <div class="risk-item"><span class="risk-dot risk-medium"></span>Medium -> pending human approval</div>
+    <div class="risk-item"><span class="risk-dot risk-high"></span>High -> escalated for explicit sign-off</div>
+  </div>
+
+  <div class="pipeline">
+    <div class="pipe-card">
+      <div class="pipe-icon">📄</div>
+      <div class="pipe-title">1 - Artifact Created</div>
+      <div class="pipe-desc">Every run becomes a structured artifact with confidence, audience, and intent.</div>
+      <div class="pipe-badge"><span class="badge badge-log">email</span><span class="badge badge-log">report</span><span class="badge badge-log">crm_update</span></div>
     </div>
-    <div class="agent-list">
-      <div class="agent-chip">
-        <div class="agent-avatar av-orange">DK</div>
-        <div class="agent-info">
-          <div class="agent-name">Dek</div>
-          <div class="agent-role">CEO</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-orange">MA</div>
-        <div class="agent-info">
-          <div class="agent-name">Marcus</div>
-          <div class="agent-role">Head of Sales & Biz Dev</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-orange">CA</div>
-        <div class="agent-info">
-          <div class="agent-name">Carlos</div>
-          <div class="agent-role">Head of Content & Creative</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-orange">SO</div>
-        <div class="agent-info">
-          <div class="agent-name">Sofia</div>
-          <div class="agent-role">Head of Client Success</div>
-        </div>
-      </div>
-      <div class="agent-chip">
-        <div class="agent-avatar av-orange">NO</div>
-        <div class="agent-info">
-          <div class="agent-name">Nova</div>
-          <div class="agent-role">AI Implementation Director</div>
-        </div>
-      </div>
+    <div class="pipe-card">
+      <div class="pipe-icon">⚖️</div>
+      <div class="pipe-title">2 - Risk and Moral Gate</div>
+      <div class="pipe-desc">Rules classify risk and route the artifact toward auto, queue, or escalation.</div>
+      <div class="pipe-badge"><span class="badge badge-auto">auto</span><span class="badge badge-queue">queue</span><span class="badge badge-escalate">escalate</span></div>
+    </div>
+    <div class="pipe-card">
+      <div class="pipe-icon">🧑‍💼</div>
+      <div class="pipe-title">3 - Approval Queue</div>
+      <div class="pipe-desc">Human reviewer can approve in one click or reject with reason.</div>
+      <div class="pipe-badge"><span class="badge badge-queue">pending</span><span class="badge badge-escalate">needs review</span></div>
+    </div>
+    <div class="pipe-card">
+      <div class="pipe-icon">🚀</div>
+      <div class="pipe-title">4 - Dispatch and Receipt</div>
+      <div class="pipe-desc">Approved artifacts go to channel and get delivery receipt for audit trail.</div>
+      <div class="pipe-badge"><span class="badge badge-auto">delivered</span><span class="badge badge-escalate">failed</span></div>
     </div>
   </div>
 
-</div><!-- /businesses -->
-
-<!-- arrow -->
-<div class="arrow-row">
-  <div class="arrow-line"></div>
-  <div class="arrow-label">↓ Every agent output becomes an Artifact</div>
-  <div class="arrow-line"></div>
-</div>
-
-<!-- ══ LAYER 2 — THE ACTIVATION PIPELINE ════════════════════════════ -->
-<div class="section-label">Layer 2 — Activation Pipeline (What happens to every agent output)</div>
-
-<div class="risk-legend">
-  <span class="risk-legend-title">Risk Tiers</span>
-  <div class="risk-item"><span class="risk-dot risk-low"></span> Low + high confidence → auto-approved & dispatched immediately</div>
-  <div class="risk-item"><span class="risk-dot risk-medium"></span> Medium (prospect-facing, SMS) → waits in approval queue for human review</div>
-  <div class="risk-item"><span class="risk-dot risk-high"></span> High (ads, cold close, &lt;50% confidence) → escalated, requires explicit sign-off</div>
-</div>
-
-<div class="pipeline">
-
-  <div class="pipe-card highlight">
-    <div class="pipe-icon">📄</div>
-    <div class="pipe-title">1 — Artifact Created</div>
-    <div class="pipe-desc">Agent output is wrapped in a standard contract: type, audience, intent, confidence score, and content.</div>
-    <div class="pipe-badge">
-      <span class="badge badge-log">email</span>
-      <span class="badge badge-log">note</span>
-      <span class="badge badge-log">crm_update</span>
-      <span class="badge badge-log">report</span>
-      <span class="badge badge-log">ad</span>
-      <span class="badge badge-log">sms</span>
-    </div>
+  <div class="arrow-row">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">Live channel routing</div>
+    <div class="arrow-line"></div>
   </div>
 
-  <div class="pipe-card highlight">
-    <div class="pipe-icon">⚖️</div>
-    <div class="pipe-title">2 — Moral Gate & Risk Check</div>
-    <div class="pipe-desc">Checks AIBOS principles. Derives risk tier from content type, audience, and confidence score.</div>
-    <div class="pipe-badge">
-      <span class="badge badge-auto">auto-approved</span>
-      <span class="badge badge-queue">pending</span>
-      <span class="badge badge-escalate">escalated</span>
-    </div>
+  <div class="section-label">Layer 3 - Output Channels</div>
+  <div class="channels">
+    <div class="channel-card"><div class="channel-icon">📧</div><div class="channel-name">Email</div><div class="channel-dest"><span class="status-dot dot-live"></span>Live via GHL and HubSpot</div></div>
+    <div class="channel-card"><div class="channel-icon">🗂️</div><div class="channel-name">CRM Update</div><div class="channel-dest"><span class="status-dot dot-live"></span>Live via GHL, HubSpot, Attio</div></div>
+    <div class="channel-card"><div class="channel-icon">💬</div><div class="channel-name">SMS</div><div class="channel-dest"><span class="status-dot dot-soon"></span>Adapter ready, credentials required</div></div>
+    <div class="channel-card"><div class="channel-icon">📊</div><div class="channel-name">Internal Log</div><div class="channel-dest"><span class="status-dot dot-live"></span>Live notes, reports, audits</div></div>
   </div>
 
-  <div class="pipe-card highlight">
-    <div class="pipe-icon">🧑‍💼</div>
-    <div class="pipe-title">3 — Approval Queue</div>
-    <div class="pipe-desc">Pending & escalated artifacts wait here. You can approve or reject each one via the API dashboard.</div>
-    <div class="pipe-badge">
-      <span class="badge badge-queue">1-click approve</span>
-      <span class="badge badge-escalate">reject + reason</span>
-    </div>
-  </div>
+  <hr class="divider">
 
-  <div class="pipe-card highlight">
-    <div class="pipe-icon">🚀</div>
-    <div class="pipe-title">4 — Dispatch & Receipt</div>
-    <div class="pipe-desc">Approved artifacts are sent to the right channel. Every send produces a timestamped delivery receipt in the database.</div>
-    <div class="pipe-badge">
-      <span class="badge badge-auto">delivered</span>
-      <span class="badge badge-escalate">failed</span>
-    </div>
-  </div>
-
-</div><!-- /pipeline -->
-
-<!-- arrow -->
-<div class="arrow-row">
-  <div class="arrow-line"></div>
-  <div class="arrow-label">↓ Dispatched to the right channel</div>
-  <div class="arrow-line"></div>
-</div>
-
-<!-- ══ LAYER 3 — OUTPUT CHANNELS ════════════════════════════════════ -->
-<div class="section-label">Layer 3 — Output Channels</div>
-<div class="channels">
-
-  <div class="channel-card">
-    <div class="channel-icon">📧</div>
-    <div class="channel-name">Email</div>
-    <div class="channel-dest"><span class="status-dot dot-live"></span>Live — via GHL / HubSpot</div>
-  </div>
-
-  <div class="channel-card">
-    <div class="channel-icon">🗂️</div>
-    <div class="channel-name">CRM Update</div>
-    <div class="channel-dest"><span class="status-dot dot-live"></span>Live — GHL / HubSpot / Attio</div>
-  </div>
-
-  <div class="channel-card">
-    <div class="channel-icon">💬</div>
-    <div class="channel-name">SMS</div>
-    <div class="channel-dest"><span class="status-dot dot-soon"></span>Adapter ready, creds needed</div>
-  </div>
-
-  <div class="channel-card">
-    <div class="channel-icon">📊</div>
-    <div class="channel-name">Internal Log</div>
-    <div class="channel-dest"><span class="status-dot dot-live"></span>Live — notes, reports, audits</div>
-  </div>
-
-</div>
-
-<br>
-<hr class="divider">
-
-<!-- ══ LAYER 4 — STATS ════════════════════════════════════════════════ -->
-<div class="section-label">Live Production Stats</div>
-<div class="stats">
-  <div class="stat-card">
-    <div class="stat-value stat-green">14</div>
-    <div class="stat-label">AI Agents deployed</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value stat-indigo">28</div>
-    <div class="stat-label">Scheduled jobs running</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value stat-orange">3</div>
-    <div class="stat-label">CRM providers connected</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value stat-blue">30</div>
-    <div class="stat-label">Tests passing ✓</div>
+  <div class="section-label">Live Production Stats</div>
+  <div class="stats">
+    <div class="stat-card"><div class="stat-value stat-green">14</div><div class="stat-label">Agents Deployed</div></div>
+    <div class="stat-card"><div class="stat-value stat-indigo">28</div><div class="stat-label">Scheduled Jobs</div></div>
+    <div class="stat-card"><div class="stat-value stat-orange">3</div><div class="stat-label">CRM Providers</div></div>
+    <div class="stat-card"><div class="stat-value stat-blue">30</div><div class="stat-label">Tests Passing</div></div>
   </div>
 </div>
 
+<script>
+  const PIT_DATA = {
+    aiphoneguy: {
+      name: 'The AI Phone Guy',
+      crm: 'GoHighLevel',
+      stage: 'Scale outbound + referrals',
+      sprint: 'Close warm pipeline in 14 days',
+      kpis: {
+        'Open Opps': '43',
+        'Reply Rate': '11.8%',
+        'Win Rate': '24%'
+      },
+      priorities: [
+        'Convert open callbacks into booked demos inside 48h SLA.',
+        'Tighten lead scoring to prioritize service-business verticals.',
+        'Maintain daily pipeline hygiene for stale opportunity recovery.'
+      ],
+      blockers: [
+        'SMS follow-up channel blocked by missing provider credentials.',
+        'Inconsistent note quality from manually-added contacts.'
+      ],
+      agents: {
+        jennifer: {
+          name: 'Jennifer',
+          role: 'Head of Client Success',
+          lane: 'Retention and Expansion',
+          status: 'Green',
+          lastRun: 'Today 09:20 CST',
+          focus: [
+            'Validate weekly revenue pacing against forecast.',
+            'Approve escalated outbound offers before dispatch.'
+          ],
+          actions: [
+            'Review top-10 deal risk report.',
+            'Approve or reject escalated artifacts in queue.'
+          ],
+          risks: ['None currently above threshold.']
+        },
+        tyler: {
+          name: 'Tyler',
+          role: 'Head of Sales',
+          lane: 'Pipeline',
+          status: 'Yellow',
+          lastRun: 'Today 09:32 CST',
+          focus: [
+            'Drive immediate follow-up on hot inbound and warm callbacks.',
+            'Rework stalled stage-2 opportunities with tailored offers.'
+          ],
+          actions: [
+            'Run sales scope now and process pending approvals.',
+            'Push new lead and note enrichment into CRM by noon.',
+            'Create 5 personalized close plans for high-value deals.'
+          ],
+          risks: ['Reply latency above target in one segment.']
+        },
+        alex: {
+          name: 'Alex',
+          role: 'CEO',
+          lane: 'Executive Control',
+          status: 'Green',
+          lastRun: 'Today 08:55 CST',
+          focus: [
+            'Ship campaign variants for pipeline-fill audience.',
+            'Refresh creative themes aligned to objection clusters.'
+          ],
+          actions: [
+            'Finalize two ad variants for owner-operator persona.',
+            'Sync UTM naming standard with CRM attribution fields.'
+          ],
+          risks: ['Awaiting final CTA approval for one variant.']
+        },
+        zoe: {
+          name: 'Zoe',
+          role: 'Head of Marketing',
+          lane: 'Demand Engine',
+          status: 'Green',
+          lastRun: 'Today 08:40 CST',
+          focus: [
+            'Reduce early churn in first 30 days.',
+            'Surface expansion candidates with high usage signals.'
+          ],
+          actions: [
+            'Trigger rescue playbook for at-risk accounts.',
+            'Hand off 3 expansion-ready accounts to sales.'
+          ],
+          risks: ['No major churn spikes detected this week.']
+        }
+      }
+    },
+    autointelligence: {
+      name: 'Automotive Intelligence',
+      crm: 'HubSpot',
+      stage: 'Expand dealer footprint',
+      sprint: 'Convert pilot dealers to annual plans',
+      kpis: {
+        'Pilot Dealers': '18',
+        'Close Cycle': '22d',
+        'NRR': '112%'
+      },
+      priorities: [
+        'Turn active pilots into annual contracts this month.',
+        'Increase operator buy-in from service-lane leadership.',
+        'Standardize implementation handoff checklist.'
+      ],
+      blockers: [
+        'Two pilot accounts pending procurement review.',
+        'Data sync lag from one dealer group legacy system.'
+      ],
+      agents: {
+        michael_meta: {
+          name: 'Michael (Meta)',
+          role: 'CEO',
+          lane: 'Strategic Direction',
+          status: 'Green',
+          lastRun: 'Today 09:05 CST',
+          focus: [
+            'Prioritize top-market dealer groups for enterprise push.',
+            'Align GTM narrative with measurable service revenue gains.'
+          ],
+          actions: [
+            'Review enterprise target list and assign owners.',
+            'Approve final enterprise case study messaging.'
+          ],
+          risks: ['None material this sprint.']
+        },
+        chase: {
+          name: 'Chase',
+          role: 'Chief Revenue Officer',
+          lane: 'Revenue Execution',
+          status: 'Yellow',
+          lastRun: 'Today 09:18 CST',
+          focus: [
+            'Lift pilot-to-paid conversion this sprint.',
+            'Accelerate late-stage deals blocked by legal review.'
+          ],
+          actions: [
+            'Run legal unblock sequence on two high-value accounts.',
+            'Reprice annual options for faster approval path.'
+          ],
+          risks: ['Contract cycle timing is slightly behind plan.']
+        },
+        atlas: {
+          name: 'Atlas',
+          role: 'Head of Marketing',
+          lane: 'Dealer Demand',
+          status: 'Green',
+          lastRun: 'Today 08:48 CST',
+          focus: [
+            'Publish vertical proof points for dealer principals.',
+            'Improve traffic quality from automotive intent keywords.'
+          ],
+          actions: [
+            'Ship two dealer-focused LP variants.',
+            'Sync CRM lifecycle stages with ad platform audiences.'
+          ],
+          risks: ['One campaign has low CTR and needs rework.']
+        },
+        ryan_data: {
+          name: 'Ryan',
+          role: 'Research Analyst',
+          lane: 'Intelligence',
+          status: 'Green',
+          lastRun: 'Today 08:31 CST',
+          focus: [
+            'Rank dealer groups by upside and implementation fit.',
+            'Refresh battlecards with latest competitor moves.'
+          ],
+          actions: [
+            'Publish weekly target account scorecard.',
+            'Tag top 15 accounts for CRO review.'
+          ],
+          risks: ['No blocking data quality issues.']
+        },
+        phoenix: {
+          name: 'Phoenix',
+          role: 'Head of Implementation',
+          lane: 'Delivery and Activation',
+          status: 'Yellow',
+          lastRun: 'Today 09:00 CST',
+          focus: [
+            'Shorten go-live timeline for new pilot dealers.',
+            'Increase first-week feature adoption rates.'
+          ],
+          actions: [
+            'Resolve integration lag for dealer group B.',
+            'Push revised onboarding checklist to CS.'
+          ],
+          risks: ['One integration queue item is over SLA.']
+        }
+      }
+    },
+    callingdigital: {
+      name: 'Calling Digital',
+      crm: 'Attio',
+      stage: 'Scale content-led pipeline',
+      sprint: 'Increase qualified opportunities by 20%',
+      kpis: {
+        'Qualified Leads': '67',
+        'Outbound Seq': '12 live',
+        'MQL to SQL': '31%'
+      },
+      priorities: [
+        'Increase conversion from content engagement to booked calls.',
+        'Improve account-level personalization in outbound emails.',
+        'Tighten handoff from creative to sales within 24h.'
+      ],
+      blockers: [
+        'CRM permission scopes limit one automated write action.',
+        'High-volume content approvals create queue spikes.'
+      ],
+      agents: {
+        dek: {
+          name: 'Dek',
+          role: 'CEO',
+          lane: 'Operating Cadence',
+          status: 'Green',
+          lastRun: 'Today 09:10 CST',
+          focus: [
+            'Keep execution cadence across sales and content teams.',
+            'Remove bottlenecks in approval and routing paths.'
+          ],
+          actions: [
+            'Approve high-impact queue items first.',
+            'Reassign overflow tasks to protect SLA.'
+          ],
+          risks: ['No critical alerts currently.']
+        },
+        marcus: {
+          name: 'Marcus',
+          role: 'Head of Sales and Biz Dev',
+          lane: 'Deal Progression',
+          status: 'Yellow',
+          lastRun: 'Today 09:26 CST',
+          focus: [
+            'Convert inbound consult requests into qualified discovery.',
+            'Reduce stage-1 drop-off with stronger objection handling.'
+          ],
+          actions: [
+            'Run targeted follow-up sequence for stale stage-1 leads.',
+            'Prep custom ROI snapshots for top 5 opportunities.'
+          ],
+          risks: ['One segment below target response rate.']
+        },
+        carlos: {
+          name: 'Carlos',
+          role: 'Head of Content and Creative',
+          lane: 'Creative Throughput',
+          status: 'Yellow',
+          lastRun: 'Today 08:59 CST',
+          focus: [
+            'Ship conversion-first creative for priority industries.',
+            'Increase offer clarity in top-performing assets.'
+          ],
+          actions: [
+            'Publish three ad variations for legal vertical.',
+            'Rewrite two low-converting LP hero sections.'
+          ],
+          risks: ['Approval queue delay can impact launch timing.']
+        },
+        sofia: {
+          name: 'Sofia',
+          role: 'Head of Client Success',
+          lane: 'Retention and Outcomes',
+          status: 'Green',
+          lastRun: 'Today 08:42 CST',
+          focus: [
+            'Proactively reduce churn signals in month one accounts.',
+            'Create expansion path briefs for healthy customers.'
+          ],
+          actions: [
+            'Run at-risk account check-in workflow today.',
+            'Escalate low health scores to ops lead.'
+          ],
+          risks: ['No severe churn trend this week.']
+        },
+        nova: {
+          name: 'Nova',
+          role: 'AI Implementation Director',
+          lane: 'Systems and Integrations',
+          status: 'Red',
+          lastRun: 'Today 09:14 CST',
+          focus: [
+            'Fix under-scoped CRM permissions blocking automation.',
+            'Stabilize webhook retries for high-volume periods.'
+          ],
+          actions: [
+            'Audit Attio token scopes and refresh permissions.',
+            'Patch retry policy for intermittent webhook failures.',
+            'Validate post-fix writebacks in production sandbox.'
+          ],
+          risks: [
+            'Permission scope mismatch is a live blocker for one flow.',
+            'Retry backlog may delay non-critical syncs.'
+          ]
+        }
+      }
+    }
+  };
+
+  const businessCards = Array.from(document.querySelectorAll('.business-card'));
+  const agentChips = Array.from(document.querySelectorAll('.agent-chip'));
+
+  const businessTitle = document.getElementById('businessTitle');
+  const businessMeta = document.getElementById('businessMeta');
+  const businessKpis = document.getElementById('businessKpis');
+  const businessPriorities = document.getElementById('businessPriorities');
+  const businessBlockers = document.getElementById('businessBlockers');
+
+  const agentTitle = document.getElementById('agentTitle');
+  const agentMeta = document.getElementById('agentMeta');
+  const agentFocus = document.getElementById('agentFocus');
+  const agentActions = document.getElementById('agentActions');
+  const agentRisks = document.getElementById('agentRisks');
+
+  let selectedBusiness = 'aiphoneguy';
+  let selectedAgent = 'alex';
+
+  function markSelected() {
+    businessCards.forEach((card) => {
+      card.classList.toggle('active', card.dataset.business === selectedBusiness);
+    });
+
+    agentChips.forEach((chip) => {
+      const sameBusiness = chip.dataset.business === selectedBusiness;
+      const sameAgent = chip.dataset.agent === selectedAgent;
+      chip.classList.toggle('active', sameBusiness && sameAgent);
+    });
+  }
+
+  function renderBusiness() {
+    const business = PIT_DATA[selectedBusiness];
+
+    businessTitle.textContent = business.name + ' - Business Brief';
+    businessMeta.innerHTML = [
+      '<span class="pill">CRM: ' + business.crm + '</span>',
+      '<span class="pill">Stage: ' + business.stage + '</span>',
+      '<span class="pill">Sprint: ' + business.sprint + '</span>'
+    ].join('');
+
+    const kpiHtml = Object.entries(business.kpis)
+      .map(([label, value]) => '<div class="kpi"><div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>')
+      .join('');
+    businessKpis.innerHTML = kpiHtml;
+
+    businessPriorities.innerHTML = business.priorities
+      .map((item) => '<li>' + item + '</li>')
+      .join('');
+
+    businessBlockers.innerHTML = business.blockers
+      .map((item) => '<li class="warn">' + item + '</li>')
+      .join('');
+  }
+
+  function renderAgent() {
+    const business = PIT_DATA[selectedBusiness];
+    const agent = business.agents[selectedAgent];
+
+    agentTitle.textContent = agent.name + ' - Agent Brief';
+    agentMeta.innerHTML = [
+      '<span class="pill">Role: ' + agent.role + '</span>',
+      '<span class="pill">Lane: ' + agent.lane + '</span>',
+      '<span class="pill">Status: ' + agent.status + '</span>',
+      '<span class="pill">Last Run: ' + agent.lastRun + '</span>'
+    ].join('');
+
+    agentFocus.innerHTML = agent.focus.map((item) => '<li>' + item + '</li>').join('');
+    agentActions.innerHTML = agent.actions.map((item) => '<li>' + item + '</li>').join('');
+
+    agentRisks.innerHTML = agent.risks
+      .map((item) => '<li class="danger">' + item + '</li>')
+      .join('');
+  }
+
+  function selectBusiness(businessKey) {
+    if (!PIT_DATA[businessKey]) return;
+
+    selectedBusiness = businessKey;
+    const firstAgent = Object.keys(PIT_DATA[selectedBusiness].agents)[0];
+
+    if (!PIT_DATA[selectedBusiness].agents[selectedAgent]) {
+      selectedAgent = firstAgent;
+    }
+
+    renderBusiness();
+    renderAgent();
+    markSelected();
+  }
+
+  function selectAgent(businessKey, agentKey) {
+    if (!PIT_DATA[businessKey] || !PIT_DATA[businessKey].agents[agentKey]) return;
+
+    selectedBusiness = businessKey;
+    selectedAgent = agentKey;
+
+    renderBusiness();
+    renderAgent();
+    markSelected();
+  }
+
+  businessCards.forEach((card) => {
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('.agent-chip')) return;
+      selectBusiness(card.dataset.business);
+    });
+  });
+
+  agentChips.forEach((chip) => {
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectAgent(chip.dataset.business, chip.dataset.agent);
+    });
+  });
+
+  selectAgent(selectedBusiness, selectedAgent);
+</script>
 </body>
 </html>
