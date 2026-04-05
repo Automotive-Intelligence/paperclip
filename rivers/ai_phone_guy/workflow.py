@@ -11,7 +11,8 @@ import os
 import requests
 from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error
-from rivers.ai_phone_guy.sequences import TAG_TO_VERTICAL, get_sequence, render_message, BOOKING_LINK
+from core.hours import is_within_send_window
+from rivers.ai_phone_guy.sequences import TAG_TO_VERTICAL, get_sequence, render_message, BOOKING_LINK, SEND_SCHEDULE
 from rivers.ai_phone_guy.hot_leads import check_for_hot_leads
 
 GHL_API_KEY = os.environ.get("GHL_API_KEY")
@@ -98,18 +99,29 @@ def _enroll_contact(contact: dict):
     log_enrollment("ai_phone_guy", cid, name, f"sequence-{vertical}")
     log_info("ai_phone_guy", f"ENROLLED: {name} → {vertical} sequence")
 
-    # Fire Day 0 message immediately
-    _send_sequence_step(cid, 0)
+    # Queue Day 0 message — will send when the vertical's send window opens
+    schedule = SEND_SCHEDULE.get(vertical, {})
+    if is_within_send_window(schedule):
+        _send_sequence_step(cid, 0)
+    else:
+        log_info("ai_phone_guy", f"QUEUED: {name} Day 0 — waiting for {vertical} send window ({schedule.get('day', '?')} {schedule.get('hour', '?')}:{schedule.get('minute', 0):02d} CST)")
 
 
 def _process_sequences():
-    """Check all enrolled contacts and send due sequence steps."""
+    """Check all enrolled contacts and send due sequence steps.
+    Only sends if within the vertical's scheduled send window.
+    """
     now = datetime.now()
     for cid, data in list(_enrolled.items()):
         enrolled_at = data["enrolled_at"]
         last_step = data["last_step"]
         vertical = data["vertical"]
         sequence = get_sequence(vertical)
+
+        # Check send window for this vertical
+        schedule = SEND_SCHEDULE.get(vertical, {})
+        if not is_within_send_window(schedule):
+            continue
 
         for step in sequence:
             step_day = step["day"]

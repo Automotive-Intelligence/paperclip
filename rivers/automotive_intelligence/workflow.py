@@ -13,6 +13,7 @@ import requests
 from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error, log_hot_lead
 from core.notifier import notify_hot_lead
+from core.hours import is_email_hours
 from rivers.automotive_intelligence.deals import create_deal
 from rivers.automotive_intelligence.sequences import get_sequence, render_message
 
@@ -122,12 +123,19 @@ def _enroll_dealer(contact: dict):
     log_enrollment("automotive_intelligence", cid, name, "dealer-sequence")
     log_info("automotive_intelligence", f"ENROLLED: {name} at {company}")
 
-    # Fire Email 1 within 1 hour (immediately on next run)
-    _send_sequence_step(cid, 0)
+    # Send Email 1 only during business hours
+    if is_email_hours():
+        _send_sequence_step(cid, 0)
+    else:
+        log_info("automotive_intelligence", f"QUEUED: {name} Email 1 — waiting for business hours (Mon-Fri 7am-9pm CST)")
 
 
 def _process_sequences():
-    """Send due sequence steps."""
+    """Send due sequence steps — only during email hours (Mon-Fri 7am-9pm CST)."""
+    if not is_email_hours():
+        log_info("automotive_intelligence", "Outside email hours — skipping sequence sends")
+        return
+
     now = datetime.now()
     for cid, data in list(_enrolled.items()):
         enrolled_at = data["enrolled_at"]

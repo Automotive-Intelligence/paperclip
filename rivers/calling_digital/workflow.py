@@ -11,6 +11,7 @@ import requests
 from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error, log_hot_lead
 from core.notifier import notify_hot_lead
+from core.hours import is_within_send_window, is_email_hours
 from rivers.calling_digital.scoring import score_contact, assign_track
 from rivers.calling_digital.sequences import get_track_sequence, render_message
 
@@ -131,12 +132,22 @@ def _score_and_enroll(contact: dict):
     log_enrollment("calling_digital", cid, name, f"track-{track} (score={score})")
     log_info("calling_digital", f"ENROLLED: {name} → Track {track} (score={score})")
 
-    # Fire Day 1 message immediately
-    _send_sequence_step(cid, 1)
+    # Send Day 1 if within vertical's send window
+    vertical = contact.get("vertical", "")
+    meta = VERTICAL_MAP.get(vertical, {})
+    schedule = {"day": meta.get("send_day", ""), "hour": meta.get("send_hour", 9), "minute": 0}
+    if is_within_send_window(schedule):
+        _send_sequence_step(cid, 1)
+    else:
+        log_info("calling_digital", f"QUEUED: {name} Day 1 — waiting for {vertical} send window ({meta.get('send_day', '?')} {meta.get('send_hour', '?')}:00 CST)")
 
 
 def _process_sequences():
-    """Send due sequence steps for all enrolled contacts."""
+    """Send due sequence steps — only during email business hours (Mon-Fri 7am-9pm CST)."""
+    if not is_email_hours():
+        log_info("calling_digital", "Outside email hours — skipping sequence sends")
+        return
+
     now = datetime.now()
     for cid, data in list(_enrolled.items()):
         enrolled_at = data["enrolled_at"]
