@@ -64,7 +64,7 @@ def register_all_jobs(scheduler: BackgroundScheduler):
         notify_daily_summary(stats)
 
     scheduler.add_job(
-        daily_summary, CronTrigger(hour=8, minute=0),
+        daily_summary, CronTrigger(hour=8, minute=0, timezone="America/Chicago"),
         id="daily_summary", name="Daily Summary to Michael", replace_existing=True
     )
 

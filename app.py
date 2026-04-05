@@ -2666,7 +2666,7 @@ for hour in SALES_HOURS:
     )
     scheduler.add_job(
         run_marcus_prospecting,
-        CronTrigger(hour=hour, minute=32, timezone=CST),
+        CronTrigger(hour=hour, minute=3 I'm working right now freshly came in this morning a eBay either way nobody wants a rack how are you no I've got plenty Tahoe I'm showing it at 9:30 I'm2, timezone=CST),
         id=f"marcus_prospecting_{hour}32",
         name=f"Marcus Prospecting {hour}:32",
         replace_existing=True, misfire_grace_time=3600,
@@ -2863,6 +2863,43 @@ async def lifespan(app: FastAPI):
         logging.info(f"[Scheduler] Started {len(scheduler.get_jobs())} agent jobs registered.")
     except Exception as e:
         logging.error(f"[Scheduler] Failed to start: {e}")
+
+    # ── Project Paperclip Rivers — 5 rivers, all agents
+    try:
+        from core.scheduler import register_all_jobs
+        register_all_jobs(scheduler)
+        logging.info("[Paperclip] All river agents registered on scheduler")
+
+        # Run HubSpot cleanup on startup
+        from rivers.automotive_intelligence.cleanup import run_cleanup
+        cleanup_result = run_cleanup()
+        logging.info(f"[Paperclip] HubSpot cleanup: {cleanup_result}")
+
+        # Initial enrollment pass
+        try:
+            from rivers.ai_phone_guy.workflow import randy_run
+            randy_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Randy initial run skipped: {e}")
+        try:
+            from rivers.calling_digital.workflow import brenda_run
+            brenda_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Brenda initial run skipped: {e}")
+        try:
+            from rivers.automotive_intelligence.workflow import darrell_run
+            darrell_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Darrell initial run skipped: {e}")
+        try:
+            from rivers.agent_empire.workflow import tammy_run
+            tammy_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Tammy initial run skipped: {e}")
+
+        logging.info("[Paperclip] Initial enrollment pass complete")
+    except Exception as e:
+        logging.warning(f"[Paperclip] River init failed — rivers disabled: {e}")
 
     yield
 
@@ -5586,3 +5623,69 @@ async def readiness():
     if is_ready:
         return payload
     return JSONResponse(status_code=503, content=payload)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PROJECT PAPERCLIP — River Endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/paperclip")
+async def paperclip_status():
+    """Project Paperclip empire status."""
+    try:
+        from rivers.ai_phone_guy.workflow import get_stats as apg_stats
+        from rivers.calling_digital.workflow import get_stats as cd_stats
+        from rivers.automotive_intelligence.workflow import get_stats as ai_stats
+        from rivers.agent_empire.workflow import get_stats as ae_stats
+        return {
+            "status": "online",
+            "project": "paperclip",
+            "rivers": {
+                "ai_phone_guy": apg_stats(),
+                "calling_digital": cd_stats(),
+                "automotive_intelligence": ai_stats(),
+                "agent_empire": ae_stats(),
+            },
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/paperclip/rivers")
+async def paperclip_rivers():
+    return {
+        "rivers": [
+            {"name": "AI Phone Guy", "crm": "GoHighLevel", "agent": "Randy", "schedule": "every 4 hours"},
+            {"name": "Calling Digital", "crm": "Attio", "agent": "Brenda", "schedule": "every 2 hours"},
+            {"name": "Automotive Intelligence", "crm": "HubSpot", "agent": "Darrell", "schedule": "every 1 hour"},
+            {"name": "Agent Empire", "platform": "Skool", "agents": ["Tammy", "Wade", "Debra"], "schedule": "Tammy 6hr / Wade Mon 9am"},
+            {"name": "CustomerAdvocate", "components": ["VERA", "AATA", "The Exchange"], "agents": ["Clint", "Sherry"]},
+        ]
+    }
+
+
+@app.post("/paperclip/run/{agent}")
+async def paperclip_trigger_agent(agent: str):
+    """Manually trigger a Paperclip river agent."""
+    import importlib
+    runners = {
+        "randy": ("rivers.ai_phone_guy.workflow", "randy_run"),
+        "brenda": ("rivers.calling_digital.workflow", "brenda_run"),
+        "darrell": ("rivers.automotive_intelligence.workflow", "darrell_run"),
+        "tammy": ("rivers.agent_empire.workflow", "tammy_run"),
+        "wade": ("rivers.agent_empire.workflow", "wade_run"),
+    }
+    if agent not in runners:
+        return JSONResponse(status_code=404, content={"error": f"Unknown agent: {agent}"})
+    mod_name, func_name = runners[agent]
+    mod = importlib.import_module(mod_name)
+    func = getattr(mod, func_name)
+    func()
+    return {"status": "completed", "agent": agent}
+
+
+@app.post("/paperclip/cleanup/hubspot")
+async def paperclip_cleanup():
+    """Re-run HubSpot contact classification."""
+    from rivers.automotive_intelligence.cleanup import run_cleanup
+    return run_cleanup()
