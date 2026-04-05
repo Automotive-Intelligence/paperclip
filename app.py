@@ -2666,7 +2666,7 @@ for hour in SALES_HOURS:
     )
     scheduler.add_job(
         run_marcus_prospecting,
-        CronTrigger(hour=hour, minute=3 I'm working right now freshly came in this morning a eBay either way nobody wants a rack how are you no I've got plenty Tahoe I'm showing it at 9:30 I'm2, timezone=CST),
+        CronTrigger(hour=hour, minute=32, timezone=CST),
         id=f"marcus_prospecting_{hour}32",
         name=f"Marcus Prospecting {hour}:32",
         replace_existing=True, misfire_grace_time=3600,
