@@ -8,7 +8,7 @@ pytz
 requests==2.31.0
 groq
 litellm
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 Pillow
 twilio==8.10.0
 hubspot-api-client==8.2.0
