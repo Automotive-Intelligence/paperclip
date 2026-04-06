@@ -49,3 +49,4 @@ run_test_suite.py
 .pytest_cache/
 .coverage
 htmlcov/
+node_modules/
