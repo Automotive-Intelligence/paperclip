@@ -2657,6 +2657,9 @@ RUN_NOW_SCOPES = {
         ("sofia_content", run_sofia_content),
         ("chase_content", run_chase_content),
     ],
+    "sofia": [
+        ("sofia_content", run_sofia_content),
+    ],
     "retention": [
         ("jennifer_retention", run_jennifer_retention),
         ("carlos_retention", run_carlos_retention),

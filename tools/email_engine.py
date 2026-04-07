@@ -106,11 +106,12 @@ def _needs_blog_expansion(piece: dict) -> bool:
     content_type = (piece.get("content_type") or "").strip().lower()
     body = (piece.get("body") or "").strip()
     word_count = len(body.split())
-    return platform == "blog" and content_type == "article" and word_count < 900
+    return platform == "blog" and content_type == "article" and word_count < 1200
 
 
 def _expand_blog_piece(piece: dict, raw_output: str, agent_name: str) -> dict:
-    prompt = f"""Turn this content brief into a complete publishable blog article.
+    minimum_words = 1200
+    attempt_prompt = f"""Turn this content brief into a complete publishable blog article.
 Return ONLY a JSON object. No markdown fences. No explanation.
 
 Required keys:
@@ -126,11 +127,15 @@ Rules:
 - Keep platform as \"blog\" and content_type as \"article\".
 - Preserve the existing title unless the brief clearly requires a small improvement.
 - Write the FULL article body, not a summary.
-- Default to 1600-2400 words for commercial SEO guides and 1000-1500 words for narrow case studies.
+- The body must be at least {minimum_words} words.
+- Aim for 1600-2400 words when the topic supports it.
 - Use scannable subheads, concrete examples, local-business framing, and a strong conversion section near the end.
 - Preserve any concrete URLs from the CTA or brief and include them naturally in the article body where useful.
 - Do not use placeholder links.
 - Make the article sound ready for Ghost publication.
+- Structure the body with substantial sections separated by blank lines.
+- Include an introduction, 4-6 main sections, a short FAQ section, and a closing CTA section.
+- Each main section should be materially developed, not a few sentences.
 
 AGENT: {agent_name}
 BRIEF:
@@ -142,10 +147,20 @@ SOURCE REPORT:
 JSON object:"""
 
     try:
-        content = _call_parser_llm(prompt, max_tokens=5000)
-        expanded = _extract_json_object(content)
-        if isinstance(expanded, dict) and expanded.get("body"):
-            return expanded
+        for attempt in range(2):
+            prompt = attempt_prompt
+            if attempt == 1:
+                prompt += (
+                    f"\nThe previous draft was too short. Rewrite the article so the body exceeds {minimum_words} words. "
+                    "Use 7 or more substantial sections separated by blank lines, including an FAQ section with at least 3 Q&A pairs, "
+                    "more concrete examples, more buyer objections, and a stronger conclusion with a clear CTA."
+                )
+            content = _call_parser_llm(prompt, max_tokens=5000)
+            expanded = _extract_json_object(content)
+            if isinstance(expanded, dict) and expanded.get("body"):
+                if len((expanded.get("body") or "").split()) >= minimum_words:
+                    return expanded
+        logging.warning(f"[Parser] Blog expansion returned under-length draft for {piece.get('title', '')}")
     except Exception as e:
         logging.warning(f"[Parser] Blog expansion failed for {piece.get('title', '')}: {e}")
     return piece
