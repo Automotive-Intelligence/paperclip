@@ -18,7 +18,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 # Known tool → sponsor mapping with contact info
 SPONSOR_DATABASE = {
     "anthropic": {"tool": "Anthropic/Claude", "tier": "premium", "url": "https://anthropic.com", "contact_email": "partnerships@anthropic.com"},
-    "twilio": {"tool": "Twilio", "tier": "premium", "url": "https://twilio.com", "contact_email": "partnerships@twilio.com"},
     "openai": {"tool": "OpenAI", "tier": "premium", "url": "https://openai.com", "contact_email": "partnerships@openai.com"},
     "hubspot": {"tool": "HubSpot", "tier": "premium", "url": "https://hubspot.com", "contact_email": "partnerships@hubspot.com"},
     "fastapi": {"tool": "FastAPI", "tier": "mid", "url": "https://fastapi.tiangolo.com", "contact_email": ""},
@@ -83,8 +82,6 @@ def scan_env_keys() -> set:
                     services.add("attio")
                 elif "hubspot" in key:
                     services.add("hubspot")
-                elif "twilio" in key:
-                    services.add("twilio")
                 elif "anthropic" in key:
                     services.add("anthropic")
                 elif "gmail" in key:

@@ -10,7 +10,6 @@ groq
 litellm
 python-dotenv>=1.0.0
 Pillow
-twilio>=8.10.0
 hubspot-api-client>=8.2.0
 anthropic>=0.25.0
 google-auth>=2.29.0
