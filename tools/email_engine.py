@@ -76,6 +76,91 @@ def _extract_json_array(text: str):
     return None
 
 
+def _extract_json_object(text: str):
+    """Best-effort JSON object extraction from raw model output."""
+    if not text:
+        return None
+    cleaned = _strip_markdown_fences(text)
+
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(cleaned[start:end + 1])
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return None
+    return None
+
+
+def _needs_blog_expansion(piece: dict) -> bool:
+    platform = (piece.get("platform") or "").strip().lower()
+    content_type = (piece.get("content_type") or "").strip().lower()
+    body = (piece.get("body") or "").strip()
+    word_count = len(body.split())
+    return platform == "blog" and content_type == "article" and word_count < 900
+
+
+def _expand_blog_piece(piece: dict, raw_output: str, agent_name: str) -> dict:
+    prompt = f"""Turn this content brief into a complete publishable blog article.
+Return ONLY a JSON object. No markdown fences. No explanation.
+
+Required keys:
+- platform
+- content_type
+- title
+- body
+- hashtags
+- cta
+- funnel_stage
+
+Rules:
+- Keep platform as \"blog\" and content_type as \"article\".
+- Preserve the existing title unless the brief clearly requires a small improvement.
+- Write the FULL article body, not a summary.
+- Default to 1600-2400 words for commercial SEO guides and 1000-1500 words for narrow case studies.
+- Use scannable subheads, concrete examples, local-business framing, and a strong conversion section near the end.
+- Preserve any concrete URLs from the CTA or brief and include them naturally in the article body where useful.
+- Do not use placeholder links.
+- Make the article sound ready for Ghost publication.
+
+AGENT: {agent_name}
+BRIEF:
+{json.dumps(piece, ensure_ascii=False)}
+
+SOURCE REPORT:
+{raw_output[:7000]}
+
+JSON object:"""
+
+    try:
+        content = _call_parser_llm(prompt, max_tokens=5000)
+        expanded = _extract_json_object(content)
+        if isinstance(expanded, dict) and expanded.get("body"):
+            return expanded
+    except Exception as e:
+        logging.warning(f"[Parser] Blog expansion failed for {piece.get('title', '')}: {e}")
+    return piece
+
+
+def _expand_content_pieces(raw_output: str, pieces: list, agent_name: str) -> list:
+    expanded = []
+    for piece in pieces:
+        if isinstance(piece, dict) and _needs_blog_expansion(piece):
+            expanded.append(_expand_blog_piece(piece, raw_output, agent_name))
+        else:
+            expanded.append(piece)
+    return expanded
+
+
 def _heuristic_parse_prospects(raw_output: str) -> list:
     """Fallback parser for prospecting output when external parser LLM is unavailable."""
     prospects = []
@@ -416,22 +501,26 @@ Each object must have:
 - cta (string: call to action)
 - funnel_stage (string: "awareness", "consideration", "conversion")
 
-If the report has a social post ready to publish, extract it exactly.
-If it only has content plans/ideas, flesh them out into publishable drafts.
+Rules:
+- If the report includes a full article draft, preserve that full article body instead of compressing it.
+- If a blog/article entry is only a brief or outline, flesh it out into a publishable draft.
+- Keep concrete URLs from the source content.
+- Do not invent placeholder links.
 
 REPORT:
-{raw_output[:4000]}
+{raw_output[:7000]}
 
 JSON array:"""
 
     try:
-        content = _call_parser_llm(prompt, max_tokens=3000)
+        content = _call_parser_llm(prompt, max_tokens=4000)
         pieces = _extract_json_array(content)
         if pieces is None:
             raise ValueError("No parseable JSON array in parser response")
         if not pieces:
             logging.warning(f"[Parser] Parsed 0 content pieces from {agent_name}; using heuristic fallback.")
             return _heuristic_parse_content(raw_output)
+        pieces = _expand_content_pieces(raw_output, pieces, agent_name)
         logging.info(f"[Parser] Extracted {len(pieces)} content pieces from {agent_name}.")
         return pieces
     except Exception as e:
