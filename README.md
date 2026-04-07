@@ -98,43 +98,6 @@ Startup now logs a single configuration summary and warning/fatal checks for:
 
 `/health/ready` is designed for deploy gates and can be wired into production monitoring.
 
-### Task Master Watchdog
-
-Paperclip now includes a Task Master watchdog that runs on an interval and checks
-whether execution is keeping pace while you are in active selling windows.
-
-Default behavior:
-
-- Runs every 5 minutes
-- Flags stale agents (default stale threshold: 180 minutes)
-- Flags CRM/email readiness blockers (missing keys/scopes)
-- Flags approval queue pressure and paused scheduler jobs
-- Persists checks in Postgres (`taskmaster_checks`) when available
-
-Task Master env controls:
-
-- `TASKMASTER_ENABLED` (default: `true`)
-- `TASKMASTER_INTERVAL_MINUTES` (default: `5`)
-- `TASKMASTER_STALE_AGENT_MINUTES` (default: `180`)
-- `TASKMASTER_WORK_START_HOUR` (default: `8`)
-- `TASKMASTER_WORK_END_HOUR` (default: `20`)
-- `TASKMASTER_WEEKDAYS_ONLY` (default: `true`)
-
-Task Master alert controls:
-
-- `TASKMASTER_ALERTS_ENABLED` (default: `false`)
-- `TASKMASTER_ALERT_ON_AMBER` (default: `false`)
-- `TASKMASTER_ALERT_COOLDOWN_MINUTES` (default: `30`)
-- `TASKMASTER_ALERT_WEBHOOK_URL` (required for outbound alert delivery)
-- `TASKMASTER_ALERT_WEBHOOK_AUTH` (optional Authorization header value)
-
-Task Master endpoints:
-
-- `GET /api/taskmaster/status` (optional `?run_check=true`)
-- `GET /api/taskmaster/history?limit=25`
-- `POST /api/taskmaster/run` (authenticated)
-- `POST /api/taskmaster/alert/test` (authenticated, bypasses cooldown)
-
 ### Service Reliability (Phase 2)
 
 - External integrations now use retry-aware service calls in `services/http_client.py`

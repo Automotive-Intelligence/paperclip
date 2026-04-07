@@ -16,6 +16,7 @@ from typing import Optional
 
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
+from tools.image_gen import generate_image, image_gen_ready
 
 
 def _slugify(value: str) -> str:
@@ -140,18 +141,40 @@ def publish_content_to_ghost(content_item: dict) -> dict:
         if t.startswith("#") and len(t) > 1
     ]
 
-    payload = {
-        "posts": [
-            {
-                "title": title,
-                "slug": slug,
-                "html": html_body,
-                "status": "published",
-                "excerpt": body[:300].strip(),
-                "tags": tags,
-            }
-        ]
+    # ── Feature image via FLUX Schnell (~$0.003/post) ──────────────────────
+    feature_image_url = None
+    if image_gen_ready():
+        try:
+            img_prompt = (
+                f"Blog post hero image for: {title}. "
+                f"Professional digital marketing visual, wide banner format, "
+                f"no text overlay, clean and modern."
+            )
+            img_result = generate_image(
+                prompt=img_prompt,
+                business_key=business_key,
+                platform="default",
+                aspect_ratio="16:9",
+            )
+            feature_image_url = img_result["urls"][0] if img_result.get("urls") else None
+            if feature_image_url:
+                logging.info("[Ghost] Feature image generated for post: %s", slug)
+        except Exception as img_err:
+            logging.warning("[Ghost] Feature image generation skipped: %s", img_err)
+    # ───────────────────────────────────────────────────────────────────────
+
+    post_data = {
+        "title": title,
+        "slug": slug,
+        "html": html_body,
+        "status": "published",
+        "excerpt": body[:300].strip(),
+        "tags": tags,
     }
+    if feature_image_url:
+        post_data["feature_image"] = feature_image_url
+
+    payload = {"posts": [post_data]}
 
     data = _ghost_request(
         business_key,

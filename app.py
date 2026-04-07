@@ -164,25 +164,6 @@ logger = logging.getLogger(__name__)
 logger.info("AIBOS identity: %s", SYSTEM_IDENTITY)
 
 
-# ── Task Master Runtime State ────────────────────────────────────────────────
-
-TASKMASTER_INTERVAL_MINUTES = max(1, int(os.getenv("TASKMASTER_INTERVAL_MINUTES", "5") or "5"))
-TASKMASTER_STALE_AGENT_MINUTES = max(15, int(os.getenv("TASKMASTER_STALE_AGENT_MINUTES", "180") or "180"))
-TASKMASTER_WORK_START_HOUR = max(0, min(23, int(os.getenv("TASKMASTER_WORK_START_HOUR", "8") or "8")))
-TASKMASTER_WORK_END_HOUR = max(1, min(24, int(os.getenv("TASKMASTER_WORK_END_HOUR", "20") or "20")))
-TASKMASTER_WEEKDAYS_ONLY = os.getenv("TASKMASTER_WEEKDAYS_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
-TASKMASTER_ENABLED = os.getenv("TASKMASTER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
-TASKMASTER_HISTORY_MAX = max(50, int(os.getenv("TASKMASTER_HISTORY_MAX", "200") or "200"))
-TASKMASTER_ALERTS_ENABLED = os.getenv("TASKMASTER_ALERTS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-TASKMASTER_ALERT_ON_AMBER = os.getenv("TASKMASTER_ALERT_ON_AMBER", "false").strip().lower() in {"1", "true", "yes", "on"}
-TASKMASTER_ALERT_COOLDOWN_MINUTES = max(1, int(os.getenv("TASKMASTER_ALERT_COOLDOWN_MINUTES", "30") or "30"))
-TASKMASTER_ALERT_WEBHOOK_URL = (os.getenv("TASKMASTER_ALERT_WEBHOOK_URL") or "").strip()
-TASKMASTER_ALERT_WEBHOOK_AUTH = (os.getenv("TASKMASTER_ALERT_WEBHOOK_AUTH") or "").strip()
-
-_TASKMASTER_HISTORY = deque(maxlen=TASKMASTER_HISTORY_MAX)
-_TASKMASTER_LAST_ALERT_AT_UTC: Optional[datetime.datetime] = None
-
-
 # ── Database ─────────────────────────────────────────────────────────────────
 
 def _db_url() -> str:
@@ -296,22 +277,8 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_quality_snapshots_created_at
                 ON quality_snapshots (created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS taskmaster_checks (
-                check_id             TEXT        PRIMARY KEY,
-                status               TEXT        NOT NULL,
-                score                REAL        NOT NULL,
-                scheduler_running    BOOLEAN     NOT NULL,
-                stale_agents_count   INTEGER     NOT NULL,
-                red_flags_count      INTEGER     NOT NULL,
-                approval_queue_count INTEGER     NOT NULL,
-                details              TEXT        NOT NULL DEFAULT '{}',
-                created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_taskmaster_checks_created_at
-                ON taskmaster_checks (created_at DESC);
         """)
-        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots, taskmaster_checks).")
+        logging.info("[DB] Activation Layer tables ready (artifacts, artifact_approvals, delivery_receipts, quality_snapshots).")
     except DatabaseError as e:
         logging.error(f"[DB] Activation Layer table init failed: {e}")
 
@@ -1661,287 +1628,6 @@ def run_quality_snapshot_daily():
         logging.error(f"[Quality] daily snapshot failed: {type(e).__name__}: {e}")
 
 
-def _taskmaster_work_window_open(now_local: Optional[datetime.datetime] = None) -> bool:
-    """Return whether Task Master should actively evaluate execution right now."""
-    now_local = now_local or datetime.datetime.now(CST)
-    if TASKMASTER_WEEKDAYS_ONLY and now_local.weekday() >= 5:
-        return False
-    hour = now_local.hour
-    if TASKMASTER_WORK_START_HOUR <= TASKMASTER_WORK_END_HOUR:
-        return TASKMASTER_WORK_START_HOUR <= hour < TASKMASTER_WORK_END_HOUR
-    return hour >= TASKMASTER_WORK_START_HOUR or hour < TASKMASTER_WORK_END_HOUR
-
-
-def _parse_run_timestamp(run_iso: Optional[str]) -> Optional[datetime.datetime]:
-    if not run_iso:
-        return None
-    try:
-        dt = datetime.datetime.fromisoformat(str(run_iso).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = CST.localize(dt)
-        return dt.astimezone(pytz.utc)
-    except Exception:
-        return None
-
-
-def _minutes_since_run(run_iso: Optional[str], now_utc: Optional[datetime.datetime] = None) -> Optional[float]:
-    run_dt = _parse_run_timestamp(run_iso)
-    if not run_dt:
-        return None
-    now_utc = now_utc or datetime.datetime.now(datetime.UTC)
-    return max(0.0, (now_utc - run_dt).total_seconds() / 60.0)
-
-
-def _taskmaster_compose_check() -> Dict[str, Any]:
-    """Build a deterministic operating snapshot for founder-level execution control."""
-    now_local = datetime.datetime.now(CST)
-    now_utc = now_local.astimezone(datetime.UTC)
-
-    window_open = _taskmaster_work_window_open(now_local)
-    scheduler_running = bool(getattr(scheduler, "running", False))
-    jobs = scheduler.get_jobs()
-    paused_jobs = [j.id for j in jobs if getattr(j, "next_run_time", None) is None]
-
-    preflight = _sales_preflight_report()
-    provider_issues: List[str] = []
-    by_provider = preflight.get("by_provider", {}) or {}
-    for provider, row in by_provider.items():
-        missing = row.get("missing_requirements", []) or []
-        for item in missing:
-            provider_issues.append(f"{provider}:{item}")
-
-    recent_runs = _fetch_recent_runs_by_agent()
-    stale_agents: List[Dict[str, Any]] = []
-    fresh_agents = 0
-    for agent_id in AGENTS.keys():
-        minutes = _minutes_since_run(recent_runs.get(agent_id), now_utc=now_utc)
-        if minutes is None:
-            stale_agents.append({"agent_id": agent_id, "reason": "never_ran"})
-            continue
-        if minutes > TASKMASTER_STALE_AGENT_MINUTES:
-            stale_agents.append({"agent_id": agent_id, "minutes_since_last_run": round(minutes, 1)})
-        else:
-            fresh_agents += 1
-
-    pipeline = _artifact_pipeline_counts()
-    queue_pressure = int(pipeline.get("approval_queue", 0) or 0)
-
-    red_flags: List[str] = []
-    amber_flags: List[str] = []
-
-    if window_open and not scheduler_running:
-        red_flags.append("Scheduler is not running during active work window")
-    if provider_issues:
-        red_flags.append(f"CRM/email readiness blockers: {len(provider_issues)}")
-    if window_open and stale_agents:
-        red_flags.append(f"Stale agents: {len(stale_agents)}")
-    if queue_pressure > 0:
-        amber_flags.append(f"Approval queue backlog: {queue_pressure}")
-    if paused_jobs:
-        amber_flags.append(f"Paused jobs detected: {len(paused_jobs)}")
-
-    score = 100.0
-    score -= min(45.0, float(len(red_flags) * 20))
-    score -= min(20.0, float(len(amber_flags) * 5))
-    freshness_ratio = fresh_agents / float(max(len(AGENTS), 1))
-    score += min(10.0, round(freshness_ratio * 10.0, 1))
-    score = max(0.0, min(100.0, round(score, 1)))
-
-    status = "green"
-    if red_flags:
-        status = "red"
-    elif amber_flags:
-        status = "amber"
-
-    checks = {
-        "timestamp": now_local.isoformat(),
-        "window_open": window_open,
-        "status": status,
-        "score": score,
-        "scheduler": {
-            "running": scheduler_running,
-            "total_jobs": len(jobs),
-            "paused_jobs": paused_jobs,
-        },
-        "freshness": {
-            "stale_after_minutes": TASKMASTER_STALE_AGENT_MINUTES,
-            "fresh_agents": fresh_agents,
-            "total_agents": len(AGENTS),
-            "stale_agents": stale_agents,
-        },
-        "readiness": {
-            "overall_ready": bool(preflight.get("overall_ready", False)),
-            "provider_issues": provider_issues,
-        },
-        "pipeline": {
-            "approval_queue": queue_pressure,
-            "artifact_created": int(pipeline.get("artifact_created", 0) or 0),
-            "dispatch": int(pipeline.get("dispatch", 0) or 0),
-        },
-        "alerts": {
-            "red": red_flags,
-            "amber": amber_flags,
-            "actions": [
-                "Run /admin/run-now?scope=sales if stale sales agents are blocking execution.",
-                "Clear missing CRM/email credentials and scopes before relying on autonomous outreach.",
-                "Work approval queue to keep dispatch throughput moving.",
-            ],
-        },
-    }
-    return checks
-
-
-def _persist_taskmaster_check(check: Dict[str, Any]) -> Optional[str]:
-    """Persist Task Master check to memory and DB when available."""
-    check_id = str(uuid.uuid4())
-    payload = dict(check)
-    payload["check_id"] = check_id
-    _TASKMASTER_HISTORY.appendleft(payload)
-
-    if not DATABASE_URL:
-        return check_id
-
-    try:
-        execute_query(
-            """
-            INSERT INTO taskmaster_checks (
-                check_id, status, score, scheduler_running, stale_agents_count,
-                red_flags_count, approval_queue_count, details
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                check_id,
-                str(check.get("status", "amber")),
-                float(check.get("score", 0.0) or 0.0),
-                bool(((check.get("scheduler") or {}).get("running", False))),
-                int(len(((check.get("freshness") or {}).get("stale_agents") or []))),
-                int(len(((check.get("alerts") or {}).get("red") or []))),
-                int(((check.get("pipeline") or {}).get("approval_queue", 0) or 0)),
-                json.dumps(check),
-            ),
-        )
-    except Exception as e:
-        logging.warning("[TaskMaster] persist failed: %s", e)
-    return check_id
-
-
-def _taskmaster_should_alert(check: Dict[str, Any], force: bool = False) -> bool:
-    """Decide if this check should emit an outbound alert."""
-    if not TASKMASTER_ALERTS_ENABLED and not force:
-        return False
-
-    status = str(check.get("status", "amber")).lower()
-    if status == "green":
-        return False
-    if status == "amber" and not TASKMASTER_ALERT_ON_AMBER and not force:
-        return False
-
-    if force:
-        return True
-
-    global _TASKMASTER_LAST_ALERT_AT_UTC
-    if _TASKMASTER_LAST_ALERT_AT_UTC is None:
-        return True
-    minutes_since = (datetime.datetime.now(datetime.UTC) - _TASKMASTER_LAST_ALERT_AT_UTC).total_seconds() / 60.0
-    return minutes_since >= float(TASKMASTER_ALERT_COOLDOWN_MINUTES)
-
-
-def _taskmaster_send_alert(check: Dict[str, Any], check_id: Optional[str], force: bool = False) -> Dict[str, Any]:
-    """Send taskmaster alert to webhook channel if configured and not in cooldown."""
-    if not _taskmaster_should_alert(check, force=force):
-        return {"sent": False, "reason": "cooldown_or_status"}
-
-    if not TASKMASTER_ALERT_WEBHOOK_URL:
-        return {"sent": False, "reason": "webhook_missing"}
-
-    status = str(check.get("status", "amber")).upper()
-    score = check.get("score", 0)
-    red = ((check.get("alerts") or {}).get("red") or [])[:5]
-    amber = ((check.get("alerts") or {}).get("amber") or [])[:5]
-    stale = ((check.get("freshness") or {}).get("stale_agents") or [])
-
-    stale_names = []
-    for row in stale[:6]:
-        agent_id = row.get("agent_id", "unknown")
-        stale_names.append(_pitwall_display_name(agent_id))
-
-    text_lines = [
-        f"TASK MASTER {status}",
-        f"score={score}",
-        f"check_id={check_id or 'n/a'}",
-        f"stale_agents={len(stale)} ({', '.join(stale_names) if stale_names else 'none'})",
-    ]
-    if red:
-        text_lines.append("red_flags=" + " | ".join(red))
-    if amber:
-        text_lines.append("amber_flags=" + " | ".join(amber))
-
-    payload = {
-        "event": "taskmaster_alert",
-        "status": status.lower(),
-        "score": score,
-        "check_id": check_id,
-        "timestamp": check.get("timestamp"),
-        "message": "\n".join(text_lines),
-        "check": check,
-    }
-
-    headers = {"Content-Type": "application/json"}
-    if TASKMASTER_ALERT_WEBHOOK_AUTH:
-        headers["Authorization"] = TASKMASTER_ALERT_WEBHOOK_AUTH
-
-    resp = request_with_retry(
-        provider="taskmaster",
-        operation="alert_webhook",
-        method="POST",
-        url=TASKMASTER_ALERT_WEBHOOK_URL,
-        headers=headers,
-        json_body=payload,
-        timeout=8,
-        max_attempts=2,
-    )
-
-    if not resp.ok:
-        return {"sent": False, "reason": "webhook_error", "status_code": resp.status_code, "error": resp.error}
-
-    global _TASKMASTER_LAST_ALERT_AT_UTC
-    _TASKMASTER_LAST_ALERT_AT_UTC = datetime.datetime.now(datetime.UTC)
-    return {"sent": True, "status_code": resp.status_code}
-
-
-def run_taskmaster_watchdog() -> Dict[str, Any]:
-    """Scheduled every few minutes to keep founder execution cadence on track."""
-    try:
-        check = _taskmaster_compose_check()
-        check_id = _persist_taskmaster_check(check)
-        alert_result = _taskmaster_send_alert(check, check_id)
-        logging.info(
-            "[TaskMaster] status=%s score=%s stale=%s red=%s queue=%s id=%s",
-            check.get("status"),
-            check.get("score"),
-            len(((check.get("freshness") or {}).get("stale_agents") or [])),
-            len(((check.get("alerts") or {}).get("red") or [])),
-            ((check.get("pipeline") or {}).get("approval_queue", 0)),
-            check_id,
-        )
-        return {"check_id": check_id, "check": check, "alert": alert_result}
-    except Exception as e:
-        logging.error("[TaskMaster] watchdog failed: %s: %s", type(e).__name__, e)
-        return {
-            "check_id": None,
-            "check": {
-                "timestamp": datetime.datetime.now(CST).isoformat(),
-                "status": "red",
-                "score": 0.0,
-                "alerts": {
-                    "red": [f"taskmaster_internal_error:{type(e).__name__}: {e}"],
-                    "amber": [],
-                    "actions": ["Inspect application logs and restart scheduler if needed."],
-                },
-            },
-        }
-
-
 # ── CEO Briefings ── 8:00, 8:02, 8:04 CST ───────────────────────────────────
 
 def run_alex_daily_briefing():
@@ -2387,6 +2073,60 @@ def run_chase_content():
         return {"agent": "chase", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
+
+# ── Ghost Drain ── 9:20 CST (runs after all content agents queue) ────────────
+def run_ghost_drain_callingdigital():
+    """Drain queued blog content to Ghost CMS for Calling Digital. Runs daily at 9:20 CST."""
+    try:
+        if not ghost_publish_ready("callingdigital"):
+            logging.warning("[Scheduler] Ghost drain skipped — callingdigital not configured.")
+            return {"status": "skipped", "reason": "Ghost not configured"}
+
+        social_platforms = {"linkedin", "twitter", "x", "instagram", "facebook", "tiktok", "youtube"}
+        queued_all = get_content_queue(business_key="callingdigital", status="queued", limit=100)
+        queued = [q for q in queued_all if (q.get("platform") or "").strip().lower() not in social_platforms][:5]
+
+        if not queued:
+            logging.info("[Scheduler] Ghost drain: no queued blog content for callingdigital.")
+            return {"status": "ok", "published": 0, "message": "Queue empty"}
+
+        published = 0
+        failed = 0
+        results = []
+        for item in queued:
+            enriched = dict(item)
+            enriched["business_key"] = "callingdigital"
+            enriched = _normalize_content_pieces([enriched], "callingdigital")[0]
+            try:
+                result = publish_content_to_ghost(enriched)
+                mark_content_published(item["id"])
+                track_event(
+                    "content_published",
+                    business_key="callingdigital",
+                    agent_name=item.get("agent_name", "sofia"),
+                    metadata={
+                        "content_id": item.get("id"),
+                        "provider": "ghost",
+                        "published_url": result.get("url", ""),
+                        "slug": result.get("slug", ""),
+                    },
+                )
+                results.append({"content_id": item.get("id"), "status": "published", "url": result.get("url", "")})
+                published += 1
+                logging.info("[Scheduler] Ghost published: %s → %s", result.get("slug"), result.get("url"))
+            except Exception as e:
+                failed += 1
+                logging.warning("[Scheduler] Ghost publish failed for content_id=%s: %s", item.get("id"), e)
+                results.append({"content_id": item.get("id"), "status": "failed", "error": str(e)})
+
+        logging.info("[Scheduler] Ghost drain done — published=%d failed=%d", published, failed)
+        return {"status": "ok", "published": published, "failed": failed, "results": results}
+
+    except Exception as e:
+        logging.error("[Scheduler] Ghost drain failed: %s: %s", type(e).__name__, e)
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+
 # ── Client Success ── 9:30, 9:32 CST ────────────────────────────────────────
 # NOW REVENUE-ACTIVE: Parse → Structured Actions → Track Retention Events
 
@@ -2693,6 +2433,11 @@ scheduler.add_job(run_chase_content, CronTrigger(hour=9, minute=4, timezone=CST)
     replace_existing=True, misfire_grace_time=3600)
 
 # Client Success — 9:30, 9:32
+scheduler.add_job(run_ghost_drain_callingdigital, CronTrigger(hour=9, minute=20, timezone=CST),
+    id="ghost_drain_callingdigital", name="Ghost Blog Drain — Calling Digital",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Client Success — 9:30, 9:32
 scheduler.add_job(run_jennifer_retention, CronTrigger(hour=9, minute=30, timezone=CST),
     id="jennifer_daily_retention", name="Jennifer Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
@@ -2723,18 +2468,6 @@ scheduler.add_job(run_all_agents_test, CronTrigger(hour=18, minute=30, timezone=
 scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, timezone=CST),
     id="quality_snapshot_daily", name="📈 Daily Quality Snapshot",
     replace_existing=True, misfire_grace_time=3600)
-
-# Task Master watchdog — runs every few minutes to keep execution cadence visible.
-if TASKMASTER_ENABLED:
-    scheduler.add_job(
-        run_taskmaster_watchdog,
-        IntervalTrigger(minutes=TASKMASTER_INTERVAL_MINUTES, timezone=CST),
-        id="taskmaster_watchdog",
-        name=f"Task Master Watchdog ({TASKMASTER_INTERVAL_MINUTES}m)",
-        replace_existing=True,
-        misfire_grace_time=120,
-        max_instances=1,
-    )
 
 # ONE-TIME TEST at 7:56 PM CST for live demo
 from apscheduler.triggers.date import DateTrigger
@@ -2775,9 +2508,6 @@ RUN_NOW_SCOPES = {
     "quality": [
         ("quality_snapshot_daily", run_quality_snapshot_daily),
     ],
-    "taskmaster": [
-        ("taskmaster_watchdog", run_taskmaster_watchdog),
-    ],
     "coo": [
         ("coo_command", run_coo_command),
     ],
@@ -2797,7 +2527,6 @@ RUN_NOW_SCOPES = {
         ("atlas_intel", run_atlas_intel),
         ("phoenix_delivery", run_phoenix_delivery),
         ("quality_snapshot_daily", run_quality_snapshot_daily),
-        ("taskmaster_watchdog", run_taskmaster_watchdog),
     ],
 }
 
@@ -4650,115 +4379,6 @@ async def get_metrics():
         "business_crm_map": SETTINGS.business_crm_map,
         "llm_model": SETTINGS.llm_model,
         "llm_ready": SETTINGS.llm_ready,
-    }
-
-
-@app.get("/api/taskmaster/status")
-async def get_taskmaster_status(run_check: bool = False):
-    """Return current Task Master status; optionally run a fresh check."""
-    if run_check:
-        result = run_taskmaster_watchdog()
-        return {
-            "source": "fresh",
-            "taskmaster_enabled": TASKMASTER_ENABLED,
-            "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
-            "result": result,
-        }
-
-    if _TASKMASTER_HISTORY:
-        latest = _TASKMASTER_HISTORY[0]
-        return {
-            "source": "memory",
-            "taskmaster_enabled": TASKMASTER_ENABLED,
-            "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
-            "result": {"check_id": latest.get("check_id"), "check": latest},
-        }
-
-    if DATABASE_URL:
-        try:
-            rows = fetch_all(
-                """
-                SELECT check_id, details
-                FROM taskmaster_checks
-                ORDER BY created_at DESC
-                LIMIT 1
-                """
-            )
-            if rows:
-                check_id, details = rows[0]
-                payload = json.loads(details or "{}")
-                payload["check_id"] = check_id
-                _TASKMASTER_HISTORY.appendleft(payload)
-                return {
-                    "source": "database",
-                    "taskmaster_enabled": TASKMASTER_ENABLED,
-                    "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
-                    "result": {"check_id": check_id, "check": payload},
-                }
-        except Exception as e:
-            logging.warning("[TaskMaster] status read from DB failed: %s", e)
-
-    result = run_taskmaster_watchdog()
-    return {
-        "source": "fresh_fallback",
-        "taskmaster_enabled": TASKMASTER_ENABLED,
-        "interval_minutes": TASKMASTER_INTERVAL_MINUTES,
-        "result": result,
-    }
-
-
-@app.get("/api/taskmaster/history")
-async def get_taskmaster_history(limit: int = 25):
-    """Return recent Task Master checks from memory and Postgres if available."""
-    limit = max(1, min(limit, 200))
-
-    if DATABASE_URL:
-        try:
-            rows = fetch_all(
-                """
-                SELECT check_id, details, created_at
-                FROM taskmaster_checks
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            checks: List[Dict[str, Any]] = []
-            for check_id, details, created_at in rows:
-                payload = json.loads(details or "{}")
-                payload["check_id"] = check_id
-                payload["created_at"] = str(created_at)
-                checks.append(payload)
-            return {"count": len(checks), "checks": checks, "source": "database"}
-        except Exception as e:
-            logging.warning("[TaskMaster] history read from DB failed: %s", e)
-
-    return {
-        "count": min(limit, len(_TASKMASTER_HISTORY)),
-        "checks": list(_TASKMASTER_HISTORY)[:limit],
-        "source": "memory",
-    }
-
-
-@app.post("/api/taskmaster/run")
-async def run_taskmaster_now(authorization: Optional[str] = Header(None)):
-    """Force Task Master to run now (authenticated)."""
-    validate_key(authorization)
-    return run_taskmaster_watchdog()
-
-
-@app.post("/api/taskmaster/alert/test")
-async def test_taskmaster_alert(authorization: Optional[str] = Header(None)):
-    """Force-send a Task Master alert regardless of cooldown/status (authenticated)."""
-    validate_key(authorization)
-    check = _taskmaster_compose_check()
-    check_id = _persist_taskmaster_check(check)
-    alert = _taskmaster_send_alert(check, check_id, force=True)
-    return {
-        "status": "ok",
-        "check_id": check_id,
-        "alert": alert,
-        "check": check,
     }
 
 
