@@ -204,5 +204,45 @@ def _send_ghl_email(contact_id: str, subject: str, body: str):
         log_error("ai_phone_guy", f"Email send error: {e}")
 
 
+def _fetch_enrolled_contacts() -> list:
+    """Return enrolled contacts enriched with live GHL signals for hot-lead detection."""
+    contacts = []
+    for cid, data in list(_enrolled.items()):
+        contact = dict(data.get("contact", {}))
+        contact["id"] = cid
+        contact["tags"] = ["sequence-active"]
+        contact["has_sms_reply"] = False
+        contact["email_opens"] = 0
+
+        if GHL_API_KEY:
+            try:
+                # Fetch fresh contact from GHL to get current tags
+                resp = requests.get(f"{GHL_BASE}/contacts/{cid}", headers=GHL_HEADERS)
+                if resp.status_code == 200:
+                    ghl_contact = resp.json().get("contact", {})
+                    contact["tags"] = ghl_contact.get("tags", contact["tags"])
+
+                # Check for inbound SMS reply via conversations API
+                conv_resp = requests.get(
+                    f"{GHL_BASE}/conversations/search",
+                    headers=GHL_HEADERS,
+                    params={"contactId": cid, "locationId": GHL_LOCATION_ID},
+                )
+                if conv_resp.status_code == 200:
+                    convs = conv_resp.json().get("conversations", [])
+                    for conv in convs:
+                        # SMS inbound reply
+                        if conv.get("type") == "TYPE_SMS" and conv.get("lastMessageType") == "TYPE_SMS":
+                            if conv.get("unreadCount", 0) > 0 or conv.get("direction") == "inbound":
+                                contact["has_sms_reply"] = True
+                        # Email open tracking
+                        contact["email_opens"] += conv.get("emailOpenCount", 0)
+            except Exception as e:
+                log_error("ai_phone_guy", f"Failed to enrich contact {cid}: {e}")
+
+        contacts.append(contact)
+    return contacts
+
+
 def get_stats() -> dict:
     return dict(_stats)

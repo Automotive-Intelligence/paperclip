@@ -111,6 +111,6 @@ def generate_weekly_output() -> dict:
         "video_outlines": len(videos),
         "show_notes": len(videos),
         "blog_posts": len(blogs),
-        "thumbnail_copies": len([v for v in videos if v["thumbnail"]]),
+        "thumbnail_copies": len([v for v in videos if v.get("thumbnail_copy")]),
         "items": calendar,
     }

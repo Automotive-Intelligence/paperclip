@@ -70,4 +70,5 @@ def register_all_jobs(scheduler: BackgroundScheduler):
 
     log_info("scheduler", "All jobs registered")
     for job in scheduler.get_jobs():
-        log_info("scheduler", f"  {job.name} — next run: {job.next_run_time}")
+        next_run = getattr(job, "next_run_time", "pending")
+        log_info("scheduler", f"  {job.name} — next run: {next_run}")
