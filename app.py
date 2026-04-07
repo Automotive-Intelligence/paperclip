@@ -1996,6 +1996,147 @@ def run_zoe_content():
         return {"agent": "zoe", "status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
+CALLING_DIGITAL_TOPIC_CLUSTERS = {
+    "website_design": {
+        "service_page": "https://www.calling.digital/website-design",
+        "primary_keywords": [
+            "website design aubrey tx",
+            "small business website design texas",
+            "website redesign cost for small business",
+        ],
+        "secondary_keywords": [
+            "website redesign checklist",
+            "small business website conversion rate",
+            "seo friendly website design",
+        ],
+    },
+    "seo_local": {
+        "service_page": "https://www.calling.digital/local-seo",
+        "primary_keywords": [
+            "local seo aubrey tx",
+            "local seo for small business texas",
+            "seo company north texas",
+        ],
+        "secondary_keywords": [
+            "google business profile optimization",
+            "local keyword research",
+            "local search rankings for service businesses",
+        ],
+    },
+    "seo_general": {
+        "service_page": "https://www.calling.digital/search-engine-optimization",
+        "primary_keywords": [
+            "search engine optimization for small business",
+            "seo services for local businesses",
+            "digital marketing agency seo texas",
+        ],
+        "secondary_keywords": [
+            "technical seo audit",
+            "on page seo for local businesses",
+            "seo content strategy for small business",
+        ],
+    },
+    "sem_ppc": {
+        "service_page": "https://www.calling.digital/search-engine-marketing",
+        "primary_keywords": [
+            "google ads for roofers",
+            "ppc management for contractors",
+            "search engine marketing for small business",
+        ],
+        "secondary_keywords": [
+            "cost per lead google ads local service business",
+            "google ads landing page optimization",
+            "remarketing for service businesses",
+        ],
+    },
+    "social_media": {
+        "service_page": "https://www.calling.digital/social-media-marketing-and-management-services",
+        "primary_keywords": [
+            "social media marketing for small business texas",
+            "social media management aubrey tx",
+            "facebook ads for local businesses",
+        ],
+        "secondary_keywords": [
+            "social media content for contractors",
+            "local business social media strategy",
+            "instagram marketing for small business",
+        ],
+    },
+    "data_aggregation": {
+        "service_page": "https://www.calling.digital/data-aggregation",
+        "primary_keywords": [
+            "marketing reporting dashboard for small business",
+            "data aggregation for marketing agencies",
+            "small business marketing analytics texas",
+        ],
+        "secondary_keywords": [
+            "cross channel attribution for smb",
+            "marketing dashboard for local businesses",
+            "lead source reporting small business",
+        ],
+    },
+    "ai_implementation": {
+        "service_page": "https://www.calling.digital/contact-us",
+        "primary_keywords": [
+            "ai automation for small business",
+            "ai implementation services texas",
+            "ai consulting for local business",
+        ],
+        "secondary_keywords": [
+            "crm automation for smb",
+            "lead follow up automation",
+            "ai workflow automation for service businesses",
+        ],
+    },
+}
+
+CALLING_DIGITAL_TARGET_CITIES = [
+    "Aubrey",
+    "Prosper",
+    "Celina",
+    "Frisco",
+    "McKinney",
+    "Denton",
+    "Little Elm",
+    "Dallas",
+    "North Texas",
+    "380 Corridor",
+]
+
+CALLING_DIGITAL_ANCHOR_RULES = [
+    ("local SEO services in Aubrey", "https://www.calling.digital/local-seo"),
+    ("SEO services for small businesses", "https://www.calling.digital/search-engine-optimization"),
+    ("website design for small businesses", "https://www.calling.digital/website-design"),
+    ("Google Ads management for local service businesses", "https://www.calling.digital/search-engine-marketing"),
+    ("social media management for small businesses", "https://www.calling.digital/social-media-marketing-and-management-services"),
+    ("marketing reporting and data aggregation", "https://www.calling.digital/data-aggregation"),
+    ("book a strategy session", "https://calendly.com/calling-michael/strategy-session"),
+    ("contact Calling Digital", "https://www.calling.digital/contact-us"),
+]
+
+CALLING_DIGITAL_BLOG_LENGTH_GUIDANCE = (
+    "Length strategy: write to search intent and competitive depth, not arbitrary word count. "
+    "For high-value SEO guides and commercial investigation posts, default to 1600-2400 words because that range usually gives enough space "
+    "to rank, demonstrate expertise, and convert without filler. "
+    "For pillar or highly competitive explainers, expand to 2400-3200 words only if the topic truly needs deeper comparisons, examples, FAQs, and local proof. "
+    "For narrow BOFU case studies, comparisons, or cost posts with tight intent, 1000-1500 words is acceptable if it answers the buying question completely. "
+    "Never add fluff just to hit length. Depth, specificity, examples, FAQs, and clear conversion paths matter more than raw word count."
+)
+
+
+def _format_calling_digital_topic_map() -> str:
+    lines = []
+    for cluster, details in CALLING_DIGITAL_TOPIC_CLUSTERS.items():
+        lines.append(
+            f"- {cluster}: service page {details['service_page']} | primary keywords: {', '.join(details['primary_keywords'])} | secondary keywords: {', '.join(details['secondary_keywords'])}"
+        )
+    return "\n".join(lines)
+
+
+def _format_calling_digital_anchor_rules() -> str:
+    return "\n".join(f"- Use anchor text '{anchor}' -> {url}" for anchor, url in CALLING_DIGITAL_ANCHOR_RULES)
+
+
 def run_sofia_content():
     try:
         booking_link_cd = (
@@ -2007,40 +2148,38 @@ def run_sofia_content():
                 "Search for trending topics in digital marketing, AI for business, Dallas business news, "
                 "and small-business buyer questions that lead to service inquiries. "
                 "Search for what other marketing agencies are publishing and what content is performing well. "
-                "Design 3 content pieces for Calling Digital's full-funnel strategy: "
-                "one AWARENESS piece (thought leadership or educational), "
-                "one CONSIDERATION piece (case study, comparison, or guide), "
-                "one CONVERSION piece (offer or CTA). "
-                "Also identify one AI education content angle that warms up existing clients "
-                "for Calling Digital's AI services. "
-                "CRITICAL: Public-facing content must use the Calling Digital brand name, never Nova AI Consulting. "
-                "CRITICAL: Do not use placeholder links like [Link] or [link]. Use a concrete CTA destination or write the CTA without a URL. "
-                "CRITICAL: Prioritize topics Dallas-area SMB owners actually search for before they hire an agency: "
-                "website redesign cost, lead generation, SEO for local businesses, ads ROI, CRM follow-up, AI automation for SMBs. "
-                "CRITICAL: For every blog/article idea, choose exactly one primary keyword and 2-4 secondary keywords with commercial intent. "
-                "Prefer phrases like 'website design aubrey tx', 'local seo aubrey tx', 'search engine optimization for small business', "
-                "'google ads for roofers', 'lead generation for contractors', 'ai automation for small business', "
-                "and 'digital marketing agency for small business texas'. "
-                "CRITICAL: Every blog/article must name the TOPIC explicitly, define the SEARCH INTENT (informational, commercial investigation, or transactional), "
+                "Create a revenue-focused Calling Digital content package for today. "
+                "Public-facing content must use the Calling Digital brand name, never Nova AI Consulting. "
+                "Do not use placeholder links like [Link] or [link]. Use concrete CTA destinations only. "
+                "Prioritize buyer-intent topics Dallas and North Texas SMB owners actually search for before hiring an agency: "
+                "website redesign cost, lead generation, SEO for local businesses, ads ROI, CRM follow-up, and AI automation for SMBs. "
+                f"Target cities and geo modifiers: {', '.join(CALLING_DIGITAL_TARGET_CITIES)}. Use geo modifiers naturally when they strengthen local intent. "
+                "Approved service-line keyword map:\n"
+                f"{_format_calling_digital_topic_map()}\n"
+                "For every blog/article output, choose exactly one primary keyword and 2-4 secondary keywords with commercial intent. "
+                "Every blog/article must name the topic explicitly, define the search intent (informational, commercial investigation, or transactional), "
                 "and explain why that topic is likely to drive a booked call instead of vanity traffic. "
-                "CRITICAL: Every blog/article must include 2-3 precise internal links from this approved list when relevant: "
-                "https://www.calling.digital/search-engine-optimization , "
-                "https://www.calling.digital/local-seo , "
-                "https://www.calling.digital/website-design , "
-                "https://www.calling.digital/search-engine-marketing , "
-                "https://www.calling.digital/social-media-marketing-and-management-services , "
-                "https://www.calling.digital/data-aggregation , "
-                "https://www.calling.digital/contact-us . "
-                f"CRITICAL: Conversion CTAs must point to either https://www.calling.digital/contact-us or {booking_link_cd} unless a more precise Calling Digital page is clearly better. "
-                "CRITICAL: Avoid generic top-of-funnel fluff like broad trend roundups unless they are anchored to a local SMB buying problem and a specific service outcome. "
-                "CRITICAL: Use blog frames that convert: cost breakdown, mistakes to avoid, checklist, local case study, service comparison, audit framework, or ROI explainer. "
-                "CRITICAL: For each content piece provide platform, topic, primary keyword, secondary keywords, search intent, hook, format, key message, internal links, and CTA."
+                "Every blog/article must include 2-3 precise internal links and use meaningful anchor text. Approved anchor rules:\n"
+                f"{_format_calling_digital_anchor_rules()}\n"
+                f"Conversion CTAs must point to either https://www.calling.digital/contact-us or {booking_link_cd} unless a more precise Calling Digital page is clearly better. "
+                "Avoid generic trend roundups unless they are anchored to a local SMB buying problem and a specific service outcome. "
+                "Use blog frames that convert: cost breakdown, mistakes to avoid, checklist, local case study, service comparison, audit framework, or ROI explainer. "
+                f"{CALLING_DIGITAL_BLOG_LENGTH_GUIDANCE} "
+                "Create exactly one ready-to-publish long-form Ghost blog article today, not just an idea. "
+                "That blog article must include: title, recommended slug, funnel stage, topic, primary keyword, secondary keywords, search intent, target city or region, "
+                "suggested meta description, recommended word-count target, 5-8 section outline, 2-3 internal links with anchor text, one primary CTA, one secondary CTA, and the full article body. "
+                "The blog body must be complete and publication-ready, with a strong introduction, scannable subheads, concrete examples, FAQ-style clarity where useful, "
+                "and a direct conversion section near the end. "
+                "After the full blog draft, provide one consideration-stage asset idea, one conversion-stage asset idea, one AI education piece idea for the Calling Digital AI services pipeline, "
+                "and one ready-to-publish social post that promotes the blog."
             ),
             expected_output=(
-                "Daily content plan: (1) 3 fully detailed content ideas with platform, topic, primary keyword, secondary keywords, "
-                "search intent, hook, format, key message, internal links, and CTA. "
-                "(2) One AI education piece idea for the Calling Digital AI services pipeline. "
-                "(3) One social post ready to publish for Calling Digital."
+                "Daily content package: (1) one full ready-to-publish Ghost blog draft with title, slug, topic, primary keyword, secondary keywords, "
+                "search intent, target geography, meta description, target word count, internal links with anchor text, CTA plan, and complete article body. "
+                "(2) one consideration-stage content asset idea. "
+                "(3) one conversion-stage content asset idea. "
+                "(4) one AI education piece idea for the Calling Digital AI services pipeline. "
+                "(5) one social post ready to publish for Calling Digital that promotes the blog."
             ),
             agent=sofia,
         )
