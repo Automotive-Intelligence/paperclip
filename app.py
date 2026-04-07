@@ -5416,12 +5416,15 @@ async def get_pitwall_agent(team_id: str, agent_id: str):
 
 @app.get("/dashboard")
 async def get_dashboard():
-    """Serve the dashboard HTML."""
+    """Serve the React Pit Wall app (company → agent → history navigation)."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    # Fallback to legacy static HTML
     dashboard_path = Path(__file__).parent / "static" / "dashboard.html"
     if dashboard_path.exists():
         return FileResponse(str(dashboard_path), media_type="text/html")
-    else:
-        return {"error": f"Dashboard not found at {dashboard_path}"}
+    return {"error": f"Dashboard not found"}
 
 
 @app.get("/pit-wall")

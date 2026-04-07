@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { api, AgentDetail } from '../lib/api';
+import { api, AgentDetail, AgentLogs } from '../lib/api';
 import StatusDot from '../components/StatusDot';
 
 export default function AgentPage() {
   const { teamId = '', agentId = '' } = useParams();
   const [data, setData] = useState<AgentDetail | null>(null);
+  const [logs, setLogs] = useState<AgentLogs | null>(null);
   const [error, setError] = useState<string>('');
 
   async function load() {
@@ -16,6 +17,12 @@ export default function AgentPage() {
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load agent telemetry');
+    }
+    try {
+      const logData = await api.agentLogs(agentId);
+      setLogs(logData);
+    } catch {
+      // logs are non-critical, silently skip
     }
   }
 
@@ -61,6 +68,23 @@ export default function AgentPage() {
         <Panel title="Immediate Next Actions" items={data?.next_actions || []} alert={false} />
         <Panel title="Risk Flags" items={data?.risk_flags || []} alert={true} />
       </section>
+
+      {logs && logs.runs.length > 0 && (
+        <section className="mt-4 rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
+          <h3 className="mb-3 text-lg font-semibold text-pittext">Work History</h3>
+          <div className="space-y-2">
+            {logs.runs.map((run) => (
+              <div key={run.id} className="rounded-lg border border-pitborder bg-black/20 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-pitgreen">{run.log_type}</span>
+                  <span className="text-xs text-pitmuted">{run.run_date} &mdash; {new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <p className="text-sm text-pittext leading-relaxed whitespace-pre-wrap">{run.preview}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </motion.main>
   );
 }
