@@ -50,3 +50,6 @@ run_test_suite.py
 .coverage
 htmlcov/
 node_modules/
+.claude/
+hey-dealership/
+package-lock.json
