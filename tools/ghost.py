@@ -27,11 +27,23 @@ def _slugify(value: str) -> str:
     return text[:96].strip("-") or "daily-update"
 
 
+def _linkify_escaped_text(text: str) -> str:
+    url_pattern = re.compile(r"(https?://[^\s<]+)")
+    return url_pattern.sub(
+        lambda match: f'<a href="{match.group(1)}" target="_blank" rel="noopener noreferrer">{match.group(1)}</a>',
+        text,
+    )
+
+
 def _to_html_paragraphs(text: str) -> str:
     blocks = [b.strip() for b in (text or "").split("\n\n") if b.strip()]
     if not blocks:
         return ""
-    return "".join(f"<p>{html.escape(block).replace(chr(10), '<br>')}</p>" for block in blocks)
+    html_blocks = []
+    for block in blocks:
+        escaped = html.escape(block).replace(chr(10), '<br>')
+        html_blocks.append(f"<p>{_linkify_escaped_text(escaped)}</p>")
+    return "".join(html_blocks)
 
 
 def _ghost_env_name(business_key: str, suffix: str) -> str:
@@ -133,7 +145,7 @@ def publish_content_to_ghost(content_item: dict) -> dict:
     hashtags_raw = (content_item.get("hashtags") or "").strip()
     html_body = _to_html_paragraphs(body)
     if cta:
-        html_body += f"<p><strong>{html.escape(cta)}</strong></p>"
+        html_body += f"<p><strong>{_linkify_escaped_text(html.escape(cta))}</strong></p>"
 
     tags = [
         {"name": t.lstrip("#")}

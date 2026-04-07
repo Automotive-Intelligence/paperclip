@@ -1998,6 +1998,10 @@ def run_zoe_content():
 
 def run_sofia_content():
     try:
+        booking_link_cd = (
+            os.getenv("BOOKING_LINK_CD", "").strip()
+            or "https://calendly.com/calling-michael/strategy-session"
+        )
         task = Task(
             description=(
                 "Search for trending topics in digital marketing, AI for business, Dallas business news, "
@@ -2013,10 +2017,28 @@ def run_sofia_content():
                 "CRITICAL: Do not use placeholder links like [Link] or [link]. Use a concrete CTA destination or write the CTA without a URL. "
                 "CRITICAL: Prioritize topics Dallas-area SMB owners actually search for before they hire an agency: "
                 "website redesign cost, lead generation, SEO for local businesses, ads ROI, CRM follow-up, AI automation for SMBs. "
-                "For each: platform, hook, format, key message, and CTA."
+                "CRITICAL: For every blog/article idea, choose exactly one primary keyword and 2-4 secondary keywords with commercial intent. "
+                "Prefer phrases like 'website design aubrey tx', 'local seo aubrey tx', 'search engine optimization for small business', "
+                "'google ads for roofers', 'lead generation for contractors', 'ai automation for small business', "
+                "and 'digital marketing agency for small business texas'. "
+                "CRITICAL: Every blog/article must name the TOPIC explicitly, define the SEARCH INTENT (informational, commercial investigation, or transactional), "
+                "and explain why that topic is likely to drive a booked call instead of vanity traffic. "
+                "CRITICAL: Every blog/article must include 2-3 precise internal links from this approved list when relevant: "
+                "https://www.calling.digital/search-engine-optimization , "
+                "https://www.calling.digital/local-seo , "
+                "https://www.calling.digital/website-design , "
+                "https://www.calling.digital/search-engine-marketing , "
+                "https://www.calling.digital/social-media-marketing-and-management-services , "
+                "https://www.calling.digital/data-aggregation , "
+                "https://www.calling.digital/contact-us . "
+                f"CRITICAL: Conversion CTAs must point to either https://www.calling.digital/contact-us or {booking_link_cd} unless a more precise Calling Digital page is clearly better. "
+                "CRITICAL: Avoid generic top-of-funnel fluff like broad trend roundups unless they are anchored to a local SMB buying problem and a specific service outcome. "
+                "CRITICAL: Use blog frames that convert: cost breakdown, mistakes to avoid, checklist, local case study, service comparison, audit framework, or ROI explainer. "
+                "CRITICAL: For each content piece provide platform, topic, primary keyword, secondary keywords, search intent, hook, format, key message, internal links, and CTA."
             ),
             expected_output=(
-                "Daily content plan: (1) 3 fully detailed content ideas with platform/hook/format/message/CTA. "
+                "Daily content plan: (1) 3 fully detailed content ideas with platform, topic, primary keyword, secondary keywords, "
+                "search intent, hook, format, key message, internal links, and CTA. "
                 "(2) One AI education piece idea for the Calling Digital AI services pipeline. "
                 "(3) One social post ready to publish for Calling Digital."
             ),
