@@ -15,10 +15,19 @@ import requests
 from core.logger import log_hot_lead, log_info, log_error
 from core.notifier import notify_hot_lead
 
-GHL_API_KEY = os.environ.get("GHL_API_KEY")
-GHL_LOCATION_ID = os.environ.get("GHL_LOCATION_ID")
 GHL_BASE = "https://services.leadconnectorhq.com"
-GHL_HEADERS = {"Authorization": f"Bearer {GHL_API_KEY}", "Version": "2021-07-28", "Content-Type": "application/json"}
+
+
+def _ghl_key() -> str:
+    return os.environ.get("GHL_API_KEY", "")
+
+
+def _ghl_location() -> str:
+    return os.environ.get("GHL_LOCATION_ID", "")
+
+
+def _ghl_headers() -> dict:
+    return {"Authorization": f"Bearer {_ghl_key()}", "Version": "2021-07-28", "Content-Type": "application/json"}
 
 
 def check_for_hot_leads(contacts: list):
@@ -67,23 +76,23 @@ def _escalate_hot_lead(contact_id: str, name: str, business: str, phone: str, tr
 
 
 def _add_tag(contact_id: str, tag: str):
-    if not GHL_API_KEY:
+    if not _ghl_key():
         log_info("ai_phone_guy", f"[DRY RUN] Would add tag '{tag}' to {contact_id}")
         return
     url = f"{GHL_BASE}/contacts/{contact_id}"
-    resp = requests.put(url, headers=GHL_HEADERS, json={"tags": [tag]})
+    resp = requests.put(url, headers=_ghl_headers(), json={"tags": [tag]})
     if resp.status_code != 200:
         log_error("ai_phone_guy", f"Failed to add tag {tag} to {contact_id}: {resp.status_code}")
 
 
 def _remove_tag(contact_id: str, tag: str):
-    if not GHL_API_KEY:
+    if not _ghl_key():
         log_info("ai_phone_guy", f"[DRY RUN] Would remove tag '{tag}' from {contact_id}")
         return
     url = f"{GHL_BASE}/contacts/{contact_id}"
     # GHL: fetch current tags, remove the one we don't want, update
-    resp = requests.get(url, headers=GHL_HEADERS)
+    resp = requests.get(url, headers=_ghl_headers())
     if resp.status_code == 200:
         current_tags = resp.json().get("contact", {}).get("tags", [])
         new_tags = [t for t in current_tags if t != tag]
-        requests.put(url, headers=GHL_HEADERS, json={"tags": new_tags})
+        requests.put(url, headers=_ghl_headers(), json={"tags": new_tags})

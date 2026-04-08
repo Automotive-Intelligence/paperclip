@@ -15,10 +15,19 @@ from core.hours import is_within_send_window
 from rivers.ai_phone_guy.sequences import TAG_TO_VERTICAL, get_sequence, render_message, BOOKING_LINK, SEND_SCHEDULE
 from rivers.ai_phone_guy.hot_leads import check_for_hot_leads
 
-GHL_API_KEY = os.environ.get("GHL_API_KEY")
-GHL_LOCATION_ID = os.environ.get("GHL_LOCATION_ID")
 GHL_BASE = "https://services.leadconnectorhq.com"
-GHL_HEADERS = {"Authorization": f"Bearer {GHL_API_KEY}", "Version": "2021-07-28", "Content-Type": "application/json"}
+
+
+def _ghl_key() -> str:
+    return os.environ.get("GHL_API_KEY", "")
+
+
+def _ghl_location() -> str:
+    return os.environ.get("GHL_LOCATION_ID", "")
+
+
+def _ghl_headers() -> dict:
+    return {"Authorization": f"Bearer {_ghl_key()}", "Version": "2021-07-28", "Content-Type": "application/json"}
 
 # In-memory tracking (persists while process runs)
 _enrolled = {}  # contact_id -> {vertical, enrolled_at, last_step}
@@ -48,16 +57,16 @@ def randy_run():
 
 def _find_new_prospects() -> list:
     """Find contacts with tyler-prospect-* tags that aren't yet enrolled."""
-    if not GHL_API_KEY:
+    if not _ghl_key():
         log_info("ai_phone_guy", "[DRY RUN] No GHL_API_KEY — skipping prospect scan")
         return []
 
     new_contacts = []
     for tag, vertical in TAG_TO_VERTICAL.items():
         url = f"{GHL_BASE}/contacts/"
-        params = {"locationId": GHL_LOCATION_ID, "query": tag, "limit": 100}
+        params = {"locationId": _ghl_location(), "query": tag, "limit": 100}
         try:
-            resp = requests.get(url, headers=GHL_HEADERS, params=params)
+            resp = requests.get(url, headers=_ghl_headers(), params=params)
             if resp.status_code == 200:
                 contacts = resp.json().get("contacts", [])
                 for c in contacts:
@@ -89,11 +98,11 @@ def _enroll_contact(contact: dict):
     }
 
     # Add sequence-active tag
-    if GHL_API_KEY:
+    if _ghl_key():
         url = f"{GHL_BASE}/contacts/{cid}"
         current_tags = contact.get("tags", [])
         current_tags.append("sequence-active")
-        requests.put(url, headers=GHL_HEADERS, json={"tags": current_tags})
+        requests.put(url, headers=_ghl_headers(), json={"tags": current_tags})
 
     _stats["enrolled"] += 1
     log_enrollment("ai_phone_guy", cid, name, f"sequence-{vertical}")
@@ -167,7 +176,7 @@ def _send_sequence_step(contact_id: str, step_day: int):
 
 
 def _send_ghl_sms(contact_id: str, body: str):
-    if not GHL_API_KEY:
+    if not _ghl_key():
         log_info("ai_phone_guy", f"[DRY RUN] SMS to {contact_id}: {body[:80]}...")
         return
     url = f"{GHL_BASE}/conversations/messages"
@@ -177,7 +186,7 @@ def _send_ghl_sms(contact_id: str, body: str):
         "message": body,
     }
     try:
-        resp = requests.post(url, headers=GHL_HEADERS, json=payload)
+        resp = requests.post(url, headers=_ghl_headers(), json=payload)
         if resp.status_code not in (200, 201):
             log_error("ai_phone_guy", f"SMS send failed: {resp.status_code} {resp.text}")
     except Exception as e:
@@ -185,7 +194,7 @@ def _send_ghl_sms(contact_id: str, body: str):
 
 
 def _send_ghl_email(contact_id: str, subject: str, body: str):
-    if not GHL_API_KEY:
+    if not _ghl_key():
         log_info("ai_phone_guy", f"[DRY RUN] Email to {contact_id}: {subject}")
         return
     url = f"{GHL_BASE}/conversations/messages"
@@ -197,7 +206,7 @@ def _send_ghl_email(contact_id: str, subject: str, body: str):
         "html": body.replace("\n", "<br>"),
     }
     try:
-        resp = requests.post(url, headers=GHL_HEADERS, json=payload)
+        resp = requests.post(url, headers=_ghl_headers(), json=payload)
         if resp.status_code not in (200, 201):
             log_error("ai_phone_guy", f"Email send failed: {resp.status_code} {resp.text}")
     except Exception as e:
@@ -214,10 +223,10 @@ def _fetch_enrolled_contacts() -> list:
         contact["has_sms_reply"] = False
         contact["email_opens"] = 0
 
-        if GHL_API_KEY:
+        if _ghl_key():
             try:
                 # Fetch fresh contact from GHL to get current tags
-                resp = requests.get(f"{GHL_BASE}/contacts/{cid}", headers=GHL_HEADERS)
+                resp = requests.get(f"{GHL_BASE}/contacts/{cid}", headers=_ghl_headers())
                 if resp.status_code == 200:
                     ghl_contact = resp.json().get("contact", {})
                     contact["tags"] = ghl_contact.get("tags", contact["tags"])
@@ -225,8 +234,8 @@ def _fetch_enrolled_contacts() -> list:
                 # Check for inbound SMS reply via conversations API
                 conv_resp = requests.get(
                     f"{GHL_BASE}/conversations/search",
-                    headers=GHL_HEADERS,
-                    params={"contactId": cid, "locationId": GHL_LOCATION_ID},
+                    headers=_ghl_headers(),
+                    params={"contactId": cid, "locationId": _ghl_location()},
                 )
                 if conv_resp.status_code == 200:
                     convs = conv_resp.json().get("conversations", [])

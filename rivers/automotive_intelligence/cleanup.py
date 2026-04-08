@@ -10,9 +10,15 @@ import re
 import requests
 from core.logger import log_info, log_error
 
-HUBSPOT_API_KEY = os.environ.get("HUBSPOT_API_KEY")
-BASE_URL = "https://api.hubapi.com"
-HEADERS = {"Authorization": f"Bearer {HUBSPOT_API_KEY}", "Content-Type": "application/json"}
+HUBSPOT_BASE_URL = "https://api.hubapi.com"
+
+
+def _hs_key() -> str:
+    return os.environ.get("HUBSPOT_API_KEY", "")
+
+
+def _hs_headers() -> dict:
+    return {"Authorization": f"Bearer {_hs_key()}", "Content-Type": "application/json"}
 
 DEALER_DOMAINS = [
     "toyota", "ford", "honda", "chevy", "chevrolet", "nissan", "bmw", "mercedes",
@@ -31,7 +37,7 @@ DEALER_COMPANY_KEYWORDS = [
 
 def ensure_contact_type_property():
     """Create the 'contact_type' property in HubSpot if it doesn't exist."""
-    url = f"{BASE_URL}/crm/v3/properties/contacts"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/properties/contacts"
     payload = {
         "name": "contact_type",
         "label": "Contact Type",
@@ -45,7 +51,7 @@ def ensure_contact_type_property():
             {"label": "Unclassified", "value": "unclassified"},
         ],
     }
-    resp = requests.post(url, headers=HEADERS, json=payload)
+    resp = requests.post(url, headers=_hs_headers(), json=payload)
     if resp.status_code == 201:
         log_info("ai_cleanup", "Created 'contact_type' property in HubSpot")
     elif resp.status_code == 409:
@@ -57,7 +63,7 @@ def ensure_contact_type_property():
 def fetch_all_contacts() -> list:
     """Fetch all contacts from HubSpot with pagination."""
     contacts = []
-    url = f"{BASE_URL}/crm/v3/objects/contacts"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts"
     params = {
         "limit": 100,
         "properties": "email,company,firstname,lastname,jobtitle",
@@ -66,7 +72,7 @@ def fetch_all_contacts() -> list:
     while True:
         if after:
             params["after"] = after
-        resp = requests.get(url, headers=HEADERS, params=params)
+        resp = requests.get(url, headers=_hs_headers(), params=params)
         if resp.status_code != 200:
             log_error("ai_cleanup", f"Failed to fetch contacts: {resp.status_code} {resp.text}")
             break
@@ -105,9 +111,9 @@ def classify_contact(contact: dict) -> str:
 
 def update_contact_type(contact_id: str, contact_type: str):
     """Update the contact_type property for a contact."""
-    url = f"{BASE_URL}/crm/v3/objects/contacts/{contact_id}"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{contact_id}"
     payload = {"properties": {"contact_type": contact_type}}
-    resp = requests.patch(url, headers=HEADERS, json=payload)
+    resp = requests.patch(url, headers=_hs_headers(), json=payload)
     if resp.status_code != 200:
         log_error("ai_cleanup", f"Failed to update contact {contact_id}: {resp.status_code}")
 
@@ -116,7 +122,7 @@ def create_saved_view():
     """Create a saved view 'Chase — Verified Dealers' in HubSpot.
     Uses the Lists API to create a contact list filtered by contact_type.
     """
-    url = f"{BASE_URL}/crm/v3/lists"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/lists"
     payload = {
         "name": "Chase — Verified Dealers",
         "objectTypeId": "0-1",
@@ -137,7 +143,7 @@ def create_saved_view():
             ],
         },
     }
-    resp = requests.post(url, headers=HEADERS, json=payload)
+    resp = requests.post(url, headers=_hs_headers(), json=payload)
     if resp.status_code in (200, 201):
         log_info("ai_cleanup", "Created saved view: Chase — Verified Dealers")
     else:
@@ -146,7 +152,7 @@ def create_saved_view():
 
 def run_cleanup():
     """Main cleanup entry point. Run before any sequences."""
-    if not HUBSPOT_API_KEY:
+    if not _hs_key():
         log_error("ai_cleanup", "HUBSPOT_API_KEY not set — cannot run cleanup")
         return {"classified": 0, "dealers": 0, "unclassified": 0}
 

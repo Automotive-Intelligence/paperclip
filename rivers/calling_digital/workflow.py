@@ -15,9 +15,16 @@ from core.hours import is_within_send_window, is_email_hours
 from rivers.calling_digital.scoring import score_contact, assign_track
 from rivers.calling_digital.sequences import get_track_sequence, render_message
 
-ATTIO_API_KEY = os.environ.get("ATTIO_API_KEY")
 ATTIO_BASE = "https://api.attio.com/v2"
-ATTIO_HEADERS = {"Authorization": f"Bearer {ATTIO_API_KEY}", "Content-Type": "application/json"}
+
+
+def _attio_key() -> str:
+    return os.environ.get("ATTIO_API_KEY", "")
+
+
+def _attio_headers() -> dict:
+    return {"Authorization": f"Bearer {_attio_key()}", "Content-Type": "application/json"}
+
 
 BOOKING_LINK = os.environ.get("BOOKING_LINK_CD", "")
 
@@ -50,7 +57,7 @@ def brenda_run():
 
 def _find_new_contacts() -> list:
     """Find new contacts in Attio that haven't been enrolled."""
-    if not ATTIO_API_KEY:
+    if not _attio_key():
         log_info("calling_digital", "[DRY RUN] No ATTIO_API_KEY — skipping")
         return []
 
@@ -60,13 +67,13 @@ def _find_new_contacts() -> list:
             url = f"{ATTIO_BASE}/objects/people/records/query"
             payload = {
                 "filter": {
-                    "attribute": "tags",
-                    "operator": "contains",
-                    "value": vertical_tag,
+                    "attribute": {"slug": "tags"},
+                    "condition": "contains_all",
+                    "value": [vertical_tag],
                 },
                 "limit": 100,
             }
-            resp = requests.post(url, headers=ATTIO_HEADERS, json=payload)
+            resp = requests.post(url, headers=_attio_headers(), json=payload)
             if resp.status_code == 200:
                 records = resp.json().get("data", [])
                 for r in records:
@@ -192,7 +199,7 @@ def _send_sequence_step(contact_id: str, step_day: int):
 
 def _send_attio_email(contact_id: str, to_email: str, subject: str, body: str):
     """Send email via Attio or log dry run."""
-    if not ATTIO_API_KEY or not to_email:
+    if not _attio_key() or not to_email:
         log_info("calling_digital", f"[DRY RUN] Email to {contact_id}: {subject}")
         return
     # Attio doesn't have a native email send API — use transactional email service
@@ -205,7 +212,7 @@ def _send_attio_email(contact_id: str, to_email: str, subject: str, body: str):
             "title": f"[Brenda] Sent: {subject}",
             "content": body[:500],
         }
-        requests.post(url, headers=ATTIO_HEADERS, json=payload)
+        requests.post(url, headers=_attio_headers(), json=payload)
     except Exception as e:
         log_error("calling_digital", f"Attio note failed: {e}")
 

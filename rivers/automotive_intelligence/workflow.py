@@ -17,9 +17,15 @@ from core.hours import is_email_hours
 from rivers.automotive_intelligence.deals import create_deal
 from rivers.automotive_intelligence.sequences import get_sequence, render_message
 
-HUBSPOT_API_KEY = os.environ.get("HUBSPOT_API_KEY")
-BASE_URL = "https://api.hubapi.com"
-HEADERS = {"Authorization": f"Bearer {HUBSPOT_API_KEY}", "Content-Type": "application/json"}
+HUBSPOT_BASE_URL = "https://api.hubapi.com"
+
+
+def _hs_key() -> str:
+    return os.environ.get("HUBSPOT_API_KEY", "")
+
+
+def _hs_headers() -> dict:
+    return {"Authorization": f"Bearer {_hs_key()}", "Content-Type": "application/json"}
 
 _enrolled = {}
 _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0, "deals_created": 0}
@@ -43,12 +49,12 @@ def darrell_run():
 
 def _find_verified_dealers() -> list:
     """Find contacts classified as Dealership Decision Maker not yet enrolled."""
-    if not HUBSPOT_API_KEY:
+    if not _hs_key():
         log_info("automotive_intelligence", "[DRY RUN] No HUBSPOT_API_KEY — skipping")
         return []
 
     dealers = []
-    url = f"{BASE_URL}/crm/v3/objects/contacts/search"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/search"
     payload = {
         "filterGroups": [
             {
@@ -70,7 +76,7 @@ def _find_verified_dealers() -> list:
         while True:
             if after:
                 payload["after"] = after
-            resp = requests.post(url, headers=HEADERS, json=payload)
+            resp = requests.post(url, headers=_hs_headers(), json=payload)
             if resp.status_code == 200:
                 data = resp.json()
                 for c in data.get("results", []):
@@ -177,11 +183,11 @@ def _send_sequence_step(contact_id: str, step_day: int):
 
 def _send_hubspot_email(contact_id: str, to_email: str, subject: str, body: str):
     """Send email via HubSpot single-send API."""
-    if not HUBSPOT_API_KEY or not to_email:
+    if not _hs_key() or not to_email:
         log_info("automotive_intelligence", f"[DRY RUN] Email to {contact_id}: {subject}")
         return
 
-    url = f"{BASE_URL}/marketing/v3/transactional/single-email/send"
+    url = f"{HUBSPOT_BASE_URL}/marketing/v3/transactional/single-email/send"
     payload = {
         "message": {
             "to": to_email,
@@ -191,7 +197,7 @@ def _send_hubspot_email(contact_id: str, to_email: str, subject: str, body: str)
         "contactProperties": {"email": to_email},
     }
     try:
-        resp = requests.post(url, headers=HEADERS, json=payload)
+        resp = requests.post(url, headers=_hs_headers(), json=payload)
         if resp.status_code not in (200, 201):
             # Fallback: create an engagement/email activity
             _create_email_engagement(contact_id, subject, body)
@@ -201,7 +207,7 @@ def _send_hubspot_email(contact_id: str, to_email: str, subject: str, body: str)
 
 def _create_email_engagement(contact_id: str, subject: str, body: str):
     """Create an email engagement in HubSpot as tracking record."""
-    url = f"{BASE_URL}/crm/v3/objects/emails"
+    url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/emails"
     payload = {
         "properties": {
             "hs_email_subject": subject,
@@ -211,11 +217,11 @@ def _create_email_engagement(contact_id: str, subject: str, body: str):
         },
     }
     try:
-        resp = requests.post(url, headers=HEADERS, json=payload)
+        resp = requests.post(url, headers=_hs_headers(), json=payload)
         if resp.status_code in (200, 201):
             email_id = resp.json().get("id")
-            assoc_url = f"{BASE_URL}/crm/v3/objects/emails/{email_id}/associations/contacts/{contact_id}/email_to_contact"
-            requests.put(assoc_url, headers=HEADERS)
+            assoc_url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/emails/{email_id}/associations/contacts/{contact_id}/email_to_contact"
+            requests.put(assoc_url, headers=_hs_headers())
     except Exception as e:
         log_error("automotive_intelligence", f"Engagement creation error: {e}")
 
@@ -237,10 +243,10 @@ def _check_hot_leads():
             notify_hot_lead("automotive_intelligence", name, business, phone, "opened 3+ emails")
 
             # Tag in HubSpot
-            if HUBSPOT_API_KEY:
+            if _hs_key():
                 try:
-                    url = f"{BASE_URL}/crm/v3/objects/contacts/{cid}"
-                    requests.patch(url, headers=HEADERS, json={"properties": {"hs_lead_status": "HOT"}})
+                    url = f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{cid}"
+                    requests.patch(url, headers=_hs_headers(), json={"properties": {"hs_lead_status": "HOT"}})
                 except Exception:
                     pass
 
