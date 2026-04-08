@@ -2660,6 +2660,15 @@ RUN_NOW_SCOPES = {
     "sofia": [
         ("sofia_content", run_sofia_content),
     ],
+    "zoe": [
+        ("zoe_content", run_zoe_content),
+    ],
+    "chase": [
+        ("chase_content", run_chase_content),
+    ],
+    "ghost": [
+        ("ghost_drain_callingdigital", run_ghost_drain_callingdigital),
+    ],
     "retention": [
         ("jennifer_retention", run_jennifer_retention),
         ("carlos_retention", run_carlos_retention),
