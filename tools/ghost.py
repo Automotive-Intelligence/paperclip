@@ -14,6 +14,8 @@ import time
 
 from typing import Optional
 
+import markdown as _md
+
 from services.errors import ServiceCallError
 from services.http_client import request_with_retry
 from tools.image_gen import generate_image, image_gen_ready
@@ -35,13 +37,28 @@ def _linkify_escaped_text(text: str) -> str:
     )
 
 
-def _to_html_paragraphs(text: str) -> str:
-    blocks = [b.strip() for b in (text or "").split("\n\n") if b.strip()]
-    if not blocks:
+def _to_html_paragraphs(text: str, is_markdown: bool = False) -> str:
+    """Convert plain text or markdown body to HTML paragraphs.
+
+    When is_markdown=True, runs the full markdown renderer (handles ## headers,
+    **bold**, [links](url), lists, etc.).  Plain text mode paragraphs are
+    still linkified so bare URLs become clickable anchor tags.
+    """
+    if not (text or "").strip():
         return ""
+    if is_markdown:
+        rendered = _md.markdown(
+            text,
+            extensions=["nl2br", "sane_lists"],
+            output_format="html",
+        )
+        # Linkify any bare URLs the markdown renderer left as-is.
+        return _linkify_escaped_text(rendered)
+    # Plain text: split on blank lines, wrap each block in a <p>.
+    blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
     html_blocks = []
     for block in blocks:
-        escaped = html.escape(block).replace(chr(10), '<br>')
+        escaped = html.escape(block).replace(chr(10), "<br>")
         html_blocks.append(f"<p>{_linkify_escaped_text(escaped)}</p>")
     return "".join(html_blocks)
 
@@ -141,11 +158,21 @@ def publish_content_to_ghost(content_item: dict) -> dict:
     title = (content_item.get("title") or "Calling Digital Update").strip()
     body = (content_item.get("body") or "").strip()
     cta = (content_item.get("cta") or "").strip()
+    meta_description = (content_item.get("meta_description") or "").strip()
     slug = _slugify(title)
     hashtags_raw = (content_item.get("hashtags") or "").strip()
-    html_body = _to_html_paragraphs(body)
+
+    # Detect markdown body (expanded blog articles use ## headers, **bold**, etc.)
+    is_markdown_body = bool(re.search(r"^#{1,3}\s", body, re.MULTILINE))
+    html_body = _to_html_paragraphs(body, is_markdown=is_markdown_body)
     if cta:
         html_body += f"<p><strong>{_linkify_escaped_text(html.escape(cta))}</strong></p>"
+
+    # Clean excerpt: strip markdown syntax for the plain-text meta excerpt.
+    clean_excerpt = re.sub(r"#{1,6}\s*", "", body)
+    clean_excerpt = re.sub(r"\*{1,2}([^\*]+)\*{1,2}", r"\1", clean_excerpt)
+    clean_excerpt = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", clean_excerpt)
+    clean_excerpt = clean_excerpt.strip()[:300]
 
     tags = [
         {"name": t.lstrip("#")}
@@ -180,7 +207,9 @@ def publish_content_to_ghost(content_item: dict) -> dict:
         "slug": slug,
         "html": html_body,
         "status": "published",
-        "excerpt": body[:300].strip(),
+        "custom_excerpt": clean_excerpt,
+        "meta_title": title,
+        "meta_description": meta_description or clean_excerpt,
         "tags": tags,
     }
     if feature_image_url:
