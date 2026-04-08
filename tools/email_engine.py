@@ -110,12 +110,15 @@ def _needs_blog_expansion(piece: dict) -> bool:
 
 
 def _expand_blog_piece(piece: dict, raw_output: str, agent_name: str) -> dict:
-    """Expand a short blog brief into a full article body using a plain-text LLM call.
+    """Expand a short blog brief into a full article body via direct LLM call.
 
-    Writing the body as plain text (not inside a JSON object) removes JSON overhead
-    and escaping issues, giving the full token budget to actual article content.
-    After generation we inject the body back into the piece metadata dict.
+    Uses higher temperature (0.8) and more tokens (7000) than standard parser calls
+    to encourage longer, more creative, multi-section article generation.
+    Writes body as plain text (not JSON) to maximize token budget for actual content.
     """
+    import litellm
+    from config.runtime import resolve_llm_model_and_key
+    
     minimum_words = 1200
     title = piece.get("title", "")
     cta = piece.get("cta", "")
@@ -131,41 +134,50 @@ CONTEXT (from agent research):
 {raw_output[:3000]}
 
 REQUIREMENTS:
-- Minimum 1600 words. Aim for 1800-2400.
+- Minimum 1600 words. Aim for 1800-2400 or longer.
 - Use markdown headers (## for H2, ### for H3).
-- Structure: Introduction (no header) → 5-6 main body sections → FAQ (## Frequently Asked Questions, 3 Q&A pairs) → Closing CTA section.
-- Each main section must be fully developed with concrete examples, stats, or step-by-step guidance — not a few sentences.
-- Local-business focus: reference Dallas, North Texas, Aubrey, Frisco, or Prosper where natural.
-- Weave in these anchor-text links where they fit naturally:
-  * "local SEO services in Aubrey" → https://www.calling.digital/local-seo
-  * "website design for small businesses" → https://www.calling.digital/website-design
-  * "book a strategy session" → https://calendly.com/calling-michael/strategy-session
-  * "Google Ads management for local service businesses" → https://www.calling.digital/search-engine-marketing
-- Close with a conversion paragraph linking to https://calendly.com/calling-michael/strategy-session
-- Write ONLY the article body. Do NOT include JSON, metadata, or any explanation outside the article.
+- Structure: Intro (no header) → 6-7 substantial main sections → FAQ (## FAQ, 4+ Q&A pairs) → CTA section.
+- Each section needs: detailed explanation, concrete examples, local references, step-by-step guidance.
+- Include stats, customer quotes, common objections, and your differentiation.
+- Local references: Dallas, Aubrey, Frisco, Prosper (naturally integrated).
+- Weave in links naturally: "local SEO services in Aubrey", "website design for small businesses", "book a strategy session", "Google Ads management".
+- Close with strong CTA: https://calendly.com/calling-michael/strategy-session
+- Write ONLY the article body. No JSON, no metadata.
 
 Article body:"""
 
     retry_suffix = (
-        "\n\nDraft too short. Add more depth to every section: more examples, "
-        "more numbered steps, more data points, longer FAQ, stronger CTA section. "
-        "The body must exceed 1600 words."
+        "\n\n[SECOND ATTEMPT - MAKE IT LONGER]\n"
+        "Your draft was too short. Expand every section significantly: more examples, more breakdown, more local case studies, "
+        "longer FAQ (8+ Q&A pairs), more objection handling, more subsections with ### headers, more actionable tips. "
+        "Write 2000+ words minimum this time."
     )
 
     try:
+        model, api_key = resolve_llm_model_and_key()
         for attempt in range(2):
             prompt = base_prompt if attempt == 0 else base_prompt + retry_suffix
-            body_text = _call_parser_llm(prompt, max_tokens=5000)
+            response = litellm.completion(
+                model=model,
+                api_key=api_key,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=7000,
+                temperature=0.8,
+            )
+            body_text = response.choices[0].message.content.strip() if response.choices else ""
             body_words = len((body_text or "").split())
+            
             if body_words >= minimum_words:
                 result = dict(piece)
                 result["body"] = body_text
-                logging.info(f"[Parser] Blog expanded to {body_words} words for '{title}'")
+                logging.info(f"[Parser] Blog expanded to {body_words} words for '{title}' (attempt {attempt+1})")
                 return result
-            logging.info(f"[Parser] Expansion attempt {attempt + 1} returned {body_words} words for '{title}', retrying")
-        logging.warning(f"[Parser] Blog expansion returned under-length draft for {title}")
+            logging.info(f"[Parser] Expansion attempt {attempt + 1} returned {body_words} words (need {minimum_words}), retrying")
+        
+        logging.warning(f"[Parser] Blog expansion exhausted retries, returned {len((body_text or '').split())} words for '{title}'")
     except Exception as e:
-        logging.warning(f"[Parser] Blog expansion failed for {title}: {e}")
+        logging.warning(f"[Parser] Blog expansion LLM failed for '{title}': {type(e).__name__}: {e}")
+    
     return piece
 
 
