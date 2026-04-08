@@ -9,61 +9,66 @@
         :root {
             --bg: #0a0e17; --surface: #131a2b; --surface2: #1a2332;
             --border: #1e2d42; --text: #e2e8f0; --text2: #8899aa;
-            --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+            --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
             --blue: #3b82f6; --cyan: #06b6d4; --purple: #a855f7;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 12px; }
-        .pit-wall { max-width: 800px; margin: 0 auto; }
+        .pit-wall { max-width: 880px; margin: 0 auto; }
 
         /* Header */
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; margin-bottom: 12px; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
         .header h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; }
         .header h1 span { color: var(--cyan); }
         .header-right { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2); }
         .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+        /* Summary bar */
+        .summary-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+        .s-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 10px; text-align: center; }
+        .s-val { font-size: 28px; font-weight: 700; color: var(--cyan); line-height: 1; }
+        .s-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 5px; }
 
         /* Alerts */
-        .alerts { margin-bottom: 16px; }
+        .alerts { margin-bottom: 14px; }
         .alert { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px; color: #fca5a5; display: flex; align-items: center; gap: 8px; }
         .alert::before { content: "!"; background: var(--red); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
 
-        /* Business sections */
-        .biz-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-        .biz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-        .biz-name { font-size: 15px; font-weight: 700; }
+        /* Business grid */
+        .biz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; margin-bottom: 14px; }
+        .biz-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+        .biz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .biz-name { font-size: 14px; font-weight: 700; }
         .biz-crm { font-size: 11px; color: var(--text2); background: var(--surface2); padding: 3px 8px; border-radius: 4px; }
-        .metrics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+        .metrics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
         .metric-box { background: var(--surface2); border-radius: 8px; padding: 10px; text-align: center; }
-        .metric-val { font-size: 24px; font-weight: 700; color: var(--cyan); }
+        .metric-val { font-size: 22px; font-weight: 700; color: var(--cyan); }
         .metric-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
 
-        /* Agent health */
-        .agent-health { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-        .agent-health h2 { font-size: 14px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
-        .agent-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
-        .agent-row:last-child { border-bottom: none; }
-        .agent-info { display: flex; align-items: center; gap: 8px; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-        .status-dot.green { background: var(--green); }
-        .status-dot.red { background: var(--red); }
-        .status-dot.yellow { background: var(--yellow); }
-        .agent-name { font-size: 13px; font-weight: 600; }
-        .agent-role { font-size: 11px; color: var(--text2); }
-        .agent-time { font-size: 11px; color: var(--text2); text-align: right; }
-        .agent-preview { font-size: 11px; color: var(--text2); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+        /* Agent chips inside biz card */
+        .agent-roster { display: flex; flex-wrap: wrap; gap: 6px; }
+        .agent-chip { display: flex; align-items: center; gap: 5px; background: var(--surface2); border-radius: 6px; padding: 5px 8px; font-size: 11px; cursor: default; }
+        .agent-chip-name { font-weight: 600; color: var(--text); }
+        .agent-chip-role { color: var(--text2); }
 
-        /* COO Report */
-        .coo-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-        .coo-section h2 { font-size: 14px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
-        .coo-priority { background: var(--surface2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.5; color: var(--text); }
+        /* Status dots */
+        .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .dot-green  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+        .dot-amber,
+        .dot-yellow { background: var(--yellow); }
+        .dot-red    { background: var(--red); box-shadow: 0 0 5px var(--red); }
+        .dot-unknown { background: var(--text2); }
+
+        /* COO section */
+        .coo-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+        .section-title { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; }
+        .coo-priority { background: var(--surface2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; color: var(--text); }
 
         /* Footer */
-        .footer { text-align: center; padding: 16px 0; font-size: 11px; color: var(--text2); }
-        .refresh-note { font-size: 10px; color: var(--text2); opacity: 0.6; }
+        .footer { text-align: center; padding: 12px 0 16px; font-size: 11px; color: var(--text2); opacity: 0.7; }
 
         /* Loading */
-        .loading { text-align: center; padding: 40px; color: var(--text2); }
+        .loading { text-align: center; padding: 30px; color: var(--text2); font-size: 13px; }
     </style>
 </head>
 <body>
@@ -71,24 +76,27 @@
         <div class="header">
             <h1><span>AIBOS</span> Pit Wall</h1>
             <div class="header-right">
-                <div class="pulse"></div>
+                <div class="pulse" id="pulse-dot"></div>
                 <span id="clock"></span>
             </div>
         </div>
 
+        <div class="summary-bar">
+            <div class="s-box"><div class="s-val" id="s-agents">—</div><div class="s-label">Agents Active</div></div>
+            <div class="s-box"><div class="s-val" id="s-prospects">—</div><div class="s-label">Prospects Today</div></div>
+            <div class="s-box"><div class="s-val" id="s-week">—</div><div class="s-label">This Week</div></div>
+            <div class="s-box"><div class="s-val" id="s-alerts" style="color:var(--green)">0</div><div class="s-label">Alerts</div></div>
+        </div>
+
         <div class="alerts" id="alerts"></div>
-        <div id="businesses"></div>
-        <div class="agent-health" id="agent-health">
-            <h2>Agent Health</h2>
+        <div class="biz-grid" id="businesses"><div class="loading">Loading...</div></div>
+
+        <div class="coo-section" id="coo-section">
+            <div class="section-title">COO Command</div>
             <div class="loading">Loading...</div>
         </div>
-        <div class="coo-section" id="coo-section">
-            <h2>COO Command Report</h2>
-            <div class="loading">Waiting for first report...</div>
-        </div>
-        <div class="footer">
-            <div class="refresh-note">Auto-refreshes every 60s</div>
-        </div>
+
+        <div class="footer">Last refreshed: <span id="last-refreshed">—</span> &nbsp;·&nbsp; auto-updates every 60s</div>
     </div>
 
     <script>
@@ -96,14 +104,20 @@
 
         function relTime(iso) {
             if (!iso) return 'Never';
-            const d = new Date(iso);
-            const now = new Date();
+            const d = new Date(iso), now = new Date();
             const mins = Math.round((now - d) / 60000);
             if (mins < 1) return 'Just now';
             if (mins < 60) return mins + 'm ago';
             const hrs = Math.round(mins / 60);
             if (hrs < 24) return hrs + 'h ago';
             return Math.round(hrs / 24) + 'd ago';
+        }
+
+        function dotClass(status) {
+            if (status === 'green')  return 'dot dot-green';
+            if (status === 'red')    return 'dot dot-red';
+            if (status === 'amber' || status === 'yellow') return 'dot dot-amber';
+            return 'dot dot-unknown';
         }
 
         function updateClock() {
@@ -115,96 +129,113 @@
         async function refresh() {
             try {
                 const res = await fetch(API + '/api/pitwall/ops-dashboard');
-                if (!res.ok) throw new Error('API error');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const d = await res.json();
+
+                // Build agent lookup map
+                const agentMap = {};
+                (d.agent_health || []).forEach(a => { agentMap[a.agent_id] = a; });
+
+                renderSummary(d, agentMap);
                 renderAlerts(d.coo_report);
-                renderBusinesses(d);
-                renderAgentHealth(d.agent_health);
+                renderBusinesses(d, agentMap);
                 renderCOO(d.coo_report);
+
+                document.getElementById('last-refreshed').textContent =
+                    new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
             } catch (e) {
                 console.error('Refresh failed:', e);
             }
         }
 
-        function renderAlerts(coo) {
-            const el = document.getElementById('alerts');
-            if (!coo || !coo.alerts || coo.alerts.length === 0) { el.innerHTML = ''; return; }
-            el.innerHTML = coo.alerts.map(a => `<div class="alert">${a.message}</div>`).join('');
+        function renderSummary(d, agentMap) {
+            const totalAgents   = Object.keys(agentMap).length;
+            const todayTotal    = Object.values(d.crm_today || {}).reduce((s, v) => s + (v.created || 0), 0);
+            const weekTotal     = Object.values(d.crm_week  || {}).reduce((s, v) => s + (v.created || 0), 0);
+            const alertCount    = d.coo_report?.alert_count || 0;
+
+            document.getElementById('s-agents').textContent    = totalAgents;
+            document.getElementById('s-prospects').textContent = todayTotal;
+            document.getElementById('s-week').textContent      = weekTotal;
+
+            const alertEl = document.getElementById('s-alerts');
+            alertEl.textContent  = alertCount;
+            alertEl.style.color  = alertCount > 0 ? 'var(--red)' : 'var(--green)';
+
+            // Pulse turns red if any alerts
+            document.getElementById('pulse-dot').style.background = alertCount > 0 ? 'var(--red)' : 'var(--green)';
         }
 
-        function renderBusinesses(d) {
+        function renderAlerts(coo) {
+            const el = document.getElementById('alerts');
+            if (!coo?.alerts?.length) { el.innerHTML = ''; return; }
+            el.innerHTML = coo.alerts.map(a => `<div class="alert">${(a.message || a).replace(/</g,'&lt;')}</div>`).join('');
+        }
+
+        function renderBusinesses(d, agentMap) {
             const el = document.getElementById('businesses');
-            const bizdefs = [
-                { key: 'aiphoneguy', name: 'The AI Phone Guy', crm: 'GoHighLevel', agent: 'tyler' },
-                { key: 'callingdigital', name: 'Calling Digital', crm: 'Attio', agent: 'marcus' },
-                { key: 'autointelligence', name: 'Automotive Intelligence', crm: 'HubSpot', agent: 'ryan_data' },
-            ];
-            el.innerHTML = bizdefs.map(biz => {
-                const today = (d.crm_today || {})[biz.agent] || {};
-                const week = (d.crm_week || {})[biz.agent] || {};
-                const created_today = today.created || 0;
-                const created_week = week.created || 0;
-                return `
-                <div class="biz-section">
+            const bizSummary = d.coo_report?.business_summary || {};
+            const bizMeta    = d.businesses || {};
+            const order      = ['aiphoneguy', 'callingdigital', 'autointelligence'];
+
+            el.innerHTML = order.map(key => {
+                const meta    = bizMeta[key] || {};
+                const summary = bizSummary[key] || {};
+                const saleId  = meta.sales_agent || '';
+                const today   = (d.crm_today || {})[saleId] || {};
+                const week    = (d.crm_week  || {})[saleId] || {};
+                const ranIds  = summary.agents_ran    || [];
+                const missIds = summary.agents_missed || [];
+
+                const chips = ranIds.map(id => {
+                    const a = agentMap[id];
+                    if (!a) return '';
+                    return `<div class="agent-chip" title="Last run: ${relTime(a.last_run)}">
+                        <div class="${dotClass(a.status)}"></div>
+                        <span class="agent-chip-name">${a.name}</span>
+                        <span class="agent-chip-role">${a.role}</span>
+                    </div>`;
+                }).join('') + missIds.map(id => `
+                    <div class="agent-chip" style="opacity:0.45">
+                        <div class="dot dot-red"></div>
+                        <span class="agent-chip-name">${id}</span>
+                        <span class="agent-chip-role">missed</span>
+                    </div>`).join('');
+
+                return `<div class="biz-card">
                     <div class="biz-header">
-                        <div class="biz-name">${biz.name}</div>
-                        <div class="biz-crm">${biz.crm}</div>
+                        <div class="biz-name">${meta.name || key}</div>
+                        <div class="biz-crm">${meta.crm || ''}</div>
                     </div>
                     <div class="metrics-row">
                         <div class="metric-box">
-                            <div class="metric-val">${created_today}</div>
-                            <div class="metric-label">Prospects Today</div>
+                            <div class="metric-val">${today.created || 0}</div>
+                            <div class="metric-label">Today</div>
                         </div>
                         <div class="metric-box">
-                            <div class="metric-val">${created_week}</div>
+                            <div class="metric-val">${week.created || 0}</div>
                             <div class="metric-label">This Week</div>
                         </div>
                         <div class="metric-box">
-                            <div class="metric-val">${(today.duplicate_skipped || 0) + created_today}</div>
-                            <div class="metric-label">Total Pushes</div>
+                            <div class="metric-val">${ranIds.length}</div>
+                            <div class="metric-label">Agents</div>
                         </div>
                     </div>
+                    <div class="agent-roster">${chips || '<span style="color:var(--text2);font-size:11px">No data</span>'}</div>
                 </div>`;
             }).join('');
-        }
-
-        function renderAgentHealth(agents) {
-            const el = document.getElementById('agent-health');
-            if (!agents || agents.length === 0) {
-                el.innerHTML = '<h2>Agent Health</h2><div class="loading">No agent data</div>';
-                return;
-            }
-            const rows = agents.map(a => {
-                const dotClass = a.status === 'green' ? 'green' : (a.status === 'yellow' ? 'yellow' : 'red');
-                const preview = (a.log_preview || '').substring(0, 80);
-                return `
-                <div class="agent-row">
-                    <div class="agent-info">
-                        <div class="status-dot ${dotClass}"></div>
-                        <div>
-                            <div class="agent-name">${a.name}</div>
-                            <div class="agent-role">${a.role}</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="agent-time">${relTime(a.last_run)}</div>
-                        ${preview ? `<div class="agent-preview">${preview.replace(/</g,'&lt;')}</div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-            el.innerHTML = `<h2>Agent Health (${agents.length})</h2>${rows}`;
         }
 
         function renderCOO(report) {
             const el = document.getElementById('coo-section');
             if (!report) {
-                el.innerHTML = '<h2>COO Command</h2><div class="loading">No report yet</div>';
+                el.innerHTML = '<div class="section-title">COO Command</div><div class="loading">No report yet</div>';
                 return;
             }
             const gen = report.generated_at ? new Date(report.generated_at).toLocaleString() : 'Unknown';
             el.innerHTML = `
-                <h2>COO Command</h2>
-                <div style="font-size:11px;color:var(--text2);margin-bottom:10px;">Generated: ${gen}</div>
+                <div class="section-title">COO Command</div>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:12px;">Generated: ${gen}</div>
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
                     <div class="metric-box">
                         <div class="metric-val" style="color:var(--green)">${report.agents_ran || 0}</div>
@@ -219,11 +250,9 @@
                         <div class="metric-label">Alerts</div>
                     </div>
                 </div>
-                <div class="coo-priority">${report.priority_recommendation || 'No recommendation'}</div>
-            `;
+                <div class="coo-priority">${(report.priority_recommendation || 'No recommendation').replace(/</g,'&lt;')}</div>`;
         }
 
-        // Initial load + auto-refresh
         refresh();
         setInterval(refresh, 60000);
     </script>
