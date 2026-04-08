@@ -110,59 +110,62 @@ def _needs_blog_expansion(piece: dict) -> bool:
 
 
 def _expand_blog_piece(piece: dict, raw_output: str, agent_name: str) -> dict:
+    """Expand a short blog brief into a full article body using a plain-text LLM call.
+
+    Writing the body as plain text (not inside a JSON object) removes JSON overhead
+    and escaping issues, giving the full token budget to actual article content.
+    After generation we inject the body back into the piece metadata dict.
+    """
     minimum_words = 1200
-    attempt_prompt = f"""Turn this content brief into a complete publishable blog article.
-Return ONLY a JSON object. No markdown fences. No explanation.
+    title = piece.get("title", "")
+    cta = piece.get("cta", "")
+    funnel_stage = piece.get("funnel_stage", "awareness")
 
-Required keys:
-- platform
-- content_type
-- title
-- body
-- hashtags
-- cta
-- funnel_stage
+    base_prompt = f"""Write a complete, publication-ready blog article for a digital marketing agency serving small businesses in Dallas and North Texas.
 
-Rules:
-- Keep platform as \"blog\" and content_type as \"article\".
-- Preserve the existing title unless the brief clearly requires a small improvement.
-- Write the FULL article body, not a summary.
-- The body must be at least {minimum_words} words.
-- Aim for 1600-2400 words when the topic supports it.
-- Use scannable subheads, concrete examples, local-business framing, and a strong conversion section near the end.
-- Preserve any concrete URLs from the CTA or brief and include them naturally in the article body where useful.
-- Do not use placeholder links.
-- Make the article sound ready for Ghost publication.
-- Structure the body with substantial sections separated by blank lines.
-- Include an introduction, 4-6 main sections, a short FAQ section, and a closing CTA section.
-- Each main section should be materially developed, not a few sentences.
+TITLE: {title}
+FUNNEL STAGE: {funnel_stage}
+PRIMARY CTA: {cta}
 
-AGENT: {agent_name}
-BRIEF:
-{json.dumps(piece, ensure_ascii=False)}
+CONTEXT (from agent research):
+{raw_output[:3000]}
 
-SOURCE REPORT:
-{raw_output[:7000]}
+REQUIREMENTS:
+- Minimum 1600 words. Aim for 1800-2400.
+- Use markdown headers (## for H2, ### for H3).
+- Structure: Introduction (no header) → 5-6 main body sections → FAQ (## Frequently Asked Questions, 3 Q&A pairs) → Closing CTA section.
+- Each main section must be fully developed with concrete examples, stats, or step-by-step guidance — not a few sentences.
+- Local-business focus: reference Dallas, North Texas, Aubrey, Frisco, or Prosper where natural.
+- Weave in these anchor-text links where they fit naturally:
+  * "local SEO services in Aubrey" → https://www.calling.digital/local-seo
+  * "website design for small businesses" → https://www.calling.digital/website-design
+  * "book a strategy session" → https://calendly.com/calling-michael/strategy-session
+  * "Google Ads management for local service businesses" → https://www.calling.digital/search-engine-marketing
+- Close with a conversion paragraph linking to https://calendly.com/calling-michael/strategy-session
+- Write ONLY the article body. Do NOT include JSON, metadata, or any explanation outside the article.
 
-JSON object:"""
+Article body:"""
+
+    retry_suffix = (
+        "\n\nDraft too short. Add more depth to every section: more examples, "
+        "more numbered steps, more data points, longer FAQ, stronger CTA section. "
+        "The body must exceed 1600 words."
+    )
 
     try:
         for attempt in range(2):
-            prompt = attempt_prompt
-            if attempt == 1:
-                prompt += (
-                    f"\nThe previous draft was too short. Rewrite the article so the body exceeds {minimum_words} words. "
-                    "Use 7 or more substantial sections separated by blank lines, including an FAQ section with at least 3 Q&A pairs, "
-                    "more concrete examples, more buyer objections, and a stronger conclusion with a clear CTA."
-                )
-            content = _call_parser_llm(prompt, max_tokens=5000)
-            expanded = _extract_json_object(content)
-            if isinstance(expanded, dict) and expanded.get("body"):
-                if len((expanded.get("body") or "").split()) >= minimum_words:
-                    return expanded
-        logging.warning(f"[Parser] Blog expansion returned under-length draft for {piece.get('title', '')}")
+            prompt = base_prompt if attempt == 0 else base_prompt + retry_suffix
+            body_text = _call_parser_llm(prompt, max_tokens=5000)
+            body_words = len((body_text or "").split())
+            if body_words >= minimum_words:
+                result = dict(piece)
+                result["body"] = body_text
+                logging.info(f"[Parser] Blog expanded to {body_words} words for '{title}'")
+                return result
+            logging.info(f"[Parser] Expansion attempt {attempt + 1} returned {body_words} words for '{title}', retrying")
+        logging.warning(f"[Parser] Blog expansion returned under-length draft for {title}")
     except Exception as e:
-        logging.warning(f"[Parser] Blog expansion failed for {piece.get('title', '')}: {e}")
+        logging.warning(f"[Parser] Blog expansion failed for {title}: {e}")
     return piece
 
 
