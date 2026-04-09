@@ -8,6 +8,8 @@ export default function PitWallPage() {
   const [data, setData] = useState<PitWallTelemetry | null>(null);
   const [opsData, setOpsData] = useState<PitWallOpsDashboard | null>(null);
   const [error, setError] = useState<string>('');
+  const [clearing, setClearing] = useState(false);
+  const [clearMessage, setClearMessage] = useState<string>('');
 
   async function load() {
     try {
@@ -17,6 +19,26 @@ export default function PitWallPage() {
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load telemetry');
+    }
+  }
+
+  async function handleClearAlerts() {
+    setClearing(true);
+    setClearMessage('');
+    try {
+      const result = await api.clearAlerts();
+      const remaining = result.alerts_remaining || 0;
+      setClearMessage(
+        remaining === 0
+          ? 'All clear — no active alerts.'
+          : `${remaining} alert(s) still active after re-check.`
+      );
+      await load();
+    } catch (e) {
+      setClearMessage(e instanceof Error ? `Failed: ${e.message}` : 'Clear failed');
+    } finally {
+      setClearing(false);
+      setTimeout(() => setClearMessage(''), 5000);
     }
   }
 
@@ -60,13 +82,33 @@ export default function PitWallPage() {
         <MetricTile label="Alerts" value={alertCount} accent={alertCount > 0 ? 'amber' : 'green'} />
       </section>
 
-      {alertItems.length ? (
+      {alertItems.length || clearMessage ? (
         <section className="mb-6 space-y-2">
+          {alertItems.length ? (
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-pitmuted">
+                Active Alerts ({alertItems.length})
+              </h2>
+              <button
+                type="button"
+                onClick={handleClearAlerts}
+                disabled={clearing}
+                className="rounded-lg border border-pitamber/60 bg-pitamber/10 px-3 py-1.5 text-xs font-semibold text-pitamber transition hover:bg-pitamber/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {clearing ? 'Re-checking...' : 'Clear Alerts'}
+              </button>
+            </div>
+          ) : null}
           {alertItems.map((alert, index) => (
             <div key={`${alert}-${index}`} className="rounded-xl border border-pitamber/40 bg-pitamber/10 px-4 py-3 text-sm text-pittext">
               {alert}
             </div>
           ))}
+          {clearMessage ? (
+            <div className="rounded-xl border border-green-700/50 bg-green-900/20 px-4 py-2 text-xs text-green-300">
+              {clearMessage}
+            </div>
+          ) : null}
         </section>
       ) : null}
 

@@ -115,8 +115,27 @@ export type AgentLogs = {
   runs: AgentLogEntry[];
 };
 
+export type ClearAlertsResponse = {
+  status: string;
+  alerts_remaining: number;
+  alerts: Array<{ message?: string } | string>;
+  priority: string;
+  regenerated_at: string;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    throw new Error(`Request failed (${response.status}) for ${url}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+  });
   if (!response.ok) {
     throw new Error(`Request failed (${response.status}) for ${url}`);
   }
@@ -129,4 +148,5 @@ export const api = {
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),
   agentLogs: (agentId: string) => fetchJson<AgentLogs>(`/logs/${agentId}/history?limit=20`),
+  clearAlerts: () => postJson<ClearAlertsResponse>('/api/pitwall/clear-alerts'),
 };

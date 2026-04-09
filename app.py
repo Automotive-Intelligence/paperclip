@@ -5946,6 +5946,30 @@ async def pitwall_ops_dashboard():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.post("/api/pitwall/clear-alerts")
+async def clear_alerts():
+    """Re-run the COO command to refresh ops alerts.
+
+    The COO checks live system state every time it runs. If issues
+    have been fixed since the last report, the alerts disappear from
+    the new report. Issues that are still real will reappear.
+
+    This is the right semantics for a 'Clear Alerts' button — it does
+    not silence anything, it re-checks the system.
+    """
+    try:
+        report = run_coo_command()
+        return JSONResponse(content={
+            "status": "ok",
+            "alerts_remaining": report.get("alert_count", 0),
+            "alerts": report.get("alerts", []),
+            "priority": report.get("priority_recommendation", ""),
+            "regenerated_at": _iso_now(),
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
+
+
 @app.get("/ops-report")
 async def ops_report():
     """Latest COO Command ops report. Pulls most recent from PostgreSQL."""
