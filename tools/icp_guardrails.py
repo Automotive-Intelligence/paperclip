@@ -27,8 +27,11 @@ TYLER_ICP = {
         "personal injury", "pi law", "law firm", "attorney",
     ],
     "max_employees": 10,
+    # NOTE: 'live chat' and 'chatbot' removed — having a chat widget is a
+    # buying signal (they care about response coverage but lack real 24/7).
+    # Sophie replaces broken widgets, not competes with them.
     "exclude_keywords": [
-        "franchise", "franchisee", "chain", "live chat", "chatbot",
+        "franchise", "franchisee", "chain",
         "ai receptionist", "ai phone", "virtual receptionist",
     ],
 }
@@ -142,8 +145,11 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
     biz_name = _lower(prospect.get("business_name", ""))
     city = _lower(prospect.get("city", ""))
     biz_type = _lower(prospect.get("business_type", ""))
-    reason = _lower(prospect.get("reason", ""))
-    all_text = f"{biz_name} {city} {biz_type} {reason}"
+    # Exclusion checks run ONLY against name + type, never against the
+    # research `reason` field. The reason field is the agent's pitch notes
+    # (e.g. "could replace their live chat widget") and will naturally
+    # mention exclusion-keyword-like phrases as buying signals.
+    exclusion_text = f"{biz_name} {biz_type}"
 
     # ── Tyler ICP checks ──
     if agent_name == "tyler":
@@ -155,23 +161,23 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
         if biz_type and not _matches_any(biz_type, icp["target_industries"]):
             return False, f"Industry '{biz_type}' not in Tyler's target industries"
 
-        # Exclusion check
-        if _matches_any(all_text, icp["exclude_keywords"]):
-            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+        # Exclusion check (name + type only, not reason)
+        if _matches_any(exclusion_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in exclusion_text]
             return False, f"Excluded: matched exclusion keywords {matched}"
 
     # ── Marcus ICP checks ──
     elif agent_name == "marcus":
-        # Exclusion check
-        if _matches_any(all_text, icp["exclude_keywords"]):
-            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+        # Exclusion check (name + type only, not reason)
+        if _matches_any(exclusion_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in exclusion_text]
             return False, f"Excluded: matched exclusion keywords {matched}"
 
     # ── Ryan Data ICP checks ──
     elif agent_name == "ryan_data":
-        # Exclusion check
-        if _matches_any(all_text, icp["exclude_keywords"]):
-            matched = [kw for kw in icp["exclude_keywords"] if kw in all_text]
+        # Exclusion check (name + type only, not reason)
+        if _matches_any(exclusion_text, icp["exclude_keywords"]):
+            matched = [kw for kw in icp["exclude_keywords"] if kw in exclusion_text]
             return False, f"Excluded: matched exclusion keywords {matched}"
 
         # Must be a dealership
