@@ -65,12 +65,11 @@ def _find_new_contacts() -> list:
     for vertical_tag, meta in VERTICAL_MAP.items():
         try:
             url = f"{ATTIO_BASE}/objects/people/records/query"
+            # Query the AVO custom 'vertical' single-select attribute
+            # (created via OwnerPhones import — replaces the old 'tags' query
+            # which returned 400 because People object has no 'tags' attribute)
             payload = {
-                "filter": {
-                    "attribute": {"slug": "tags"},
-                    "condition": "contains_all",
-                    "value": [vertical_tag],
-                },
+                "filter": {"vertical": {"$eq": vertical_tag}},
                 "limit": 100,
             }
             resp = requests.post(url, headers=_attio_headers(), json=payload)
@@ -85,7 +84,7 @@ def _find_new_contacts() -> list:
                         contact["_raw"] = r
                         contacts.append(contact)
             else:
-                log_error("calling_digital", f"Attio query failed for {vertical_tag}: {resp.status_code}")
+                log_error("calling_digital", f"Attio query failed for {vertical_tag}: {resp.status_code} {resp.text[:200]}")
         except Exception as e:
             log_error("calling_digital", f"Attio query error for {vertical_tag}: {e}")
 
@@ -94,23 +93,47 @@ def _find_new_contacts() -> list:
 
 
 def _parse_attio_record(attrs: dict, vertical: str, meta: dict) -> dict:
-    """Parse Attio record attributes into a normalized contact dict."""
-    def _first_val(key):
+    """Parse Attio People record values into a normalized contact dict.
+
+    Attio's People object nests name parts, emails, phones, and locations
+    in specific shapes. This handles them all and falls back gracefully
+    when fields are missing.
+    """
+    def _first(key):
         vals = attrs.get(key, [])
         if vals and isinstance(vals, list):
-            v = vals[0]
-            if isinstance(v, dict):
-                return v.get("value") or v.get("original_value") or ""
-            return str(v)
-        return ""
+            return vals[0] if isinstance(vals[0], dict) else {"value": vals[0]}
+        return {}
+
+    name_obj = _first("name")
+    first_name = name_obj.get("first_name", "") or ""
+    last_name = name_obj.get("last_name", "") or ""
+
+    email_obj = _first("email_addresses")
+    email = email_obj.get("email_address", "") or email_obj.get("value", "") or ""
+
+    phone_obj = _first("phone_numbers")
+    phone = phone_obj.get("original_phone_number", "") or phone_obj.get("phone_number", "") or ""
+
+    company_obj = _first("company")
+    # Company is a record-reference; in queries it returns target_record_id
+    business_name = company_obj.get("target_record_id", "") or company_obj.get("value", "") or ""
+
+    location_obj = _first("primary_location")
+    city = location_obj.get("locality", "") or ""
+    state = location_obj.get("region", "") or ""
+
+    description_obj = _first("description")
+    description = description_obj.get("value", "") or ""
 
     return {
-        "firstName": _first_val("first_name"),
-        "lastName": _first_val("last_name"),
-        "email": _first_val("email_addresses"),
-        "businessName": _first_val("company"),
-        "city": _first_val("city"),
-        "state": _first_val("state"),
+        "firstName": first_name,
+        "lastName": last_name,
+        "email": email,
+        "phone": phone,
+        "businessName": business_name or description[:60],  # fallback to desc snippet
+        "city": city,
+        "state": state,
         "vertical": vertical,
         "industry": meta["industry"],
         "revenue": 0,

@@ -55,3 +55,8 @@ node_modules/
 .claude/
 hey-dealership/
 package-lock.json
+
+# AVO data — local only, contains PII
+data/ownerphones/
+.vite/
+
