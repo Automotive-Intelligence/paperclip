@@ -1,4 +1,16 @@
-# Marcus CD Outreach Sequence — Enrollment Guide
+# Marcus CD Outreach — Enrollment Guide
+
+> **⚠️ SUPERSEDED 2026-04-09 15:00 CST**
+>
+> The single Marcus CD Outreach Sequence has been replaced with **4 vertical-specific sequences** because the OwnerPhones list spans all of Texas (not just DFW) and each ICP needs different psychology.
+>
+> **Use this file instead:** [MARCUS_4_SEQUENCES.md](MARCUS_4_SEQUENCES.md)
+>
+> The 4-sequence approach gives you per-vertical open/reply data and lets you tune each one independently. Same merge fields, same recipients, better copy.
+
+---
+
+## Original (single-sequence) plan — kept for reference
 
 **State as of 2026-04-09 14:30 CST**
 
