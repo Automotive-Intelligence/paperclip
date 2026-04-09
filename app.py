@@ -510,7 +510,7 @@ def _avo_pre_run_context(agent_name: str) -> str:
 
 
 def _avo_post_run(agent_name: str, river: str, raw_output: str, duration_seconds: float = 0.0):
-    """Post-run hooks: save memory + estimate cost.
+    """Post-run hooks: save memory + persist log + check handoffs + track cost.
 
     Called AFTER every agent run completes.
     """
@@ -524,6 +524,18 @@ def _avo_post_run(agent_name: str, river: str, raw_output: str, duration_seconds
         }, river=river)
     except Exception as e:
         logging.debug("[AVO] Memory save skipped for %s: %s", agent_name, e)
+
+    # Persist to agent_logs so COO can see this run.
+    # Original 14 agents already call persist_log inside their run functions
+    # (so they get logged twice — once by the run fn, once here — that's fine,
+    # COO only checks for any entry in last 24h).
+    # The 9 new AVO agents (Randy/Brenda/Darrell/Tammy/Wade/Debra/Sterling/
+    # Clint/Sherry) and Axiom rely entirely on this call to be visible.
+    try:
+        log_type = LOG_TYPES.get(agent_name, "avo_run")
+        persist_log(agent_name, log_type, raw_output or f"{agent_name} run completed")
+    except Exception as e:
+        logging.debug("[AVO] persist_log skipped for %s: %s", agent_name, e)
 
     # Check for handoff triggers based on agent output
     try:

@@ -16,7 +16,8 @@ from services.database import execute_query, fetch_all
 
 logger = logging.getLogger(__name__)
 
-# All agents that should run daily
+# All agents that should run daily.
+# NOTE: wade_ae and debra run weekly (Mondays only) — excluded from daily check.
 EXPECTED_AGENTS = [
     # CEOs
     "alex", "dek", "michael_meta",
@@ -28,13 +29,18 @@ EXPECTED_AGENTS = [
     "jennifer", "carlos",
     # Specialists
     "nova", "atlas", "phoenix",
-    # RevOps
+    # RevOps (interval-based, run multiple times per day)
     "randy", "brenda", "darrell",
-    # Agent Empire
-    "debra", "wade_ae", "tammy_ae", "sterling",
+    # Agent Empire (daily only — wade_ae and debra are weekly Monday)
+    "tammy_ae", "sterling",
     # CustomerAdvocate
     "clint", "sherry",
+    # CEO Orchestration
+    "axiom",
 ]
+
+# Weekly agents — checked separately, not daily
+WEEKLY_AGENTS = ["wade_ae", "debra"]
 
 SALES_AGENTS = ["tyler", "marcus", "ryan_data"]
 
@@ -49,6 +55,7 @@ AGENT_BUSINESS_MAP = {
     "debra": "agentempire", "wade_ae": "agentempire", "tammy_ae": "agentempire",
     "sterling": "agentempire",
     "clint": "customeradvocate", "sherry": "customeradvocate",
+    "axiom": "ceo",
 }
 
 
