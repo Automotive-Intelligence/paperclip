@@ -28,6 +28,46 @@ export type PitWallTelemetry = {
   teams: TeamSummary[];
 };
 
+export type OpsAgentHealth = {
+  agent_id: string;
+  name: string;
+  role: string;
+  last_run: string | null;
+  status: string;
+  log_preview?: string;
+};
+
+export type OpsBusinessSummary = {
+  agents_ran?: string[];
+  agents_missed?: string[];
+};
+
+export type OpsBusinessMeta = {
+  name: string;
+  sales_agent: string;
+  crm: string;
+};
+
+export type OpsReport = {
+  generated_at?: string;
+  agents_ran?: number;
+  agents_missed?: number;
+  alert_count?: number;
+  priority_recommendation?: string;
+  alerts?: Array<{ message?: string } | string>;
+  business_summary?: Record<string, OpsBusinessSummary>;
+};
+
+export type PitWallOpsDashboard = {
+  timestamp: string;
+  refresh_seconds: number;
+  agent_health: OpsAgentHealth[];
+  crm_today: Record<string, { created?: number; duplicate_skipped?: number }>;
+  crm_week: Record<string, { created?: number; duplicate_skipped?: number }>;
+  coo_report: OpsReport | null;
+  businesses: Record<string, OpsBusinessMeta>;
+};
+
 export type TeamDetail = {
   timestamp: string;
   team_id: string;
@@ -85,6 +125,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 export const api = {
   telemetry: () => fetchJson<PitWallTelemetry>('/api/pitwall/telemetry'),
+  opsDashboard: () => fetchJson<PitWallOpsDashboard>('/api/pitwall/ops-dashboard'),
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),
   agentLogs: (agentId: string) => fetchJson<AgentLogs>(`/logs/${agentId}/history?limit=20`),

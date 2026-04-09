@@ -23,6 +23,7 @@ import json
 import asyncio
 import uuid
 import re
+from importlib import import_module
 from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
@@ -33,7 +34,6 @@ from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
-from crewai import Crew, Task, Process
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -52,6 +52,23 @@ from services.approval_queue import (
 from services.dispatch import dispatch_artifact
 from services.delivery_receipt import get_receipts
 from services.social_pipeline import run_zernio_social_pipeline, prepare_social_piece_with_creative_director
+
+try:
+    from crewai import Crew, Task, Process
+    _CREWAI_OK = True
+except ImportError as _crewai_err:
+    logging.warning(f"[CrewAI] import failed — CrewAI-powered jobs disabled: {_crewai_err}")
+
+    class _CrewAIUnavailable:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("CrewAI is not available in this environment.")
+
+    class _ProcessUnavailable:
+        sequential = None
+
+    Crew = Task = _CrewAIUnavailable  # type: ignore
+    Process = _ProcessUnavailable  # type: ignore
+    _CREWAI_OK = False
 
 # Load environment variables from .env file
 load_dotenv()
@@ -128,26 +145,45 @@ from tools.revenue_tracker import (
 
 # ── Agent Imports ────────────────────────────────────────────────────────────
 
+def _load_agent_symbol(module_path: str, symbol_name: str):
+    try:
+        module = import_module(module_path)
+        return getattr(module, symbol_name)
+    except Exception as exc:
+        logging.warning(f"[Agents] {symbol_name} unavailable from {module_path}: {exc}")
+        return None
+
+
+def _load_agent_job(module_path: str, symbol_name: str):
+    symbol = _load_agent_symbol(module_path, symbol_name)
+    if symbol is not None:
+        return symbol
+
+    def _missing_agent_job(*args, **kwargs):
+        raise RuntimeError(f"Agent job '{symbol_name}' is unavailable in this environment.")
+
+    return _missing_agent_job
+
 # The AI Phone Guy
-from agents.aiphoneguy.alex import alex
-from agents.aiphoneguy.tyler import tyler
-from agents.aiphoneguy.zoe import zoe
-from agents.aiphoneguy.jennifer import jennifer
+alex = _load_agent_symbol("agents.aiphoneguy.alex", "alex")
+tyler = _load_agent_symbol("agents.aiphoneguy.tyler", "tyler")
+zoe = _load_agent_symbol("agents.aiphoneguy.zoe", "zoe")
+jennifer = _load_agent_symbol("agents.aiphoneguy.jennifer", "jennifer")
 
 # Calling Digital
-from agents.callingdigital.dek import dek
-from agents.callingdigital.marcus import marcus
-from agents.callingdigital.sofia import sofia
-from agents.callingdigital.carlos import carlos
-from agents.callingdigital.nova import nova
+dek = _load_agent_symbol("agents.callingdigital.dek", "dek")
+marcus = _load_agent_symbol("agents.callingdigital.marcus", "marcus")
+sofia = _load_agent_symbol("agents.callingdigital.sofia", "sofia")
+carlos = _load_agent_symbol("agents.callingdigital.carlos", "carlos")
+nova = _load_agent_symbol("agents.callingdigital.nova", "nova")
 
 # Automotive Intelligence
-from agents.autointelligence.michael_meta import michael_meta
-from agents.autointelligence.ryan_data import ryan_data
-from agents.autointelligence.chase import chase
-from agents.autointelligence.atlas import atlas
-from agents.autointelligence.phoenix import phoenix
-from agents.coo.coo_agent import run_coo_command
+michael_meta = _load_agent_symbol("agents.autointelligence.michael_meta", "michael_meta")
+ryan_data = _load_agent_symbol("agents.autointelligence.ryan_data", "ryan_data")
+chase = _load_agent_symbol("agents.autointelligence.chase", "chase")
+atlas = _load_agent_symbol("agents.autointelligence.atlas", "atlas")
+phoenix = _load_agent_symbol("agents.autointelligence.phoenix", "phoenix")
+run_coo_command = _load_agent_job("agents.coo.coo_agent", "run_coo_command")
 
 
 CST = pytz.timezone("America/Chicago")
@@ -2856,6 +2892,7 @@ pitwall_assets_dir = Path(__file__).parent / "static" / "pitwall-react"
 pitwall_assets_mount = pitwall_assets_dir / "assets"
 if pitwall_assets_mount.exists():
     app.mount("/pitwall-static/assets", StaticFiles(directory=pitwall_assets_mount), name="pitwall-react-assets")
+    app.mount("/assets", StaticFiles(directory=pitwall_assets_mount), name="pitwall-react-assets-root")
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────

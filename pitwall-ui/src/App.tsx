@@ -10,6 +10,7 @@ export default function App() {
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<PitWallPage />} />
+        <Route path="/dashboard" element={<PitWallPage />} />
         <Route path="/pit-wall" element={<PitWallPage />} />
         <Route path="/team/:teamId" element={<TeamPage />} />
         <Route path="/team/:teamId/agent/:agentId" element={<AgentPage />} />
