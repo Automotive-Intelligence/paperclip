@@ -28,16 +28,27 @@ EXPECTED_AGENTS = [
     "jennifer", "carlos",
     # Specialists
     "nova", "atlas", "phoenix",
+    # RevOps
+    "randy", "brenda", "darrell",
+    # Agent Empire
+    "debra", "wade_ae", "tammy_ae", "sterling",
+    # CustomerAdvocate
+    "clint", "sherry",
 ]
 
 SALES_AGENTS = ["tyler", "marcus", "ryan_data"]
 
 AGENT_BUSINESS_MAP = {
     "alex": "aiphoneguy", "tyler": "aiphoneguy", "zoe": "aiphoneguy", "jennifer": "aiphoneguy",
+    "randy": "aiphoneguy",
     "dek": "callingdigital", "marcus": "callingdigital", "sofia": "callingdigital",
-    "carlos": "callingdigital", "nova": "callingdigital",
+    "carlos": "callingdigital", "nova": "callingdigital", "brenda": "callingdigital",
     "michael_meta": "autointelligence", "ryan_data": "autointelligence",
     "chase": "autointelligence", "atlas": "autointelligence", "phoenix": "autointelligence",
+    "darrell": "autointelligence",
+    "debra": "agentempire", "wade_ae": "agentempire", "tammy_ae": "agentempire",
+    "sterling": "agentempire",
+    "clint": "customeradvocate", "sherry": "customeradvocate",
 }
 
 
@@ -124,7 +135,7 @@ def run_coo_command() -> Dict[str, Any]:
 
         # ── Build per-business summary ──
         business_summary = {}
-        for business in ["aiphoneguy", "callingdigital", "autointelligence"]:
+        for business in ["aiphoneguy", "callingdigital", "autointelligence", "agentempire", "customeradvocate"]:
             biz_agents = [a for a, b in AGENT_BUSINESS_MAP.items() if b == business]
             biz_ran = [a for a in biz_agents if a in agent_status["ran"]]
             biz_missed = [a for a in biz_agents if a in agent_status["missed"]]

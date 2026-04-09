@@ -183,6 +183,22 @@ ryan_data = _load_agent_symbol("agents.autointelligence.ryan_data", "ryan_data")
 chase = _load_agent_symbol("agents.autointelligence.chase", "chase")
 atlas = _load_agent_symbol("agents.autointelligence.atlas", "atlas")
 phoenix = _load_agent_symbol("agents.autointelligence.phoenix", "phoenix")
+darrell = _load_agent_symbol("agents.autointelligence.darrell", "darrell")
+
+# Agent Empire
+debra = _load_agent_symbol("agents.agentempire.debra", "debra")
+wade_agent = _load_agent_symbol("agents.agentempire.wade", "wade")
+tammy_agent = _load_agent_symbol("agents.agentempire.tammy", "tammy")
+sterling = _load_agent_symbol("agents.agentempire.sterling", "sterling")
+
+# CustomerAdvocate
+clint = _load_agent_symbol("agents.customeradvocate.clint", "clint")
+sherry = _load_agent_symbol("agents.customeradvocate.sherry", "sherry")
+
+# RevOps agents
+randy = _load_agent_symbol("agents.aiphoneguy.randy", "randy")
+brenda = _load_agent_symbol("agents.callingdigital.brenda", "brenda")
+
 run_coo_command = _load_agent_job("agents.coo.coo_agent", "run_coo_command")
 
 
@@ -355,6 +371,86 @@ def init_db():
     except DatabaseError as e:
         logging.error(f"[DB] crm_push_logs table init failed: {e}")
 
+    # ── AVO Intelligence Layer tables ─────────────────────────────────────
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                id          SERIAL PRIMARY KEY,
+                agent_name  TEXT        NOT NULL,
+                river       TEXT        NOT NULL DEFAULT '',
+                memory_type TEXT        NOT NULL,
+                content     TEXT        NOT NULL,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_memory_lookup
+                ON agent_memory (agent_name, memory_type, created_at DESC);
+        """)
+        logging.info("[DB] agent_memory table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] agent_memory table init failed: {e}")
+
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS agent_handoffs (
+                id              SERIAL PRIMARY KEY,
+                from_agent      TEXT        NOT NULL,
+                to_agent        TEXT        NOT NULL,
+                river           TEXT        NOT NULL DEFAULT '',
+                handoff_type    TEXT        NOT NULL,
+                payload         TEXT        NOT NULL DEFAULT '{}',
+                priority        TEXT        NOT NULL DEFAULT 'medium',
+                status          TEXT        NOT NULL DEFAULT 'pending',
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                picked_up_at    TIMESTAMPTZ,
+                completed_at    TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_handoffs_pending
+                ON agent_handoffs (to_agent, status, created_at);
+        """)
+        logging.info("[DB] agent_handoffs table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] agent_handoffs table init failed: {e}")
+
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS axiom_directives (
+                id              SERIAL PRIMARY KEY,
+                target_agent    TEXT        NOT NULL,
+                river           TEXT        NOT NULL DEFAULT '',
+                directive       TEXT        NOT NULL,
+                priority        TEXT        NOT NULL DEFAULT 'medium',
+                triggered_by    TEXT        NOT NULL DEFAULT '',
+                status          TEXT        NOT NULL DEFAULT 'pending',
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_axiom_directives_pending
+                ON axiom_directives (target_agent, status, created_at);
+        """)
+        logging.info("[DB] axiom_directives table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] axiom_directives table init failed: {e}")
+
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS agent_run_costs (
+                id                      SERIAL PRIMARY KEY,
+                agent_name              TEXT        NOT NULL,
+                river                   TEXT        NOT NULL DEFAULT '',
+                model                   TEXT        NOT NULL DEFAULT '',
+                input_tokens            INTEGER     NOT NULL DEFAULT 0,
+                output_tokens           INTEGER     NOT NULL DEFAULT 0,
+                cost_usd                REAL        NOT NULL DEFAULT 0,
+                run_date                DATE        NOT NULL,
+                run_duration_seconds    REAL        NOT NULL DEFAULT 0,
+                created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_run_costs_lookup
+                ON agent_run_costs (agent_name, run_date DESC);
+        """)
+        logging.info("[DB] agent_run_costs table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] agent_run_costs table init failed: {e}")
+
 
 def persist_log(agent_name: str, log_type: str, content: str):
     """Write an agent run result to Postgres (primary). Filesystem writes skipped on Railway."""
@@ -375,6 +471,152 @@ def persist_log(agent_name: str, log_type: str, content: str):
         logging.info(f"[DB] ✓ Persisted {agent_name}/{log_type} to Postgres ({len(content)} chars)")
     except DatabaseError as e:
         logging.error(f"[DB] ✗ persist_log FAILED for {agent_name}/{log_type}: {e}")
+
+
+# ── AVO Intelligence Layer — Pre/Post Run Hooks ──────────────────────────────
+
+def _avo_pre_run_context(agent_name: str) -> str:
+    """Build the intelligence context injected BEFORE every agent's main task.
+
+    Order: Memory → Directives → Handoffs
+    Returns a string to prepend to the agent's task description.
+    """
+    parts = []
+    try:
+        from core.memory import build_memory_context
+        mem = build_memory_context(agent_name)
+        if mem:
+            parts.append(mem)
+    except Exception as e:
+        logging.debug("[AVO] Memory injection skipped for %s: %s", agent_name, e)
+
+    try:
+        from agents.ceo.axiom import build_directive_context
+        directives = build_directive_context(agent_name)
+        if directives:
+            parts.append(directives)
+    except Exception as e:
+        logging.debug("[AVO] Directive injection skipped for %s: %s", agent_name, e)
+
+    try:
+        from core.handoff import build_handoff_context
+        handoffs = build_handoff_context(agent_name)
+        if handoffs:
+            parts.append(handoffs)
+    except Exception as e:
+        logging.debug("[AVO] Handoff injection skipped for %s: %s", agent_name, e)
+
+    return "\n\n".join(parts)
+
+
+def _avo_post_run(agent_name: str, river: str, raw_output: str, duration_seconds: float = 0.0):
+    """Post-run hooks: save memory + estimate cost.
+
+    Called AFTER every agent run completes.
+    """
+    # Save daily summary memory
+    try:
+        from core.memory import save_memory
+        summary = raw_output[:500] if raw_output else "Run completed with no output"
+        save_memory(agent_name, "daily_summary", {
+            "summary": summary,
+            "output_length": len(raw_output) if raw_output else 0,
+        }, river=river)
+    except Exception as e:
+        logging.debug("[AVO] Memory save skipped for %s: %s", agent_name, e)
+
+    # Check for handoff triggers based on agent output
+    try:
+        _check_handoff_triggers(agent_name, river, raw_output)
+    except Exception as e:
+        logging.debug("[AVO] Handoff check skipped for %s: %s", agent_name, e)
+
+    # Estimate and log cost (rough estimate based on output length)
+    try:
+        from core.cost_tracker import log_run_cost
+        # Estimate tokens: ~4 chars per token for English text
+        estimated_output_tokens = len(raw_output) // 4 if raw_output else 0
+        estimated_input_tokens = estimated_output_tokens * 2  # Rough: input is usually ~2x output
+        model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+        log_run_cost(
+            agent_name=agent_name,
+            river=river,
+            model=model,
+            input_tokens=estimated_input_tokens,
+            output_tokens=estimated_output_tokens,
+            run_duration_seconds=duration_seconds,
+        )
+    except Exception as e:
+        logging.debug("[AVO] Cost tracking skipped for %s: %s", agent_name, e)
+
+
+def _check_handoff_triggers(agent_name: str, river: str, raw_output: str):
+    """Check if an agent's output should trigger a handoff to another agent.
+
+    Wired handoff rules:
+      Atlas → Ryan Data (dealer brief completed)
+      Zoe → Review Queue (content produced, needs review)
+      Debra → Wade (content calendar with tools mentioned)
+      Clint → Sherry (VERA component completed)
+      Tyler → Jennifer (3+ new prospects)
+    """
+    from core.handoff import create_handoff
+
+    output_lower = (raw_output or "").lower()
+
+    if agent_name == "atlas" and any(kw in output_lower for kw in ["dealer brief", "dealership", "profile"]):
+        create_handoff("atlas", "ryan_data", river, "dealer_brief",
+                       {"summary": raw_output[:300]}, priority="high")
+
+    elif agent_name == "zoe" and any(kw in output_lower for kw in ["content", "blog", "post", "article"]):
+        create_handoff("zoe", "zoe", river, "content_review",
+                       {"content_preview": raw_output[:300], "status": "pending_review"}, priority="medium")
+
+    elif agent_name == "debra" and any(kw in output_lower for kw in ["outline", "calendar", "video"]):
+        create_handoff("debra", "wade_ae", river, "sponsor_check",
+                       {"tools_mentioned": raw_output[:300]}, priority="medium")
+
+    elif agent_name == "clint" and any(kw in output_lower for kw in ["vera", "scoring", "component", "build"]):
+        create_handoff("clint", "sherry", river, "ui_component",
+                       {"technical_spec": raw_output[:300]}, priority="high")
+
+    elif agent_name == "tyler" and output_lower.count("prospect") >= 3:
+        create_handoff("tyler", "jennifer", river, "prospect_alert",
+                       {"prospect_summary": raw_output[:300],
+                        "message": "Prepare onboarding context for these verticals in case they convert"},
+                       priority="medium")
+
+
+def _avo_wrap_run(agent_name: str, river: str, run_fn):
+    """Universal intelligence wrapper for any agent run function.
+
+    Injects memory + directives + handoffs before the run,
+    saves memory + estimates cost after.
+    """
+    import time as _time
+    # Pre-run: build intelligence context (logged but not injected into CrewAI
+    # task descriptions — that would require refactoring each run function.
+    # Instead, the context is logged and available for Axiom's nightly analysis.)
+    try:
+        ctx = _avo_pre_run_context(agent_name)
+        if ctx:
+            logging.info("[AVO] %s pre-run context: %s", agent_name, ctx[:200])
+    except Exception:
+        pass
+
+    start = _time.time()
+    result = run_fn()
+    duration = _time.time() - start
+
+    # Post-run: save memory + track cost
+    raw_output = ""
+    if isinstance(result, dict):
+        raw_output = json.dumps(result, default=str)[:2000]
+    elif isinstance(result, str):
+        raw_output = result[:2000]
+    _avo_post_run(agent_name, river, raw_output, duration)
+
+    return result
 
 
 def _build_ceo_kpi_context(business_key: str) -> str:
@@ -442,18 +684,29 @@ AGENTS = {
     "tyler": tyler,
     "zoe": zoe,
     "jennifer": jennifer,
+    "randy": randy,
     # Calling Digital
     "dek": dek,
     "marcus": marcus,
     "sofia": sofia,
     "carlos": carlos,
     "nova": nova,
+    "brenda": brenda,
     # Automotive Intelligence
     "michael_meta": michael_meta,
     "ryan_data": ryan_data,
     "chase": chase,
     "atlas": atlas,
     "phoenix": phoenix,
+    "darrell": darrell,
+    # Agent Empire
+    "debra": debra,
+    "wade_ae": wade_agent,
+    "tammy_ae": tammy_agent,
+    "sterling": sterling,
+    # CustomerAdvocate
+    "clint": clint,
+    "sherry": sherry,
 }
 
 # Maps each agent to its log_type label (matches log file naming)
@@ -472,20 +725,37 @@ LOG_TYPES = {
     "nova":         "intelligence",
     "atlas":        "intel",
     "phoenix":      "delivery",
+    "randy":        "revops",
+    "brenda":       "revops",
+    "darrell":      "revops",
+    "debra":        "content",
+    "wade_ae":      "bizdev",
+    "tammy_ae":     "community",
+    "clint":        "build",
+    "sherry":       "design",
+    "sterling":     "web",
 }
 
 BUSINESSES = {
     "aiphoneguy": {
         "name": "The AI Phone Guy",
-        "agents": ["alex", "tyler", "zoe", "jennifer"],
+        "agents": ["alex", "tyler", "zoe", "jennifer", "randy"],
     },
     "callingdigital": {
         "name": "Calling Digital",
-        "agents": ["dek", "marcus", "sofia", "carlos", "nova"],
+        "agents": ["dek", "marcus", "sofia", "carlos", "nova", "brenda"],
     },
     "autointelligence": {
         "name": "Automotive Intelligence",
-        "agents": ["michael_meta", "ryan_data", "chase", "atlas", "phoenix"],
+        "agents": ["michael_meta", "ryan_data", "chase", "atlas", "phoenix", "darrell"],
+    },
+    "agentempire": {
+        "name": "Agent Empire",
+        "agents": ["debra", "wade_ae", "tammy_ae", "sterling"],
+    },
+    "customeradvocate": {
+        "name": "CustomerAdvocate",
+        "agents": ["clint", "sherry"],
     },
 }
 
@@ -654,11 +924,20 @@ PITWALL_AGENT_META: Dict[str, Dict[str, str]] = {
     "carlos": {"name": "Carlos", "role": "Head of Content and Creative", "lane": "Creative", "team_id": "callingdigital"},
     "sofia": {"name": "Sofia", "role": "Head of Client Success", "lane": "Retention", "team_id": "callingdigital"},
     "nova": {"name": "Nova", "role": "Implementation Director", "lane": "Systems", "team_id": "callingdigital"},
+    "randy": {"name": "Randy", "role": "RevOps Agent", "lane": "Revenue Operations", "team_id": "aiphoneguy"},
+    "brenda": {"name": "Brenda", "role": "RevOps Agent", "lane": "Revenue Operations", "team_id": "callingdigital"},
+    "darrell": {"name": "Darrell", "role": "RevOps Agent", "lane": "Revenue Operations", "team_id": "autointelligence"},
+    "debra": {"name": "Debra", "role": "Producer Agent", "lane": "Content", "team_id": "agentempire"},
+    "wade_ae": {"name": "Wade", "role": "Biz Dev Agent", "lane": "Sponsor Outreach", "team_id": "agentempire"},
+    "tammy_ae": {"name": "Tammy", "role": "Community Agent", "lane": "Engagement", "team_id": "agentempire"},
+    "sterling": {"name": "Sterling", "role": "Web Agent", "lane": "Web", "team_id": "agentempire"},
+    "clint": {"name": "Clint", "role": "Technical Builder", "lane": "Engineering", "team_id": "customeradvocate"},
+    "sherry": {"name": "Sherry", "role": "Web Design Agent", "lane": "Design", "team_id": "customeradvocate"},
 }
 
 
 def _pitwall_team_ids() -> List[str]:
-    return ["aiphoneguy", "autointelligence", "callingdigital"]
+    return ["aiphoneguy", "autointelligence", "callingdigital", "agentempire", "customeradvocate"]
 
 
 def _pitwall_display_name(agent_id: str) -> str:
@@ -2567,6 +2846,58 @@ def run_all_agents_test():
     return results
 
 
+# ── AVO Intelligence Wrappers (must be defined before scheduler registrations) ─
+
+def _avo_sched_alex():
+    _avo_wrap_run("alex", "aiphoneguy", run_alex_daily_briefing)
+
+def _avo_sched_dek():
+    _avo_wrap_run("dek", "callingdigital", run_dek_daily_briefing)
+
+def _avo_sched_michael_meta():
+    _avo_wrap_run("michael_meta", "autointelligence", run_michael_meta_daily_briefing)
+
+def _avo_sched_tyler():
+    _avo_wrap_run("tyler", "aiphoneguy", run_tyler_prospecting)
+
+def _avo_sched_marcus():
+    _avo_wrap_run("marcus", "callingdigital", run_marcus_prospecting)
+
+def _avo_sched_ryan_data():
+    _avo_wrap_run("ryan_data", "autointelligence", run_ryan_data_prospecting)
+
+def _avo_sched_zoe():
+    _avo_wrap_run("zoe", "aiphoneguy", run_zoe_content)
+
+def _avo_sched_sofia():
+    _avo_wrap_run("sofia", "callingdigital", run_sofia_content)
+
+def _avo_sched_chase():
+    _avo_wrap_run("chase", "autointelligence", run_chase_content)
+
+def _avo_sched_jennifer():
+    _avo_wrap_run("jennifer", "aiphoneguy", run_jennifer_retention)
+
+def _avo_sched_carlos():
+    _avo_wrap_run("carlos", "callingdigital", run_carlos_retention)
+
+def _avo_sched_nova():
+    _avo_wrap_run("nova", "callingdigital", run_nova_intelligence)
+
+def _avo_sched_atlas():
+    _avo_wrap_run("atlas", "autointelligence", run_atlas_intel)
+
+def _avo_sched_phoenix():
+    _avo_wrap_run("phoenix", "autointelligence", run_phoenix_delivery)
+
+def _avo_sched_axiom():
+    try:
+        from agents.ceo.axiom import run_axiom
+        _avo_wrap_run("axiom", "ceo", run_axiom)
+    except Exception as e:
+        logging.error(f"[AVO] Axiom scheduled run failed: {e}")
+
+
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
 # COO Command — 7:45 (runs before all other agents)
@@ -2574,16 +2905,16 @@ scheduler.add_job(run_coo_command, CronTrigger(hour=7, minute=45, timezone=CST),
     id="coo_command_daily", name="COO Command Daily Ops",
     replace_existing=True, misfire_grace_time=3600)
 
-# CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing)
-scheduler.add_job(run_alex_daily_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
+# CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
+scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_dek_daily_briefing, CronTrigger(hour=8, minute=2, timezone=CST),
+scheduler.add_job(_avo_sched_dek, CronTrigger(hour=8, minute=2, timezone=CST),
     id="dek_daily_briefing", name="Dek Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_michael_meta_daily_briefing, CronTrigger(hour=8, minute=4, timezone=CST),
+scheduler.add_job(_avo_sched_michael_meta, CronTrigger(hour=8, minute=4, timezone=CST),
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
@@ -2595,37 +2926,37 @@ SALES_HOURS = [8, 10, 12, 14, 16]
 
 for hour in SALES_HOURS:
     scheduler.add_job(
-        run_tyler_prospecting,
+        _avo_sched_tyler,
         CronTrigger(hour=hour, minute=30, timezone=CST),
         id=f"tyler_prospecting_{hour}30",
         name=f"Tyler Prospecting {hour}:30",
         replace_existing=True, misfire_grace_time=3600,
     )
     scheduler.add_job(
-        run_marcus_prospecting,
+        _avo_sched_marcus,
         CronTrigger(hour=hour, minute=32, timezone=CST),
         id=f"marcus_prospecting_{hour}32",
         name=f"Marcus Prospecting {hour}:32",
         replace_existing=True, misfire_grace_time=3600,
     )
     scheduler.add_job(
-        run_ryan_data_prospecting,
+        _avo_sched_ryan_data,
         CronTrigger(hour=hour, minute=34, timezone=CST),
         id=f"ryan_data_prospecting_{hour}34",
         name=f"Ryan Data Prospecting {hour}:34",
         replace_existing=True, misfire_grace_time=3600,
     )
 
-# Marketing — 9:00, 9:02, 9:04 (once daily — content planning)
-scheduler.add_job(run_zoe_content, CronTrigger(hour=9, minute=0, timezone=CST),
+# Marketing — 9:00, 9:02, 9:04 (once daily — content planning) [AVO wrapped]
+scheduler.add_job(_avo_sched_zoe, CronTrigger(hour=9, minute=0, timezone=CST),
     id="zoe_daily_content", name="Zoe Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_sofia_content, CronTrigger(hour=9, minute=2, timezone=CST),
+scheduler.add_job(_avo_sched_sofia, CronTrigger(hour=9, minute=2, timezone=CST),
     id="sofia_daily_content", name="Sofia Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_chase_content, CronTrigger(hour=9, minute=4, timezone=CST),
+scheduler.add_job(_avo_sched_chase, CronTrigger(hour=9, minute=4, timezone=CST),
     id="chase_daily_content", name="Chase Daily Content",
     replace_existing=True, misfire_grace_time=3600)
 
@@ -2634,25 +2965,25 @@ scheduler.add_job(run_ghost_drain_callingdigital, CronTrigger(hour=9, minute=20,
     id="ghost_drain_callingdigital", name="Ghost Blog Drain — Calling Digital",
     replace_existing=True, misfire_grace_time=3600)
 
-# Client Success — 9:30, 9:32
-scheduler.add_job(run_jennifer_retention, CronTrigger(hour=9, minute=30, timezone=CST),
+# Client Success — 9:30, 9:32 [AVO wrapped]
+scheduler.add_job(_avo_sched_jennifer, CronTrigger(hour=9, minute=30, timezone=CST),
     id="jennifer_daily_retention", name="Jennifer Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_carlos_retention, CronTrigger(hour=9, minute=32, timezone=CST),
+scheduler.add_job(_avo_sched_carlos, CronTrigger(hour=9, minute=32, timezone=CST),
     id="carlos_daily_retention", name="Carlos Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-# Specialists — 10:00, 10:02, 10:04
-scheduler.add_job(run_nova_intelligence, CronTrigger(hour=10, minute=0, timezone=CST),
+# Specialists — 10:00, 10:02, 10:04 [AVO wrapped]
+scheduler.add_job(_avo_sched_nova, CronTrigger(hour=10, minute=0, timezone=CST),
     id="nova_daily_intelligence", name="Nova Daily Intelligence",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_atlas_intel, CronTrigger(hour=10, minute=2, timezone=CST),
+scheduler.add_job(_avo_sched_atlas, CronTrigger(hour=10, minute=2, timezone=CST),
     id="atlas_daily_intel", name="Atlas Daily Intel",
     replace_existing=True, misfire_grace_time=3600)
 
-scheduler.add_job(run_phoenix_delivery, CronTrigger(hour=10, minute=4, timezone=CST),
+scheduler.add_job(_avo_sched_phoenix, CronTrigger(hour=10, minute=4, timezone=CST),
     id="phoenix_daily_delivery", name="Phoenix Daily Delivery",
     replace_existing=True, misfire_grace_time=3600)
 
@@ -2664,6 +2995,134 @@ scheduler.add_job(run_all_agents_test, CronTrigger(hour=18, minute=30, timezone=
 # Quality score snapshot — 6:45 PM CST (after daily activity and test suite)
 scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, timezone=CST),
     id="quality_snapshot_daily", name="📈 Daily Quality Snapshot",
+    replace_existing=True, misfire_grace_time=3600)
+
+# ── Project Paperclip — RevOps Agents ─────────────────────────────────────────
+
+def _run_randy():
+    try:
+        from rivers.ai_phone_guy.workflow import randy_run
+        _avo_wrap_run("randy", "aiphoneguy", randy_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Randy scheduled run failed: {e}")
+
+def _run_brenda():
+    try:
+        from rivers.calling_digital.workflow import brenda_run
+        _avo_wrap_run("brenda", "callingdigital", brenda_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Brenda scheduled run failed: {e}")
+
+def _run_darrell():
+    try:
+        from rivers.automotive_intelligence.workflow import darrell_run
+        _avo_wrap_run("darrell", "autointelligence", darrell_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Darrell scheduled run failed: {e}")
+
+def _run_tammy():
+    try:
+        from rivers.agent_empire.workflow import tammy_run
+        _avo_wrap_run("tammy_ae", "agentempire", tammy_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Tammy scheduled run failed: {e}")
+
+def _run_wade():
+    try:
+        from rivers.agent_empire.workflow import wade_run
+        _avo_wrap_run("wade_ae", "agentempire", wade_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Wade scheduled run failed: {e}")
+
+def _run_debra():
+    try:
+        from rivers.agent_empire.workflow import debra_run
+        _avo_wrap_run("debra", "agentempire", debra_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Debra scheduled run failed: {e}")
+
+def _run_clint():
+    try:
+        from rivers.customer_advocate.workflow import clint_run
+        _avo_wrap_run("clint", "customeradvocate", clint_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Clint scheduled run failed: {e}")
+
+def _run_sherry():
+    try:
+        from rivers.customer_advocate.workflow import sherry_run
+        _avo_wrap_run("sherry", "customeradvocate", sherry_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Sherry scheduled run failed: {e}")
+
+def _run_sterling():
+    try:
+        from rivers.agent_empire.workflow import sterling_run
+        _avo_wrap_run("sterling", "agentempire", sterling_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Sterling scheduled run failed: {e}")
+
+
+# Randy (GHL RevOps): every 4 hours
+scheduler.add_job(_run_randy, IntervalTrigger(hours=4, timezone=CST),
+    id="randy_revops_4h", name="Randy RevOps (GHL) — Every 4h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Brenda (Attio RevOps): every 2 hours
+scheduler.add_job(_run_brenda, IntervalTrigger(hours=2, timezone=CST),
+    id="brenda_revops_2h", name="Brenda RevOps (Attio) — Every 2h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Darrell (HubSpot RevOps): every 1 hour
+scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
+    id="darrell_revops_1h", name="Darrell RevOps (HubSpot) — Every 1h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Tammy (Skool Community): every 6 hours
+scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
+    id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Wade (Sponsor Outreach): Monday 9am CST
+scheduler.add_job(_run_wade, CronTrigger(day_of_week="mon", hour=9, minute=0, timezone=CST),
+    id="wade_sponsors_mon9am", name="Wade Sponsor Outreach — Mon 9am",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Debra (Content Producer): Monday 6am CST
+scheduler.add_job(_run_debra, CronTrigger(day_of_week="mon", hour=6, minute=0, timezone=CST),
+    id="debra_content_mon6am", name="Debra Content Producer — Mon 6am",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Clint (Technical Builder): 10am CST daily
+scheduler.add_job(_run_clint, CronTrigger(hour=10, minute=10, timezone=CST),
+    id="clint_build_daily", name="Clint Technical Builder — Daily 10:10am",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Sherry (Web Design): 11am CST daily
+scheduler.add_job(_run_sherry, CronTrigger(hour=11, minute=0, timezone=CST),
+    id="sherry_design_daily", name="Sherry Web Design — Daily 11am",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Sterling (Web Agent): daily 7am CST
+scheduler.add_job(_run_sterling, CronTrigger(hour=7, minute=0, timezone=CST),
+    id="sterling_web_daily", name="Sterling Web Agent — Daily 7am",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Axiom CEO Orchestration: 11:30 PM CST daily (after all agents finish)
+scheduler.add_job(_avo_sched_axiom, CronTrigger(hour=23, minute=30, timezone=CST),
+    id="axiom_ceo_nightly", name="AXIOM CEO Orchestration — Nightly 11:30pm",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Changelog: Friday 5pm CST
+def _run_changelog():
+    try:
+        from paperclip.changelog_gen import run_changelog
+        run_changelog()
+    except Exception as e:
+        logging.error(f"[Paperclip] Changelog generation failed: {e}")
+
+scheduler.add_job(_run_changelog, CronTrigger(day_of_week="fri", hour=17, minute=0, timezone=CST),
+    id="changelog_friday_5pm", name="Weekly Changelog — Fri 5pm",
     replace_existing=True, misfire_grace_time=3600)
 
 # ONE-TIME TEST at 7:56 PM CST for live demo
@@ -2720,6 +3179,51 @@ RUN_NOW_SCOPES = {
     "coo": [
         ("coo_command", run_coo_command),
     ],
+    "axiom": [
+        ("axiom_ceo", _avo_sched_axiom),
+    ],
+    "revops": [
+        ("randy_revops", _run_randy),
+        ("brenda_revops", _run_brenda),
+        ("darrell_revops", _run_darrell),
+    ],
+    "randy": [
+        ("randy_revops", _run_randy),
+    ],
+    "brenda": [
+        ("brenda_revops", _run_brenda),
+    ],
+    "darrell": [
+        ("darrell_revops", _run_darrell),
+    ],
+    "tammy": [
+        ("tammy_community", _run_tammy),
+    ],
+    "wade": [
+        ("wade_sponsors", _run_wade),
+    ],
+    "debra": [
+        ("debra_content", _run_debra),
+    ],
+    "sterling": [
+        ("sterling_web", _run_sterling),
+    ],
+    "agentempire": [
+        ("tammy_community", _run_tammy),
+        ("wade_sponsors", _run_wade),
+        ("debra_content", _run_debra),
+        ("sterling_web", _run_sterling),
+    ],
+    "clint": [
+        ("clint_build", _run_clint),
+    ],
+    "sherry": [
+        ("sherry_design", _run_sherry),
+    ],
+    "customeradvocate": [
+        ("clint_build", _run_clint),
+        ("sherry_design", _run_sherry),
+    ],
     "all": [
         ("alex_daily_briefing", run_alex_daily_briefing),
         ("dek_daily_briefing", run_dek_daily_briefing),
@@ -2735,6 +3239,15 @@ RUN_NOW_SCOPES = {
         ("nova_intelligence", run_nova_intelligence),
         ("atlas_intel", run_atlas_intel),
         ("phoenix_delivery", run_phoenix_delivery),
+        ("randy_revops", _run_randy),
+        ("brenda_revops", _run_brenda),
+        ("darrell_revops", _run_darrell),
+        ("tammy_community", _run_tammy),
+        ("wade_sponsors", _run_wade),
+        ("debra_content", _run_debra),
+        ("sterling_web", _run_sterling),
+        ("clint_build", _run_clint),
+        ("sherry_design", _run_sherry),
         ("quality_snapshot_daily", run_quality_snapshot_daily),
     ],
 }
@@ -2834,8 +3347,18 @@ async def lifespan(app: FastAPI):
             tammy_run()
         except Exception as e:
             logging.info(f"[Paperclip] Tammy initial run skipped: {e}")
+        try:
+            from rivers.customer_advocate.workflow import clint_run
+            clint_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Clint initial run skipped: {e}")
+        try:
+            from rivers.customer_advocate.workflow import sherry_run
+            sherry_run()
+        except Exception as e:
+            logging.info(f"[Paperclip] Sherry initial run skipped: {e}")
 
-        logging.info("[Paperclip] Initial enrollment pass complete")
+        logging.info("[Paperclip] Initial enrollment pass complete — 5 rivers active")
     except Exception as e:
         logging.warning(f"[Paperclip] River init failed — rivers disabled: {e}")
 
@@ -5132,12 +5655,32 @@ async def get_pitwall_telemetry():
             }
         )
 
+    # AVO Intelligence Layer panels
+    axiom_data = {}
+    cost_data = {}
+    try:
+        from agents.ceo.axiom import get_axiom_dashboard_data
+        axiom_data = get_axiom_dashboard_data()
+    except Exception:
+        pass
+    try:
+        from core.cost_tracker import get_daily_cost, get_monthly_projection, get_agent_cost_summary
+        cost_data = {
+            "today_usd": get_daily_cost(),
+            "projection": get_monthly_projection(),
+            "by_agent": get_agent_cost_summary(days=7)[:5],
+        }
+    except Exception:
+        pass
+
     return {
         "timestamp": _iso_now(),
         "refresh_seconds": 60,
         "railway": _fetch_railway_status(),
         "activation_pipeline": _artifact_pipeline_counts(),
         "teams": teams,
+        "axiom": axiom_data,
+        "cost": cost_data,
     }
 
 
@@ -5470,6 +6013,7 @@ async def paperclip_status():
         from rivers.calling_digital.workflow import get_stats as cd_stats
         from rivers.automotive_intelligence.workflow import get_stats as ai_stats
         from rivers.agent_empire.workflow import get_stats as ae_stats
+        from rivers.customer_advocate.workflow import get_stats as ca_stats
         return {
             "status": "online",
             "project": "paperclip",
@@ -5478,6 +6022,7 @@ async def paperclip_status():
                 "calling_digital": cd_stats(),
                 "automotive_intelligence": ai_stats(),
                 "agent_empire": ae_stats(),
+                "customer_advocate": ca_stats(),
             },
         }
     except Exception as e:
@@ -5488,12 +6033,13 @@ async def paperclip_status():
 async def paperclip_rivers():
     return {
         "rivers": [
-            {"name": "AI Phone Guy", "crm": "GoHighLevel", "agent": "Randy", "schedule": "every 4 hours"},
-            {"name": "Calling Digital", "crm": "Attio", "agent": "Brenda", "schedule": "every 2 hours"},
-            {"name": "Automotive Intelligence", "crm": "HubSpot", "agent": "Darrell", "schedule": "every 1 hour"},
-            {"name": "Agent Empire", "platform": "Skool", "agents": ["Tammy", "Wade", "Debra"], "schedule": "Tammy 6hr / Wade Mon 9am"},
-            {"name": "CustomerAdvocate", "components": ["VERA", "AATA", "The Exchange"], "agents": ["Clint", "Sherry"]},
-        ]
+            {"name": "AI Phone Guy", "crm": "GoHighLevel", "agents": ["Alex", "Tyler", "Zoe", "Jennifer", "Randy"], "revops": "Randy", "schedule": "Randy every 4h"},
+            {"name": "Calling Digital", "crm": "Attio", "agents": ["Dek", "Marcus", "Sofia", "Carlos", "Nova", "Brenda"], "revops": "Brenda", "schedule": "Brenda every 2h"},
+            {"name": "Automotive Intelligence", "crm": "HubSpot", "agents": ["Michael Meta", "Chase", "Atlas", "Ryan", "Phoenix", "Darrell"], "revops": "Darrell", "schedule": "Darrell every 1h"},
+            {"name": "Agent Empire", "platform": "Skool", "agents": ["Debra", "Wade", "Tammy", "Sterling"], "schedule": "Debra Mon 6am / Wade Mon 9am / Tammy 6hr / Sterling daily 7am"},
+            {"name": "CustomerAdvocate", "platform": "Internal", "agents": ["Clint", "Sherry"], "components": ["VERA", "AATA", "The Exchange"], "schedule": "Clint 10am / Sherry 11am daily"},
+        ],
+        "total_agents": sum(len(b["agents"]) for b in BUSINESSES.values()),
     }
 
 
@@ -5507,6 +6053,10 @@ async def paperclip_trigger_agent(agent: str):
         "darrell": ("rivers.automotive_intelligence.workflow", "darrell_run"),
         "tammy": ("rivers.agent_empire.workflow", "tammy_run"),
         "wade": ("rivers.agent_empire.workflow", "wade_run"),
+        "debra": ("rivers.agent_empire.workflow", "debra_run"),
+        "sterling": ("rivers.agent_empire.workflow", "sterling_run"),
+        "clint": ("rivers.customer_advocate.workflow", "clint_run"),
+        "sherry": ("rivers.customer_advocate.workflow", "sherry_run"),
     }
     if agent not in runners:
         return JSONResponse(status_code=404, content={"error": f"Unknown agent: {agent}"})

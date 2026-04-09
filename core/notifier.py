@@ -41,3 +41,34 @@ def notify_daily_summary(stats: dict):
     for river, data in stats.items():
         lines.append(f"  {river}: {data.get('enrolled', 0)} enrolled, {data.get('hot_leads', 0)} hot leads")
     logger.info("\n".join(lines))
+
+
+def notify_cost_alert(message: str):
+    """Send cost budget alert — logs + Twilio when configured."""
+    logger = _get_hot_lead_logger("cost_alerts")
+    logger.warning(f"COST ALERT | {message}")
+
+    # Twilio alert when credentials are available
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_number = os.environ.get("TWILIO_FROM")
+    michael_phone = os.environ.get("MICHAEL_PHONE")
+
+    if all([account_sid, auth_token, from_number, michael_phone]):
+        try:
+            import requests
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+            requests.post(url, auth=(account_sid, auth_token), data={
+                "From": from_number,
+                "To": michael_phone,
+                "Body": message,
+            })
+            logger.info("COST ALERT sent via Twilio to Michael")
+        except Exception as e:
+            logger.error(f"Twilio cost alert failed: {e}")
+
+
+def notify_axiom_directive(target_agent: str, directive: str, triggered_by: str):
+    """Log Axiom CEO directive — for traceability."""
+    logger = _get_hot_lead_logger("axiom")
+    logger.info(f"AXIOM DIRECTIVE | to={target_agent} | trigger={triggered_by} | {directive[:100]}")
