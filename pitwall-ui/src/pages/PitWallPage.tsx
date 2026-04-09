@@ -1,8 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { api, AxiomPanel, CostPanel, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
+import { ResponsiveLine } from '@nivo/line';
+import { ResponsiveBar } from '@nivo/bar';
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  SortingState,
+  useReactTable,
+} from '@tanstack/react-table';
+import { api, AxiomPanel, CostPanel, OpsAgentHealth, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
 import StatusDot from '../components/StatusDot';
+
+const NIVO_THEME = {
+  background: 'transparent',
+  text: { fill: 'rgb(156, 163, 175)', fontSize: 11 },
+  axis: {
+    ticks: { line: { stroke: 'rgb(31, 41, 55)' }, text: { fill: 'rgb(156, 163, 175)' } },
+    legend: { text: { fill: 'rgb(229, 231, 235)' } },
+  },
+  grid: { line: { stroke: 'rgb(31, 41, 55)', strokeDasharray: '2 4' } },
+  tooltip: {
+    container: {
+      background: 'rgb(10, 15, 20)',
+      color: 'rgb(229, 231, 235)',
+      border: '1px solid rgb(31, 41, 55)',
+      fontSize: 11,
+    },
+  },
+};
 
 export default function PitWallPage() {
   const [data, setData] = useState<PitWallTelemetry | null>(null);
@@ -57,7 +86,7 @@ export default function PitWallPage() {
   const pipeline = data?.activation_pipeline;
 
   return (
-    <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto max-w-7xl px-4 py-6 md:px-6">
+    <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto max-w-[1600px] px-4 py-6 md:px-6">
       <header className="mb-6 rounded-2xl border border-pitborder bg-pitcard/80 p-5 shadow-pit backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -226,6 +255,10 @@ export default function PitWallPage() {
         </div>
       </section>
 
+      <section className="mb-6">
+        <AgentRunsTable agents={opsAgentHealth} />
+      </section>
+
       <section className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
         <h3 className="mb-3 text-lg font-semibold text-pittext">Activation Pipeline</h3>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -258,6 +291,9 @@ function AxiomPanelCard({ axiom }: { axiom?: AxiomPanel }) {
   const completed = axiom?.directives_completed_today ?? 0;
   const recent = axiom?.most_recent_directive;
   const lastRun = axiom?.last_run;
+  const byAgent = axiom?.directives_by_agent || [];
+
+  const barData = byAgent.slice(0, 8).map((d) => ({ agent: d.agent, directives: d.count }));
 
   return (
     <div className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
@@ -284,6 +320,29 @@ function AxiomPanelCard({ axiom }: { axiom?: AxiomPanel }) {
           <div className="text-lg text-pitgreen">{completed}</div>
         </div>
       </div>
+      <div className="mt-3 h-48 rounded-lg border border-pitborder bg-black/20 p-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-pitmuted">Directives by Agent (7d)</div>
+        {barData.length ? (
+          <ResponsiveBar
+            data={barData}
+            keys={['directives']}
+            indexBy="agent"
+            margin={{ top: 10, right: 10, bottom: 40, left: 30 }}
+            padding={0.3}
+            colors={['#d4a853']}
+            borderRadius={3}
+            theme={NIVO_THEME}
+            axisBottom={{ tickRotation: -30 }}
+            axisLeft={{ tickValues: 3 }}
+            enableLabel={false}
+            animate
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-pitmuted">
+            No directives yet. Axiom runs nightly at 11:30 PM CST.
+          </div>
+        )}
+      </div>
       {recent ? (
         <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
           <div className="mb-1">
@@ -294,11 +353,7 @@ function AxiomPanelCard({ axiom }: { axiom?: AxiomPanel }) {
           </div>
           <div className="line-clamp-2">{recent.directive}</div>
         </div>
-      ) : (
-        <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
-          No directives yet. Axiom will generate overnight based on agent outputs.
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -307,9 +362,16 @@ function CostPanelCard({ cost }: { cost?: CostPanel }) {
   const today = cost?.today_usd ?? 0;
   const dailyAvg = cost?.projection?.daily_average ?? 0;
   const monthly = cost?.projection?.projected_monthly ?? 0;
-  const topAgents = cost?.by_agent || [];
+  const byDay = cost?.by_day || [];
 
   const todayAccent = today >= 20 ? 'text-pitamber' : today >= 10 ? 'text-cyan-300' : 'text-pittext';
+
+  const lineData = [
+    {
+      id: 'cost',
+      data: byDay.map((d) => ({ x: d.date.slice(5), y: d.total_usd })),
+    },
+  ];
 
   return (
     <div className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
@@ -336,23 +398,152 @@ function CostPanelCard({ cost }: { cost?: CostPanel }) {
           <div className="text-lg text-pittext">${monthly.toFixed(0)}</div>
         </div>
       </div>
-      {topAgents.length ? (
-        <div className="mt-3 space-y-1">
-          <div className="text-[10px] uppercase tracking-wider text-pitmuted">Top Agents (7d)</div>
-          {topAgents.slice(0, 3).map((agent) => (
-            <div key={agent.agent_name} className="flex items-center justify-between rounded-lg border border-pitborder bg-black/20 px-2 py-1 text-xs">
-              <span className="text-pittext">{agent.agent_name}</span>
-              <span className="text-pitmuted">
-                {agent.total_runs} runs · ${agent.total_cost_usd.toFixed(4)}
-              </span>
-            </div>
-          ))}
+      <div className="mt-3 h-48 rounded-lg border border-pitborder bg-black/20 p-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-pitmuted">Cost by Day (7d)</div>
+        {byDay.length ? (
+          <ResponsiveLine
+            data={lineData}
+            margin={{ top: 10, right: 10, bottom: 30, left: 35 }}
+            xScale={{ type: 'point' }}
+            yScale={{ type: 'linear', min: 0, max: 'auto' }}
+            colors={['#10b981']}
+            curve="monotoneX"
+            enableArea
+            areaOpacity={0.15}
+            enablePoints
+            pointSize={5}
+            theme={NIVO_THEME}
+            axisBottom={{ tickValues: Math.min(byDay.length, 7) }}
+            axisLeft={{ tickValues: 3, format: (v: number) => `$${v.toFixed(2)}` }}
+            enableGridX={false}
+            animate
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-pitmuted">
+            No cost data yet. Tracking begins on next agent run.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AgentRunsTable({ agents }: { agents: OpsAgentHealth[] }) {
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'last_run', desc: true }]);
+  const [filter, setFilter] = useState('');
+
+  const columnHelper = createColumnHelper<OpsAgentHealth>();
+  const columns = useMemo(
+    () => [
+      columnHelper.accessor('name', {
+        header: 'Agent',
+        cell: (info) => <span className="font-medium text-pittext">{info.getValue()}</span>,
+      }),
+      columnHelper.accessor('role', {
+        header: 'Role',
+        cell: (info) => <span className="text-xs text-pitmuted">{info.getValue()}</span>,
+      }),
+      columnHelper.accessor('status', {
+        header: 'Status',
+        cell: (info) => {
+          const v = info.getValue();
+          const color =
+            v === 'green'
+              ? 'bg-pitgreen/20 text-pitgreen border-pitgreen/40'
+              : v === 'amber'
+              ? 'bg-pitamber/20 text-pitamber border-pitamber/40'
+              : v === 'red'
+              ? 'bg-pitred/20 text-pitred border-pitred/40'
+              : 'bg-black/30 text-pitmuted border-pitborder';
+          return (
+            <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${color}`}>
+              {v || 'unknown'}
+            </span>
+          );
+        },
+      }),
+      columnHelper.accessor('last_run', {
+        header: 'Last Run',
+        cell: (info) => <span className="text-xs text-pitmuted">{relativeTime(info.getValue() || null)}</span>,
+        sortingFn: (a, b) => {
+          const ta = a.original.last_run ? new Date(a.original.last_run).getTime() : 0;
+          const tb = b.original.last_run ? new Date(b.original.last_run).getTime() : 0;
+          return ta - tb;
+        },
+      }),
+      columnHelper.accessor('log_preview', {
+        header: 'Preview',
+        cell: (info) => (
+          <span className="line-clamp-1 text-xs text-pitmuted">{info.getValue() || '—'}</span>
+        ),
+        enableSorting: false,
+      }),
+    ],
+    [columnHelper]
+  );
+
+  const table = useReactTable({
+    data: agents,
+    columns,
+    state: { sorting, globalFilter: filter },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
+
+  return (
+    <div className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold text-pittext">Agent Runs</h3>
+          <p className="text-xs text-pitmuted">{agents.length} agents · click column to sort</p>
         </div>
-      ) : (
-        <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
-          No cost data yet. Tracking begins on next agent run.
-        </div>
-      )}
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter agents..."
+          className="rounded-lg border border-pitborder bg-black/30 px-3 py-1.5 text-xs text-pittext placeholder:text-pitmuted focus:border-pitgreen/60 focus:outline-none"
+        />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            {table.getHeaderGroups().map((hg) => (
+              <tr key={hg.id} className="border-b border-pitborder">
+                {hg.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    onClick={header.column.getToggleSortingHandler()}
+                    className={`py-2 px-3 text-left text-[10px] font-semibold uppercase tracking-wider text-pitmuted ${
+                      header.column.getCanSort() ? 'cursor-pointer hover:text-pittext' : ''
+                    }`}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                    {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ''}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row) => (
+              <tr key={row.id} className="border-b border-pitborder/50 hover:bg-black/20">
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="py-2 px-3">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {table.getRowModel().rows.length === 0 ? (
+          <div className="py-6 text-center text-xs text-pitmuted">No agents match filter.</div>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -188,6 +188,28 @@ def get_monthly_projection() -> Dict[str, float]:
         return {"daily_average": 0.0, "projected_monthly": 0.0}
 
 
+def get_cost_by_day(days: int = 7) -> list:
+    """Get cost totals per day for the last N days (for time-series charts)."""
+    try:
+        rows = fetch_all(
+            "SELECT run_date, COALESCE(SUM(cost_usd), 0), COUNT(*) "
+            "FROM agent_run_costs "
+            "WHERE run_date >= CURRENT_DATE - INTERVAL '%s days' "
+            "GROUP BY run_date ORDER BY run_date ASC",
+            (days,),
+        )
+        return [
+            {
+                "date": str(r[0]),
+                "total_usd": round(float(r[1] or 0), 4),
+                "run_count": int(r[2] or 0),
+            }
+            for r in rows
+        ]
+    except DatabaseError:
+        return []
+
+
 def get_most_expensive_run(days: int = 7) -> Optional[Dict[str, Any]]:
     """Get the single most expensive run in the last N days."""
     try:

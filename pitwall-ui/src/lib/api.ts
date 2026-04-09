@@ -20,6 +20,7 @@ export type AxiomPanel = {
     priority: string;
     triggered_by: string;
   } | null;
+  directives_by_agent?: Array<{ agent: string; count: number }>;
 };
 
 export type CostPanel = {
@@ -35,6 +36,7 @@ export type CostPanel = {
     total_cost_usd: number;
     total_runs: number;
   }>;
+  by_day?: Array<{ date: string; total_usd: number; run_count: number }>;
 };
 
 export type PitWallTelemetry = {

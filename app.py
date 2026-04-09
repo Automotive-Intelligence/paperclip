@@ -5681,16 +5681,21 @@ async def get_pitwall_telemetry():
     axiom_data = {}
     cost_data = {}
     try:
-        from agents.ceo.axiom import get_axiom_dashboard_data
+        from agents.ceo.axiom import get_axiom_dashboard_data, get_directives_by_agent
         axiom_data = get_axiom_dashboard_data()
+        axiom_data["directives_by_agent"] = get_directives_by_agent(days=7)
     except Exception:
         pass
     try:
-        from core.cost_tracker import get_daily_cost, get_monthly_projection, get_agent_cost_summary
+        from core.cost_tracker import (
+            get_daily_cost, get_monthly_projection,
+            get_agent_cost_summary, get_cost_by_day,
+        )
         cost_data = {
             "today_usd": get_daily_cost(),
             "projection": get_monthly_projection(),
             "by_agent": get_agent_cost_summary(days=7)[:5],
+            "by_day": get_cost_by_day(days=7),
         }
     except Exception:
         pass

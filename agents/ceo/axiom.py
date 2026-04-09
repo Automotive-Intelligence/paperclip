@@ -324,6 +324,20 @@ def build_directive_context(agent_name: str) -> str:
     return " ".join(lines)
 
 
+def get_directives_by_agent(days: int = 7) -> list:
+    """Get directive counts per target agent over last N days (for bar chart)."""
+    try:
+        rows = fetch_all(
+            "SELECT target_agent, COUNT(*) FROM axiom_directives "
+            "WHERE created_at >= CURRENT_DATE - INTERVAL '%s days' "
+            "GROUP BY target_agent ORDER BY COUNT(*) DESC",
+            (days,),
+        )
+        return [{"agent": r[0], "count": int(r[1])} for r in rows]
+    except DatabaseError:
+        return []
+
+
 def get_axiom_dashboard_data() -> Dict[str, Any]:
     """Get data for the Axiom panel on Pit Wall."""
     try:
