@@ -7,6 +7,36 @@ export type TeamSummary = {
   agents: Array<{ agent_id: string; name: string; role: string; lane: string; status: string; last_run: string | null }>;
 };
 
+export type AxiomPanel = {
+  last_run?: string | null;
+  last_run_summary?: string;
+  directives_issued_last_night?: number;
+  directives_pending?: number;
+  directives_picked_up?: number;
+  directives_completed_today?: number;
+  most_recent_directive?: {
+    target: string;
+    directive: string;
+    priority: string;
+    triggered_by: string;
+  } | null;
+};
+
+export type CostPanel = {
+  today_usd?: number;
+  projection?: {
+    daily_average?: number;
+    projected_monthly?: number;
+  };
+  by_agent?: Array<{
+    agent_name: string;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cost_usd: number;
+    total_runs: number;
+  }>;
+};
+
 export type PitWallTelemetry = {
   timestamp: string;
   refresh_seconds: number;
@@ -26,6 +56,8 @@ export type PitWallTelemetry = {
     dispatch: number;
   };
   teams: TeamSummary[];
+  axiom?: AxiomPanel;
+  cost?: CostPanel;
 };
 
 export type OpsAgentHealth = {

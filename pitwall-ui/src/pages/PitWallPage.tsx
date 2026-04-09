@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { api, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
+import { api, AxiomPanel, CostPanel, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
 import StatusDot from '../components/StatusDot';
 
 export default function PitWallPage() {
@@ -120,7 +120,7 @@ export default function PitWallPage() {
                 <h2 className="text-lg font-semibold text-pittext">{team.team_name}</h2>
                 <StatusDot status={team.sprint_status === 'active' ? 'green' : 'amber'} />
               </div>
-              <p className="mt-1 text-sm text-pitmuted">CRM: {team.crm_provider.toUpperCase()}</p>
+              <p className="mt-1 text-sm text-pitmuted">Platform: {team.crm_provider.toUpperCase()}</p>
               <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-lg border border-pitborder p-2"><div className="text-xs text-pitmuted">Open</div><div className="text-lg text-pittext">{team.kpis.open_opps}</div></div>
                 <div className="rounded-lg border border-pitborder p-2"><div className="text-xs text-pitmuted">Reply%</div><div className="text-lg text-pittext">{team.kpis.reply_rate}</div></div>
@@ -136,6 +136,11 @@ export default function PitWallPage() {
             </div>
           </motion.article>
         ))}
+      </section>
+
+      <section className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <AxiomPanelCard axiom={data?.axiom} />
+        <CostPanelCard cost={data?.cost} />
       </section>
 
       <section className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -245,6 +250,111 @@ function normalizeAlerts(alerts?: Array<{ message?: string } | string>) {
     }
     return alert.message || 'Unknown alert';
   });
+}
+
+function AxiomPanelCard({ axiom }: { axiom?: AxiomPanel }) {
+  const pending = axiom?.directives_pending ?? 0;
+  const issued = axiom?.directives_issued_last_night ?? 0;
+  const completed = axiom?.directives_completed_today ?? 0;
+  const recent = axiom?.most_recent_directive;
+  const lastRun = axiom?.last_run;
+
+  return (
+    <div className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-pittext">AXIOM CEO</h3>
+          <p className="text-xs text-pitmuted">Nightly orchestration · 11:30 PM CST</p>
+        </div>
+        <div className="rounded-lg border border-pitborder bg-black/30 px-2 py-1 text-[10px] uppercase tracking-wider text-pitmuted">
+          {lastRun ? relativeTime(lastRun) : 'never run'}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Issued</div>
+          <div className="text-lg text-pittext">{issued}</div>
+        </div>
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Pending</div>
+          <div className="text-lg text-pitamber">{pending}</div>
+        </div>
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Done Today</div>
+          <div className="text-lg text-pitgreen">{completed}</div>
+        </div>
+      </div>
+      {recent ? (
+        <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
+          <div className="mb-1">
+            <span className="uppercase tracking-wider text-[10px] text-pitamber">{recent.priority}</span>
+            {' → '}
+            <span className="text-pittext">{recent.target}</span>
+            <span className="text-pitmuted"> (from {recent.triggered_by})</span>
+          </div>
+          <div className="line-clamp-2">{recent.directive}</div>
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
+          No directives yet. Axiom will generate overnight based on agent outputs.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CostPanelCard({ cost }: { cost?: CostPanel }) {
+  const today = cost?.today_usd ?? 0;
+  const dailyAvg = cost?.projection?.daily_average ?? 0;
+  const monthly = cost?.projection?.projected_monthly ?? 0;
+  const topAgents = cost?.by_agent || [];
+
+  const todayAccent = today >= 20 ? 'text-pitamber' : today >= 10 ? 'text-cyan-300' : 'text-pittext';
+
+  return (
+    <div className="rounded-2xl border border-pitborder bg-pitcard p-4 shadow-pit">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-pittext">Cost Monitor</h3>
+          <p className="text-xs text-pitmuted">Token usage · live tracking</p>
+        </div>
+        <div className="rounded-lg border border-pitborder bg-black/30 px-2 py-1 text-[10px] uppercase tracking-wider text-pitmuted">
+          Alert &gt; $20/day
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Today</div>
+          <div className={`text-lg ${todayAccent}`}>${today.toFixed(2)}</div>
+        </div>
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Daily Avg</div>
+          <div className="text-lg text-pittext">${dailyAvg.toFixed(2)}</div>
+        </div>
+        <div className="rounded-lg border border-pitborder p-2">
+          <div className="text-xs text-pitmuted">Monthly</div>
+          <div className="text-lg text-pittext">${monthly.toFixed(0)}</div>
+        </div>
+      </div>
+      {topAgents.length ? (
+        <div className="mt-3 space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-pitmuted">Top Agents (7d)</div>
+          {topAgents.slice(0, 3).map((agent) => (
+            <div key={agent.agent_name} className="flex items-center justify-between rounded-lg border border-pitborder bg-black/20 px-2 py-1 text-xs">
+              <span className="text-pittext">{agent.agent_name}</span>
+              <span className="text-pitmuted">
+                {agent.total_runs} runs · ${agent.total_cost_usd.toFixed(4)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg border border-pitborder bg-black/20 p-2 text-xs text-pitmuted">
+          No cost data yet. Tracking begins on next agent run.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function relativeTime(value?: string | null) {

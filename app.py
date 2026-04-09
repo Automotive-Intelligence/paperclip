@@ -5631,10 +5631,20 @@ async def get_pitwall_telemetry():
     business_map = crm_config.get("business_crm_map", {})
     recent_runs = _fetch_recent_runs_by_agent()
 
+    # Non-CRM rivers — Agent Empire runs on Skool, CustomerAdvocate is internal.
+    # These should not fall through to resolve_provider() which defaults to 'ghl'.
+    NON_CRM_PLATFORMS = {
+        "agentempire": "skool",
+        "customeradvocate": "internal",
+    }
+
     teams = []
     for team_id in _pitwall_team_ids():
         team_info = BUSINESSES.get(team_id, {})
-        provider = str(business_map.get(team_id, resolve_provider(team_id, team_info.get("agents", [""])[0] if team_info.get("agents") else "")))
+        if team_id in NON_CRM_PLATFORMS:
+            provider = NON_CRM_PLATFORMS[team_id]
+        else:
+            provider = str(business_map.get(team_id, resolve_provider(team_id, team_info.get("agents", [""])[0] if team_info.get("agents") else "")))
         kpis = _team_revenue_kpis(team_id)
 
         agents = []
@@ -5704,7 +5714,11 @@ async def get_pitwall_team(team_id: str):
         raise HTTPException(status_code=404, detail=f"Unknown team_id '{team_id}'")
 
     crm_config = crm_status_snapshot()
-    provider = str((crm_config.get("business_crm_map") or {}).get(team_id, "ghl"))
+    _non_crm = {"agentempire": "skool", "customeradvocate": "internal"}
+    if team_id in _non_crm:
+        provider = _non_crm[team_id]
+    else:
+        provider = str((crm_config.get("business_crm_map") or {}).get(team_id, "ghl"))
     team_info = BUSINESSES[team_id]
     kpis = _team_revenue_kpis(team_id)
     first_agent = team_info.get("agents", [""])[0] if team_info.get("agents") else ""
