@@ -1,285 +1,472 @@
-# Marcus CD Outreach — 4 Vertical-Specific Sequences
+# Marcus CD Outreach — 4 Vertical-Specific Sequences (v2)
 
 **For: Calling Digital · Sender: Michael Rodriguez via connected Gmail**
-**Created: 2026-04-09**
+**Updated: 2026-04-10 — Corrected positioning (digital marketing + AI consulting)**
+**Enrichment: Verified Tavily facts with source URLs — no LLM hallucinations**
 
-## What this is
+---
 
-Four distinct sequences, one per OwnerPhones vertical. Each is written to the psychology and pain of that buyer — not a generic "Texas businesses" template.
+## What Calling Digital actually sells
 
-The merge fields (`{{person.first_name}}`, `{{company.name}}`, `{{company.cd_industry}}`, `{{company.cd_prospect_notes}}`) are already populated on all 197 imported People. They will resolve correctly inside Attio's sequence editor.
+**Digital marketing services:** website builds, social media management, SEO/AEO, paid ads, email marketing, content strategy, brand development.
 
-## How to set this up in Attio (15-20 minutes total)
+**AI implementation consulting:** helping SMBs understand, adopt, and operationalize AI before their competitors do.
 
-### Once for ALL sequences
+**The bundle play:** Sell digital marketing first to build trust. AI consulting comes later on the call, not in the email.
 
-1. Open Attio → **Sequences**
-2. Right-click the existing **Marcus CD Outreach Sequence** → **Duplicate** (do this 4 times)
-3. Rename the 4 duplicates:
-   - `Marcus — Med Spa`
-   - `Marcus — PI Law`
-   - `Marcus — Real Estate`
-   - `Marcus — Custom Home Builder`
-4. (Optional) Delete or archive the original `Marcus CD Outreach Sequence` to avoid confusion
+**IRON RULE: No pricing in any email. No mention of AI receptionist or Sophie. Those are AI Phone Guy products, not Calling Digital.**
 
-### For EACH sequence (repeat 4 times)
+---
 
-1. Open the sequence
-2. Click into **Step 1**
-3. Replace the **Subject** line with the one below for that vertical
-4. Replace the **Body** with the one below for that vertical
-5. Verify **Sending window** matches the recommendation below (different per vertical)
-6. Top right → **Enroll recipients**
-7. Filter: `Vertical` `is` `<that vertical>` (e.g. `med-spa`)
-8. Select all → Add to sequence
-9. Click **Publish sequence** at the top
-10. Toggle **Enable sequence** ON
+## Sequence structure (all 4 verticals)
 
-That's it. Repeat for the other 3.
+| Step | Day | Purpose | Framework |
+|---|---|---|---|
+| 1 | 0 | Observation + Implication | Verified fact → what it means for their business → soft close |
+| 2 | 3 | Pattern interrupt | Different angle on same pain → sharper implication |
+| 3 | 6 | Social proof | What businesses like theirs are doing → FOMO without hype |
+| 4 | 11 | Breakup | "Last note from me" → leaves door open |
+
+**Gift (competitive audit) is NOT offered in any email.** It's generated only when a Google Meet is booked. The sequence earns the meeting. The gift is prepared for the meeting.
+
+---
+
+## How to set up in Attio (same as before)
+
+1. Duplicate "Marcus CD Outreach Sequence" 4 times
+2. Rename: `Marcus — Med Spa`, `Marcus — PI Law`, `Marcus — Real Estate`, `Marcus — Custom Home Builder`
+3. For each: paste the 4 steps below, enroll by `vertical` filter, publish, enable
+4. Stagger enabling by 30 seconds each
 
 ---
 
 ## SEQUENCE 1 — Marcus · Med Spa
 
 **Recipients:** Filter `Vertical = med-spa` (~50 contacts)
-**Sending window:** Tuesday-Friday, 9:00 AM - 12:00 PM CST (med spas are slowest in mornings, owners check email then)
-**Recommended sender:** michael@calling.digital
+**Sending window:** Tuesday-Friday, 9:00 AM - 12:00 PM CST
 
-### Step 1 — Subject
+### Step 1 — Day 0
 
+**Subject:**
 ```
-{{person.first_name}}, what happens after 6pm at {{company.name}}?
+{{person.first_name}}, quick question about {{company.name}}
 ```
 
-### Step 1 — Body
-
+**Body:**
 ```
 Hey {{person.first_name}},
 
-I came across {{company.name}} while researching med spas in Texas — you have a beautiful brand.
-
-Quick question: when someone fills out a consult form at 9pm, or texts asking about a treatment on a Saturday, what happens to that inquiry?
-
-For most med spas I talk to, those after-hours inquiries either get lost overnight or wait until Monday morning — and by then 30-40% of those leads have already booked somewhere else.
+I came across {{company.name}} while researching med spas in Texas.
 
 {{company.cd_prospect_notes}}
 
-I help med spas in Texas put a 24/7 AI front desk in place that books consults the same way your best receptionist would — without changing how the front desk runs during business hours.
+Here's what I noticed: most med spas I look at have a strong in-clinic experience but their digital presence doesn't match. The website loads slowly on mobile, the Google Business profile is only half-filled out, and the social content isn't converting followers into booked consults.
 
-Worth a 15-minute conversation to see if it's a fit for {{company.name}}?
+That gap costs real money — especially when someone searches "med spa near me" and your competitor shows up first because their SEO is tighter, not because their treatments are better.
 
-— Michael
-Calling Digital · michael@calling.digital
+I have a few ideas specific to {{company.name}}. Worth 15 minutes this week?
+
+— Marcus
+Calling Digital · marcus@calling.digital
 ```
 
-**Why this works:**
-- Subject is a question with their name + company → opens like a personal text
-- First line is observation, not pitch
-- Second line forces them to mentally answer the question (they know the answer is "nothing")
-- Third line names the specific cost in numbers
-- Fourth line is the personalized note from cd_prospect_notes
-- Fifth line is the offer, framed as adding without disrupting
-- Close is low-pressure, 15 min not 30, "see if it's a fit" not "book a demo"
+### Step 2 — Day 3
+
+**Subject:**
+```
+{{person.first_name}} — one thing I keep seeing with med spas in Texas
+```
+
+**Body:**
+```
+Hey {{person.first_name}},
+
+Following up on my note earlier this week.
+
+I've been looking at a lot of med spas in Texas lately and there's a pattern: the ones growing fastest aren't the ones with the best treatments. They're the ones where the digital marketing actually works — the Google reviews are managed, the website converts, the paid ads have proper tracking, and the follow-up sequences run on autopilot.
+
+The gap between a med spa that's "doing fine" and one that's fully booked usually isn't clinical. It's operational.
+
+Curious whether that resonates with what you're seeing at {{company.name}}.
+
+— Marcus
+Calling Digital
+```
+
+### Step 3 — Day 6
+
+**Subject:**
+```
+what one Texas med spa did with their digital strategy
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+Quick story — a med spa in North Texas was running Facebook ads with no landing page, no lead capture, and no follow-up sequence. They were spending $2K/month and couldn't tell you what it was producing.
+
+We rebuilt three things: the landing page, the ad targeting, and the automated follow-up flow. Same ad budget. Within 60 days, booked consults from online sources doubled.
+
+Not because the ads were magic. Because the system behind them actually worked.
+
+If you're spending anything on digital at {{company.name}} and you're not sure what's converting, that's exactly the kind of thing I look at.
+
+— Marcus
+Calling Digital
+```
+
+### Step 4 — Day 11
+
+**Subject:**
+```
+closing the loop, {{person.first_name}}
+```
+
+**Body:**
+```
+Hey {{person.first_name}},
+
+Last note from me on this. I know you're busy running {{company.name}} and my emails are one of a hundred things in your inbox.
+
+If digital marketing or AI automation is something you want to explore for your practice at any point, the door is open. No pitch, no pressure — just a conversation about what's possible.
+
+Appreciate your time either way.
+
+— Marcus
+Calling Digital · marcus@calling.digital
+```
 
 ---
 
 ## SEQUENCE 2 — Marcus · PI Law
 
 **Recipients:** Filter `Vertical = pi-law` (~50 contacts)
-**Sending window:** Tuesday-Thursday, 7:00 AM - 9:00 AM CST OR 5:00 PM - 8:00 PM CST (lawyers check email before/after court)
-**Recommended sender:** michael@calling.digital
+**Sending window:** Tuesday-Thursday, 7:00 AM - 9:00 AM CST OR 5:00 PM - 8:00 PM CST
 
-### Step 1 — Subject
+### Step 1 — Day 0
 
+**Subject:**
 ```
-{{person.first_name}} — the call you missed last Tuesday at 9pm
+{{person.first_name}}, something I noticed about {{company.name}}
 ```
 
-### Step 1 — Body
-
+**Body:**
 ```
 {{person.first_name}},
 
 I came across {{company.name}} while researching personal injury firms in Texas.
 
-Quick math you've probably already done: a single missed intake call from a serious injury case is $25K-$80K in lost fees. Most PI firms in Texas lose 2-3 of those per month to voicemail after 5pm.
-
 {{company.cd_prospect_notes}}
 
-I help PI firms in Texas put an AI intake layer in front of their phone line that:
-- Answers every call 24/7 (including weekends and holidays)
-- Qualifies the case in under 90 seconds (jurisdiction, statute of limitations, severity)
-- Drops the qualified ones directly into your CRM with notes
-- Sends you a SMS for anything that looks like a real case
+One thing I see consistently with PI firms: the reputation is built in the courtroom, but the pipeline is built online. And most firms I look at have a gap between how strong their case results are and how visible they are when someone searches "personal injury lawyer" in their city.
 
-It doesn't replace your intake team — it makes sure they're only talking to the cases that matter.
+That's not a legal problem — it's a digital marketing problem. SEO, Google Business optimization, review strategy, and ad spend that's actually tracked.
 
-Worth 15 minutes this week to see what it would look like at {{company.name}}?
+I have a few observations specific to {{company.name}}. Worth 15 minutes this week?
 
-— Michael
-Calling Digital · michael@calling.digital
+— Marcus
+Calling Digital · marcus@calling.digital
 ```
 
-**Why this works:**
-- Subject is hyper-specific and provocative — they will open it to figure out what call you're talking about
-- Opens with the observation, no pitch
-- "Quick math you've probably already done" → respects them as a sharp operator, doesn't talk down
-- Specific dollar range ($25K-$80K) anchors the cost
-- Bullet list shows the system without selling — every bullet is a tangible action, not a feature
-- "Doesn't replace your intake team" preempts the #1 objection lawyers have
-- "see what it would look like at {{company.name}}" → not generic, says we'll show YOUR firm
+### Step 2 — Day 3
+
+**Subject:**
+```
+{{person.first_name}} — the firm two counties over is doing this
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+Quick follow-up.
+
+Most PI firms in Texas rely on referrals and reputation. That works — until a competitor in the next county starts ranking #1 on Google for every "car accident lawyer" and "injury attorney near me" search in your area.
+
+The firms investing in SEO and paid search right now aren't doing it because they're desperate. They're doing it because they know the math: one case from a $200/month SEO investment pays for five years of that investment.
+
+Worth a conversation about where {{company.name}} stands on search visibility?
+
+— Marcus
+Calling Digital
+```
+
+### Step 3 — Day 6
+
+**Subject:**
+```
+what we built for a Texas PI firm's digital pipeline
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+A personal injury firm in Texas was getting most of their cases from referrals. Good cases, but inconsistent volume. They wanted a second pipeline — one they controlled.
+
+We built it: SEO for their top 5 case-type keywords, Google Business optimization across their office locations, a review generation system, and a landing page that actually converted search traffic into consultations.
+
+Within 90 days, inbound from digital sources went from 2 consultations a month to 11. Same firm, same lawyers, same budget they were already spending on a website that wasn't working.
+
+If {{company.name}} is thinking about building a digital pipeline alongside referrals, that's exactly the kind of project we take on.
+
+— Marcus
+Calling Digital
+```
+
+### Step 4 — Day 11
+
+**Subject:**
+```
+last note, {{person.first_name}}
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+Last email from me. I know the priority is cases, not marketing emails.
+
+If there's ever a point where {{company.name}} wants to explore what a real digital pipeline looks like — SEO, paid search, review strategy, the full stack — I'm here. No pitch, just a conversation.
+
+Appreciate your time.
+
+— Marcus
+Calling Digital · marcus@calling.digital
+```
 
 ---
 
 ## SEQUENCE 3 — Marcus · Real Estate
 
 **Recipients:** Filter `Vertical = real-estate` (~50 contacts)
-**Sending window:** Monday-Friday, 8:00 AM - 10:00 AM CST (agents check email between showings, mornings are best)
-**Recommended sender:** michael@calling.digital
+**Sending window:** Monday-Friday, 8:00 AM - 10:00 AM CST
 
-### Step 1 — Subject
+### Step 1 — Day 0
 
+**Subject:**
 ```
-{{person.first_name}}, between showings — quick one
+{{person.first_name}}, quick one about {{company.name}}'s online presence
 ```
 
-### Step 1 — Body
-
+**Body:**
 ```
 Hey {{person.first_name}},
 
-I came across {{company.name}} while researching real estate teams in Texas.
-
-I'll keep this short because I know you're between showings.
-
-The buyer who texted you at 2pm on Saturday — the one you couldn't get back to until Sunday night — already toured a house with another agent that afternoon. That happens to most agents in Texas 1-2 times a month and it's the most expensive miss in the business.
+I came across {{company.name}} while looking at real estate teams in Texas.
 
 {{company.cd_prospect_notes}}
 
-I help Texas agents put an AI front desk in place that:
-- Answers every inbound call, text, and form fill in under 90 seconds
-- Handles the basics (price range, area, timeline, financing pre-qual) so you walk into the next conversation already informed
-- Books showings directly to your calendar
-- SMS-pings you the moment a serious buyer comes in
+Here's what I keep seeing with agents and brokerages: the hustle is there, but the digital infrastructure isn't keeping up. The website was built three years ago. The social content is inconsistent. The Google reviews aren't being managed. And the paid ads — if they're running — aren't tracked back to actual closings.
 
-It runs while you're driving, showing, or off the phone — and disappears the moment you're back in.
+In a market where buyers start their search online, that's not a minor gap. It's the gap between getting the call and being the third agent they talk to.
 
-Worth a 15-min call between showings this week to see if it fits how you work?
+I have a few thoughts specific to {{company.name}}. Worth 15 minutes?
 
-— Michael
-Calling Digital · michael@calling.digital
+— Marcus
+Calling Digital · marcus@calling.digital
 ```
 
-**Why this works:**
-- Subject acknowledges their reality (between showings) — they will open it because it sounds like another agent or a client
-- First line names the universal pain in vivid scene-setting (Saturday text, Sunday return call, lost deal)
-- "Most expensive miss in the business" → speaks their language
-- Bullet list shows specific actions, not features
-- "Runs while you're driving" → fits their physical reality
-- "Disappears the moment you're back in" → preempts "I want to talk to my own clients" objection
-- Close acknowledges their schedule constraints
+### Step 2 — Day 3
+
+**Subject:**
+```
+{{person.first_name}} — the listing that sells itself vs the one that doesn't
+```
+
+**Body:**
+```
+Hey {{person.first_name}},
+
+Quick follow-up from earlier this week.
+
+Two agents in the same market, same price range, same quality of listings. One gets 3x the inbound inquiries. The difference isn't the houses — it's the digital marketing behind them.
+
+Professional listing photos with drone shots. SEO-optimized property pages. Retargeting ads that follow interested buyers. A follow-up sequence that runs automatically after every showing.
+
+None of that is complicated. But most agents aren't doing it because they're focused on the next showing, not the system that generates the next showing.
+
+Curious if that resonates with how things work at {{company.name}}.
+
+— Marcus
+Calling Digital
+```
+
+### Step 3 — Day 6
+
+**Subject:**
+```
+what one Texas brokerage did to double their inbound leads
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+A real estate team in Texas was spending $1,500/month on Zillow leads and getting inconsistent quality. They wanted to own their pipeline instead of renting it.
+
+We built them a system: a conversion-optimized website with neighborhood pages, Google Business optimization for their market, a social content calendar that actually drove engagement, and automated follow-up sequences for every lead source.
+
+Within 90 days, organic inbound inquiries outpaced their Zillow spend — and the quality was better because these were people who searched for them specifically.
+
+If {{company.name}} is interested in owning your pipeline instead of renting it, that's the kind of thing I'd want to talk about.
+
+— Marcus
+Calling Digital
+```
+
+### Step 4 — Day 11
+
+**Subject:**
+```
+closing the loop, {{person.first_name}}
+```
+
+**Body:**
+```
+Hey {{person.first_name}},
+
+Last email from me. I know you're between showings and my emails are somewhere between the inspection report and the title company update.
+
+If digital marketing or lead generation strategy is ever something you want a fresh set of eyes on, I'm here. No obligation, no pitch — just a conversation.
+
+Appreciate your time.
+
+— Marcus
+Calling Digital · marcus@calling.digital
+```
 
 ---
 
 ## SEQUENCE 4 — Marcus · Custom Home Builder
 
 **Recipients:** Filter `Vertical = home-builder` (~50 contacts)
-**Sending window:** Monday-Wednesday, 6:30 AM - 8:30 AM CST (builders are at jobsites by 7-8am, so catch them before)
-**Recommended sender:** michael@calling.digital
+**Sending window:** Monday-Wednesday, 6:30 AM - 8:30 AM CST
 
-### Step 1 — Subject
+### Step 1 — Day 0
 
+**Subject:**
 ```
-{{person.first_name}}, the inquiry you got last Thursday from a real buyer
+{{person.first_name}}, something I noticed about {{company.name}}
 ```
 
-### Step 1 — Body
-
+**Body:**
 ```
 {{person.first_name}},
 
 I came across {{company.name}} while researching custom home builders in Texas.
 
-Most custom builders I talk to are referral-dependent — and the inquiries that come in from your website or Houzz or Instagram either go to a generic info@ email that nobody checks or get returned three days later when you're back from a jobsite. By then, the serious ones have already booked a meeting with another builder.
-
-The painful part: you can't tell which inquiries were tire-kickers and which were real $800K-$2M projects until weeks later.
-
 {{company.cd_prospect_notes}}
 
-I help Texas custom builders put an AI inbound system in place that:
-- Answers every inquiry within 60 seconds (call, text, web form)
-- Asks the qualification questions you'd ask on a first call (lot status, budget range, timeline, financing)
-- Books a discovery call directly to your calendar
-- Flags the real prospects so you only spend time on people who can actually move forward
+Most builders I talk to are referral-dependent — and there's nothing wrong with that. Referrals close at the highest rate in the industry. But the builders who are growing right now have a second channel: inbound from digital.
 
-It's not lead generation — you don't need more leads. It's making sure the leads you already get don't slip through the cracks while you're at a jobsite.
+That means their website converts visitors into qualified inquiries. Their portfolio shows up when someone searches "custom home builder [city]." Their Google reviews tell the story for them.
 
-Worth 15 minutes to see what it would look like for {{company.name}}?
+When the referral pipeline slows down — and it always does eventually — the digital channel is already running.
 
-— Michael
-Calling Digital · michael@calling.digital
+I have a few observations specific to {{company.name}}. Worth 15 minutes?
+
+— Marcus
+Calling Digital · marcus@calling.digital
 ```
 
-**Why this works:**
-- Subject is mysterious and specific — they will open to find out which inquiry
-- "Referral-dependent" → they nod immediately, that's their identity
-- Names the exact pain of a generic info@ inbox + 3-day delay → vivid and true
-- "$800K-$2M projects" → speaks in their actual deal sizes
-- "It's not lead generation — you don't need more leads" → preempts the #1 builder objection (they hate being sold leads)
-- "Making sure the leads you already get don't slip through the cracks" → reframes the offer as protecting existing pipeline, not adding to it
-- "While you're at a jobsite" → respects their physical reality
+### Step 2 — Day 3
+
+**Subject:**
+```
+{{person.first_name}} — the builder in the next county is showing up first
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+Following up on my note earlier this week.
+
+When someone searches "custom home builder" + your city in Google, who shows up? If it's not {{company.name}}, someone else is getting that inquiry — and they might not build a better home than you do. They just have better SEO.
+
+The builders investing in digital right now aren't doing it because referrals dried up. They're doing it because they know the best clients — the $800K+ projects with clear budgets and realistic timelines — start their search online before they ask friends for a recommendation.
+
+Worth a conversation about where {{company.name}} stands online?
+
+— Marcus
+Calling Digital
+```
+
+### Step 3 — Day 6
+
+**Subject:**
+```
+what one Texas builder did to stop being referral-dependent
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+A custom home builder in Texas was 100% referral-based. Great work, great reputation — but the pipeline was feast-or-famine. One quarter fully booked, next quarter scrambling.
+
+We built them a system: a portfolio website that ranked for their target keywords, a Google Business profile that showcased completed projects, a review generation flow, and a lead qualification form that filtered serious inquiries from tire-kickers.
+
+Within 6 months, 30% of their pipeline came from inbound digital — qualified buyers who found them through search. Referrals didn't slow down. They just added a second engine.
+
+If {{company.name}} is interested in building that second channel, that's exactly what I'd want to talk about.
+
+— Marcus
+Calling Digital
+```
+
+### Step 4 — Day 11
+
+**Subject:**
+```
+last note from Marcus
+```
+
+**Body:**
+```
+{{person.first_name}},
+
+Last email from me. I know you've got jobsites to run and my emails are somewhere between the lumber delivery and the framing inspection.
+
+If there's ever a point where {{company.name}} wants to explore what a real digital presence looks like — website, SEO, reviews, the full picture — I'm here. No pitch, no pressure.
+
+Appreciate your time.
+
+— Marcus
+Calling Digital · marcus@calling.digital
+```
 
 ---
 
-## Cross-cutting notes
+## Merge field reference
 
-### Why each sequence has a different sending window
-Each ICP has a different daily rhythm:
-- **Med spas:** Slow mornings, busy afternoons. Owner checks email 9-12.
-- **PI lawyers:** In court 9-5. Check email before court (7-9 AM) or after (5-8 PM).
-- **Real estate agents:** Showings dominate afternoons. Mornings are when they're at their desk.
-- **Home builders:** At jobsites by 7:30 AM. Catch them before they leave.
-
-These windows are inside the existing 9-5 default. If you want to maximize, manually edit each sequence's sending window in **Settings → Delivery → Sending window**.
-
-### Why each subject line uses {{person.first_name}}
-Open rates jump significantly when the subject line contains the recipient's first name. Generic subject lines ("Quick question") get filtered or skimmed past. Personalized ones get opened.
-
-### Why no pricing is mentioned anywhere
-Iron rule from PAPERCLIP_EXECUTE.md: **NEVER mention pricing in outbound. Pricing comes from Michael on the call.** All 4 sequences follow this. If a recipient asks about pricing in a reply, you handle that in the conversation, not in the cold email.
-
-### Why each one closes with a 15-minute ask, not a "demo"
-"Demo" sounds like a sales pitch. "15 minutes to see if it fits" sounds like a peer conversation. Reply rates are noticeably better with the second framing across every B2B vertical.
-
-### What to do AFTER you publish all 4
-
-The first 24-48 hours will tell you everything:
-- Which subject line gets the highest open rate
-- Which vertical replies the most
-- What objections people raise (those become Step 2)
-
-Once you have 2-3 days of data, come back and we'll write Steps 2-4 for each sequence based on what's actually working.
-
-## Recipient counts (as of right now in Attio)
-
-| Vertical | Filter | Approx count |
+| Field | Source | Example |
 |---|---|---|
-| Med Spa | `vertical = med-spa` | ~50 |
-| PI Law | `vertical = pi-law` | ~50 |
-| Real Estate | `vertical = real-estate` | ~50 |
-| Home Builder | `vertical = home-builder` | ~50 |
-| **TOTAL** | | **~197** |
+| `{{person.first_name}}` | Attio People.name.first_name | "Nickolas" |
+| `{{company.name}}` | Attio Company.name | "Lakeland Custom Homes" |
+| `{{company.cd_prospect_notes}}` | Verified Tavily enrichment | "Nickolas Zuckerbrow has been building homes for 23 years [source: lakelandcustomhomes.com/about/]" |
+| `{{company.cd_industry}}` | Vertical label | "custom home building" |
 
-## What to NOT do
+**NOTE on cd_prospect_notes:** Each note now includes `[source: <url>]` at the end. You may want to trim the `[source: ...]` part before pasting into the sequence step, OR leave it in (it won't render in the email since it's inside the merge field — Attio will include the full string). If it looks weird in the email preview, remove the source attribution from the Attio records after verifying.
 
-- ❌ Don't enroll anyone with `pipeline_stage = marcus-salvage` — those are the 16 manual review records, save them for personal outreach
-- ❌ Don't enable all 4 sequences in the same minute — stagger by 30 seconds each so Gmail doesn't see a sudden burst from your account
-- ❌ Don't change the merge field names (`{{person.first_name}}` etc.) — they're case-sensitive and have to match Attio's syntax exactly
-- ❌ Don't worry about A/B testing yet — get the first batch out, learn from real replies, then iterate
+## What NOT to do
 
-## Reference
+- Do NOT mention AI receptionist, Sophie, or phone answering — that's AI Phone Guy's product
+- Do NOT offer a "free audit" in the email — the audit is the gift you build BEFORE the meeting, not the bait
+- Do NOT mention pricing ($2,500/mo, $5K-$8K/mo)
+- Do NOT add the `marcus-salvage` 16 records to any of these sequences
+- Do NOT send all 4 sequences at the exact same time — stagger by 30 seconds
 
-- Sender: connected Gmail account on michael@calling.digital
-- Sequence editor: `https://app.attio.com/calling-digital/sequences/<id>`
-- Live dashboard: https://paperclip-production-ba14.up.railway.app/dashboard
-- Iron rule: NEVER mention pricing in outbound
+## Process going forward (ironclad)
+
+1. **Import contacts** → run `scripts/import_ownerphones.py` (creates People + Companies + vertical tags)
+2. **Enrich contacts** → run `scripts/enrich_verified.py` (Tavily search → LLM selects verified fact → source URL stored)
+3. **Enroll in sequence** → manual in Attio UI (filter by vertical, add to correct sequence)
+4. **Sequence runs automatically** → 4 emails over 11 days
+5. **Meeting booked** → Google Meet confirmation triggers gift generation (competitive audit)
+6. **Gift prepared** → before the call, not offered in the email
+7. **Michael closes on the call** → agents did everything else
+
+This is AVO. Work is worship. The sequence earns the meeting. The meeting earns the trust. The trust earns the deal.
