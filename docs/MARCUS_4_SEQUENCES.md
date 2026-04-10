@@ -66,8 +66,10 @@ That gap costs real money — especially when someone searches "med spa near me"
 
 I have a few ideas specific to {{company.name}}. Worth 15 minutes this week?
 
-— Marcus
-Calling Digital · marcus@calling.digital
+Here's my calendar if it's easier: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -89,8 +91,9 @@ The gap between a med spa that's "doing fine" and one that's fully booked usuall
 
 Curious whether that resonates with what you're seeing at {{company.name}}.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 3 — Day 6
@@ -112,8 +115,9 @@ Not because the ads were magic. Because the system behind them actually worked.
 
 If you're spending anything on digital at {{company.name}} and you're not sure what's converting, that's exactly the kind of thing I look at.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 4 — Day 11
@@ -133,8 +137,10 @@ If digital marketing or AI automation is something you want to explore for your 
 
 Appreciate your time either way.
 
-— Marcus
-Calling Digital · marcus@calling.digital
+If the timing is ever right: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ---
@@ -165,8 +171,8 @@ That's not a legal problem — it's a digital marketing problem. SEO, Google Bus
 
 I have a few observations specific to {{company.name}}. Worth 15 minutes this week?
 
-— Marcus
-Calling Digital · marcus@calling.digital
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -188,8 +194,9 @@ The firms investing in SEO and paid search right now aren't doing it because the
 
 Worth a conversation about where {{company.name}} stands on search visibility?
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 3 — Day 6
@@ -211,8 +218,9 @@ Within 90 days, inbound from digital sources went from 2 consultations a month t
 
 If {{company.name}} is thinking about building a digital pipeline alongside referrals, that's exactly the kind of project we take on.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 4 — Day 11
@@ -232,8 +240,10 @@ If there's ever a point where {{company.name}} wants to explore what a real digi
 
 Appreciate your time.
 
-— Marcus
-Calling Digital · marcus@calling.digital
+If the timing is ever right: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ---
@@ -264,8 +274,8 @@ In a market where buyers start their search online, that's not a minor gap. It's
 
 I have a few thoughts specific to {{company.name}}. Worth 15 minutes?
 
-— Marcus
-Calling Digital · marcus@calling.digital
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -289,8 +299,9 @@ None of that is complicated. But most agents aren't doing it because they're foc
 
 Curious if that resonates with how things work at {{company.name}}.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 3 — Day 6
@@ -312,8 +323,9 @@ Within 90 days, organic inbound inquiries outpaced their Zillow spend — and th
 
 If {{company.name}} is interested in owning your pipeline instead of renting it, that's the kind of thing I'd want to talk about.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 4 — Day 11
@@ -333,8 +345,10 @@ If digital marketing or lead generation strategy is ever something you want a fr
 
 Appreciate your time.
 
-— Marcus
-Calling Digital · marcus@calling.digital
+If the timing is ever right: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ---
@@ -367,8 +381,10 @@ When the referral pipeline slows down — and it always does eventually — the 
 
 I have a few observations specific to {{company.name}}. Worth 15 minutes?
 
-— Marcus
-Calling Digital · marcus@calling.digital
+Here's my calendar if it's easier: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -390,8 +406,9 @@ The builders investing in digital right now aren't doing it because referrals dr
 
 Worth a conversation about where {{company.name}} stands online?
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 3 — Day 6
@@ -413,15 +430,16 @@ Within 6 months, 30% of their pipeline came from inbound digital — qualified b
 
 If {{company.name}} is interested in building that second channel, that's exactly what I'd want to talk about.
 
-— Marcus
+— Michael Rodriguez
 Calling Digital
+Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
 ### Step 4 — Day 11
 
 **Subject:**
 ```
-last note from Marcus
+last note from Michael
 ```
 
 **Body:**
@@ -434,8 +452,10 @@ If there's ever a point where {{company.name}} wants to explore what a real digi
 
 Appreciate your time.
 
-— Marcus
-Calling Digital · marcus@calling.digital
+If the timing is ever right: https://calendly.com/calling-michael/strategy-session
+
+— Michael Rodriguez
+Calling Digital · michael@calling.digital
 ```
 
 ---
