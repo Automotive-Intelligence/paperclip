@@ -38,18 +38,17 @@ TYLER_ICP = {
 
 MARCUS_ICP = {
     "agent": "marcus",
-    "target_area": "dallas",
-    "target_industries": [
-        "professional services", "consulting", "accounting", "legal",
-        "local retail", "retail", "service business", "services",
-        "restaurant", "salon", "spa", "fitness", "gym",
-        "medical", "clinic", "real estate", "insurance",
+    "target_area": "texas",
+    "target_verticals": [
+        "med spa", "medspa", "medical spa", "aesthetics", "cosmetic",
+        "personal injury", "pi law", "injury attorney", "injury lawyer",
+        "real estate", "realtor", "brokerage", "realty",
+        "custom home", "home builder", "homebuilder", "general contractor",
     ],
-    "min_employees": 2,
-    "max_employees": 25,
     "exclude_keywords": [
-        "enterprise", "national chain", "fortune 500", "in-house marketing",
-        "marketing team", "marketing department", "corporate",
+        "enterprise", "national chain", "fortune 500", "corporate",
+        "ai receptionist", "ai phone", "virtual receptionist",
+        "franchise", "franchisee",
     ],
 }
 
@@ -92,11 +91,12 @@ TYLER_ICP_BLOCK = (
 MARCUS_ICP_BLOCK = (
     "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
     "ONLY prospect businesses that match ALL of the following criteria:\n"
-    "- Located in the Dallas TX metro area\n"
-    "- Industry: Professional services, local retail, or service businesses\n"
-    "- Business size: 2-25 employees\n"
-    "- Signals: Active social media but low engagement, no clear digital strategy, running ads without tracking\n"
-    "EXCLUDE: Enterprise companies, national chains, businesses with in-house marketing teams\n"
+    "- Located in Texas (any city — statewide)\n"
+    "- Vertical: Med Spas, Personal Injury Law Firms, Real Estate Teams/Brokerages, or Custom Home Builders\n"
+    "- Owner-operated or small team (not enterprise/corporate)\n"
+    "- TRIGGER EVENTS to look for: new location, expansion, leadership change, negative review streak, "
+    "competitor making digital moves, new service launch, award/press mention, seasonal shift approaching\n"
+    "EXCLUDE: Enterprise companies, national chains, franchises, businesses already using AI receptionists\n"
     "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
     "=== END ICP GUARDRAILS ===\n"
 )
@@ -168,6 +168,10 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
 
     # ── Marcus ICP checks ──
     elif agent_name == "marcus":
+        # Vertical check — must be one of the 4 target verticals
+        if biz_type and not _matches_any(biz_type, icp["target_verticals"]):
+            return False, f"Vertical '{biz_type}' not in Marcus's 4 target verticals"
+
         # Exclusion check (name + type only, not reason)
         if _matches_any(exclusion_text, icp["exclude_keywords"]):
             matched = [kw for kw in icp["exclude_keywords"] if kw in exclusion_text]

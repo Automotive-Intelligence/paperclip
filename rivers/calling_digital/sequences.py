@@ -1,9 +1,16 @@
-"""Email sequences for Calling Digital — Track A (cold) and Track B (warm).
+"""Email sequences for Calling Digital — DEPRECATED.
 
-IRON RULES:
-- NEVER mention pricing ($2,500/mo or $5K-$8K/mo)
-- Every message is written to the OWNER
-- ICP-specific copy
+As of 2026-04-11, all email sequences are managed in Attio UI:
+- Marcus — Med Spa (4 steps)
+- Marcus — PI Law (4 steps)
+- Marcus — Real Estate (4 steps)
+- Marcus — Custom Home Builder (4 steps)
+
+See docs/MARCUS_4_SEQUENCES.md for the email copy.
+
+This file is kept only because rivers/calling_digital/workflow.py imports from it.
+The in-code Track A/B system is no longer used — Attio workflows handle enrollment
+and Attio sequences handle email delivery.
 """
 
 import os

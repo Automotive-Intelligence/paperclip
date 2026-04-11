@@ -151,21 +151,57 @@ def _search_person_by_email(email: str) -> str | None:
 
 
 def _create_company_record(prospect: dict, source_agent: str, business_key: str) -> str:
+    from datetime import date as _date
+
+    business_name = prospect.get("business_name", "Unknown")
+    website = (prospect.get("website") or "").strip()
+
     # Attio values are arrays of value objects for many system fields.
-    payload = {
-        "data": {
-            "values": {
-                "name": [{"value": prospect.get("business_name", "Unknown")}],
-                "description": [{"value": (
-                    f"{source_agent} prospecting: {prospect.get('reason', '')} | "
-                    f"City: {prospect.get('city', '')} | "
-                    f"Phone: {prospect.get('phone', '')} | "
-                    f"Website: {prospect.get('website', '')} | "
-                    f"Contact: {prospect.get('contact_name', '')}"
-                )}],
-            }
-        }
+    values = {
+        "name": [{"value": business_name}],
+        "description": [{"value": (
+            f"{source_agent} prospecting: {prospect.get('reason', '')} | "
+            f"City: {prospect.get('city', '')} | "
+            f"Phone: {prospect.get('phone', '')} | "
+            f"Website: {website} | "
+            f"Contact: {prospect.get('contact_name', '')}"
+        )}],
     }
+
+    # Marcus prospects include full cd_* fields for sequence merge fields
+    if source_agent == "marcus" and business_key == "callingdigital":
+        # Domain from website
+        domain = ""
+        if website:
+            d = website.lower()
+            for prefix in ("https://", "http://", "www."):
+                if d.startswith(prefix):
+                    d = d[len(prefix):]
+            domain = d.split("/")[0].split("?")[0]
+        if domain:
+            values["domains"] = [{"domain": domain}]
+
+        # cd_* fields for sequence merge
+        vertical_slug = (prospect.get("vertical") or "").strip()
+        industry_label = {
+            "med-spa": "med spa", "pi-law": "personal injury law",
+            "real-estate": "real estate", "home-builder": "custom home building",
+        }.get(vertical_slug, prospect.get("business_type", ""))
+
+        values["cd_industry"] = [{"value": industry_label}]
+        values["cd_source_agent"] = [{"value": f"marcus-{vertical_slug}"}]
+        values["cd_prospected_date"] = [{"value": _date.today().isoformat()}]
+        values["cd_outreach_stage"] = [{"value": "imported"}]
+
+        # cd_prospect_notes — verified fact for email personalization
+        verified_fact = (prospect.get("verified_fact") or "").strip()
+        if verified_fact:
+            source_note = f"{verified_fact} [source: {website}]" if website else verified_fact
+            values["cd_prospect_notes"] = [{"value": source_note}]
+        elif prospect.get("trigger_event"):
+            values["cd_prospect_notes"] = [{"value": prospect["trigger_event"]}]
+
+    payload = {"data": {"values": values}}
     data = _attio_request("create_company_record", "POST", "/objects/companies/records", json_body=payload, timeout=15)
     record = data.get("data", {})
     return record.get("id", {}).get("record_id", "") if isinstance(record.get("id"), dict) else record.get("id", "")
@@ -178,6 +214,18 @@ def _create_person_record(prospect: dict, source_agent: str, business_key: str) 
     business_name = (prospect.get("business_name") or "Unknown").strip()
     first_name, last_name, display_name = _normalize_person_name(contact_name, business_name)
 
+    # Build description from available research fields
+    desc_parts = [f"Company: {business_name}"]
+    if prospect.get("trigger_event"):
+        desc_parts.append(f"Trigger: {prospect['trigger_event']}")
+    if prospect.get("reason"):
+        desc_parts.append(f"{source_agent} prospecting: {prospect['reason']}")
+    if prospect.get("phone"):
+        desc_parts.append(f"Phone: {prospect['phone']}")
+    if prospect.get("website"):
+        desc_parts.append(f"Website: {prospect['website']}")
+    description = " | ".join(desc_parts)
+
     payload = {
         "data": {
             "values": {
@@ -188,16 +236,52 @@ def _create_person_record(prospect: dict, source_agent: str, business_key: str) 
                 }],
                 # Attio email_addresses entries require the key "email_address", not "value"
                 "email_addresses": [{"email_address": email}] if email else [],
-                "description": [{"value": (
-                    f"Company: {business_name} | {source_agent} prospecting: {prospect.get('reason', '')} | "
-                    f"Phone: {prospect.get('phone', '')} | Website: {prospect.get('website', '')}"
-                )}],
+                "description": [{"value": description}],
             }
         }
     }
+
+    # Marcus prospects include vertical tag + company link for Attio workflows
+    if source_agent == "marcus" and business_key == "callingdigital":
+        vertical = (prospect.get("vertical") or "").strip()
+        if vertical:
+            payload["data"]["values"]["vertical"] = vertical
+
+        # Link to Company record created in push_prospects_to_attio
+        company_id = (prospect.get("_attio_company_id") or "").strip()
+        if company_id:
+            payload["data"]["values"]["company"] = [{
+                "target_object": "companies",
+                "target_record_id": company_id,
+            }]
+
     data = _attio_request("create_person_record", "POST", "/objects/people/records", json_body=payload, timeout=15)
     record = data.get("data", {})
     return record.get("id", {}).get("record_id", "") if isinstance(record.get("id"), dict) else record.get("id", "")
+
+
+def _touch_person_pipeline_stage(record_id: str, stage: str = "ownerphones-warm") -> bool:
+    if not record_id:
+        return False
+    payload = {
+        "data": {
+            "values": {
+                "pipeline_stage": stage,
+            }
+        }
+    }
+    try:
+        _attio_request(
+            "touch_person_pipeline_stage",
+            "PATCH",
+            f"/objects/people/records/{record_id}",
+            json_body=payload,
+            timeout=15,
+        )
+        return True
+    except Exception as e:
+        logging.warning("[Attio] Failed to touch pipeline_stage for %s: %s", record_id, e)
+        return False
 
 
 def _send_email_via_smtp(prospect: dict) -> bool:
@@ -234,7 +318,11 @@ def _send_email_via_smtp(prospect: dict) -> bool:
 def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", business_key: str = "callingdigital") -> list:
     """Push parsed prospects to Attio records.
 
-    If prospect has email, create person record. Otherwise create company record.
+    For Marcus (callingdigital): Creates Company first (with cd_* fields), then Person
+    linked to that Company (with vertical tag). This triggers the Attio workflow
+    which auto-enrolls the Person into the correct email sequence.
+
+    For other agents: If prospect has email, create person record. Otherwise company only.
     """
     if not attio_ready():
         raise ValueError("Attio credentials not configured. Set ATTIO_API_KEY.")
@@ -259,39 +347,69 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                         "provider": "attio",
                     })
                     continue
+
+                # Marcus path: create Company first, then Person linked to Company
+                company_id = None
+                if source_agent == "marcus" and business_key == "callingdigital":
+                    try:
+                        company_id = _create_company_record(p, source_agent, business_key)
+                        logging.info("[Attio] Created company for %s: %s", business_name, company_id)
+                    except Exception as ce:
+                        logging.warning("[Attio] Company creation failed for %s: %s", business_name, ce)
+
+                    # Inject company link into prospect for person creation
+                    if company_id:
+                        p["_attio_company_id"] = company_id
+
                 rec_id = _create_person_record(p, source_agent, business_key)
-                rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
-                mode = email_delivery_mode()
-                if strict_template_validation_enabled() and not rendered.get("valid", False):
+                workflow_touched = False
+                if source_agent == "marcus" and business_key == "callingdigital":
+                    workflow_touched = _touch_person_pipeline_stage(rec_id)
+
+                # Marcus: Attio sequences handle emails — skip direct email sending.
+                # The workflow trigger (Record created/updated) auto-enrolls into the
+                # vertical-specific sequence. No email composition needed here.
+                if source_agent == "marcus" and business_key == "callingdigital":
                     email_attempted = False
                     email_sent = False
-                    logging.warning(
-                        "[Attio] Email blocked by template validation for %s: %s",
-                        business_name,
-                        ",".join(rendered.get("issues", [])),
-                    )
-                elif email and already_emailed(email):
-                    email_attempted = False
-                    email_sent = False
+                    rendered = {"template_key": "", "valid": True, "issues": []}
                     logging.info(
-                        "[Attio] Email skipped for %s — already emailed %s within 90 days.",
-                        business_name, email,
+                        "[Attio] Marcus prospect %s — email handled by Attio sequence (workflow_touched=%s)",
+                        business_name, workflow_touched,
                     )
-                elif mode == "unified":
-                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
-                    email_sent = send_unified_email(
-                        p.get("email", ""),
-                        rendered.get("subject", ""),
-                        rendered.get("body_text", ""),
-                        business_key=business_key,
-                    ) if email_attempted else False
                 else:
-                    if rendered.get("subject"):
-                        p["subject"] = rendered.get("subject", "")
-                    if rendered.get("body_text"):
-                        p["body"] = rendered.get("body_text", "")
-                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text") and attio_email_ready())
-                    email_sent = _send_email_via_smtp(p) if email_attempted else False
+                    rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
+                    mode = email_delivery_mode()
+                    if strict_template_validation_enabled() and not rendered.get("valid", False):
+                        email_attempted = False
+                        email_sent = False
+                        logging.warning(
+                            "[Attio] Email blocked by template validation for %s: %s",
+                            business_name,
+                            ",".join(rendered.get("issues", [])),
+                        )
+                    elif email and already_emailed(email):
+                        email_attempted = False
+                        email_sent = False
+                        logging.info(
+                            "[Attio] Email skipped for %s — already emailed %s within 90 days.",
+                            business_name, email,
+                        )
+                    elif mode == "unified":
+                        email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
+                        email_sent = send_unified_email(
+                            p.get("email", ""),
+                            rendered.get("subject", ""),
+                            rendered.get("body_text", ""),
+                            business_key=business_key,
+                        ) if email_attempted else False
+                    else:
+                        if rendered.get("subject"):
+                            p["subject"] = rendered.get("subject", "")
+                        if rendered.get("body_text"):
+                            p["body"] = rendered.get("body_text", "")
+                        email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text") and attio_email_ready())
+                        email_sent = _send_email_via_smtp(p) if email_attempted else False
             else:
                 existing_id = _search_company_by_name(business_name)
                 if existing_id:
@@ -311,6 +429,7 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                 email_attempted = False
                 email_sent = False
                 rendered = {"template_key": "", "valid": True, "issues": []}
+                workflow_touched = False
 
             results.append({
                 "business_name": business_name,
@@ -322,6 +441,7 @@ def push_prospects_to_attio(prospects: list, source_agent: str = "marcus", busin
                 "template_key": rendered.get("template_key", ""),
                 "template_valid": bool(rendered.get("valid", False)),
                 "template_issues": rendered.get("issues", []),
+                "workflow_touched": workflow_touched,
                 "provider": "attio",
             })
         except Exception as e:

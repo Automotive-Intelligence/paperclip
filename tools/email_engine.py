@@ -367,21 +367,19 @@ PARSE_PROMPTS = {
     },
     "marcus": {
         "keys": """Each object must have exactly these keys:
-- business_name (string)
-- city (string, default "Dallas" if not specified)
-- business_type (string, e.g. "Restaurant", "Retail", "Professional Services")
-- reason (string, the key pain point or opportunity identified)
-- email_hook (string, the consultative opening line)
-- subject (string, a consultative cold email subject line)
-- body (string, the full cold email body — educational, not salesy, leads with their problem)
-- follow_up_subject (string, follow-up email subject)
-- follow_up_body (string, follow-up email body with different value angle)
-- contact_name (string, owner or decision-maker first and last name if found, otherwise empty string)
-- email (string, direct contact email address if found, otherwise empty string)
+- business_name (string, full business name)
+- business_type (string, e.g. "med spa", "personal injury law", "real estate", "custom home building")
+- vertical (string, one of: "med-spa", "pi-law", "real-estate", "home-builder")
+- city (string, city in Texas)
+- contact_name (string, owner or decision-maker first and last name — REQUIRED)
+- email (string, direct contact email address — REQUIRED)
 - phone (string, business phone number if found, otherwise empty string)
 - website (string, business website URL if found, otherwise empty string)
-- bundle_candidate (boolean, true if flagged as AI Phone Guy bundle opportunity)""",
-        "context": "This is from a consultative sales agent targeting Dallas businesses that need digital marketing and AI implementation services.",
+- verified_fact (string, one specific verifiable fact from web research — NOT generic marketing copy)
+- trigger_event (string, the specific trigger event making now the right time to reach out)
+- competitive_insight (string, what their local competitor does digitally that they don't)
+- reason (string, 2-3 sentences on why this business needs digital marketing help)""",
+        "context": "This is from a research-focused SDR finding Texas businesses in 4 verticals (med spas, PI law, real estate, custom home builders) that need digital marketing services. Marcus does NOT write emails — he delivers research intelligence. The emails are pre-built in Attio sequences.",
     },
     "ryan_data": {
         "keys": """Each object must have exactly these keys:
@@ -431,8 +429,7 @@ If they are NOT present, generate appropriate ones based on the prospect details
 For Tyler: Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', 'after-hours voicemail').
 Body should use Observation > Problem > Proof > Ask framework. CTA should be interest-based ('Worth a quick look?').
 
-For Marcus: Subject should be consultative (e.g. 'quick audit for [business]').
-Body should lead with their problem and what it's costing them. Educational, not salesy.
+For Marcus: DO NOT generate emails. Marcus is a research agent — extract only the structured prospect data (business_name, vertical, contact_name, verified_fact, trigger_event, etc). No subject lines or email bodies needed.
 
 For Ryan Data: Subject should reference automotive/dealership context.
 Body should position the free AI Readiness Assessment as the entry point.

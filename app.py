@@ -1571,6 +1571,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         emails_attempted = 0
         emails_sent = 0
         emails_failed = 0
+        workflow_touched = 0
         provider_not_email_capable = 0
         email_capability_reason = ""
         email_capability = _provider_email_capability(crm_provider)
@@ -1602,6 +1603,8 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                     )
             if r.get("status") == "duplicate_skipped":
                 duplicate_skipped += 1
+            if r.get("workflow_touched"):
+                workflow_touched += 1
             if r.get("email_attempted"):
                 emails_attempted += 1
             if r.get("email_sent"):
@@ -1629,7 +1632,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
 
         logging.info(
             f"[Pipeline] {agent_name}: {created}/{len(prospects)} records created in {crm_provider}, "
-            f"{emails_sent} emails sent."
+            f"{workflow_touched} workflow-ready, {emails_sent} emails sent."
         )
         return {
             "status": "ok",
@@ -1637,6 +1640,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "icp_discarded": len(icp_discarded),
             "crm_provider": crm_provider,
             "crm_created": created,
+            "workflow_touched": workflow_touched,
             "duplicate_skipped": duplicate_skipped,
             "ghl_created": created if crm_provider == "ghl" else 0,
             "emails_attempted": emails_attempted,
@@ -1657,6 +1661,7 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
             "parsed_prospects": 0,
             "crm_provider": provider,
             "crm_created": 0,
+            "workflow_touched": 0,
             "duplicate_skipped": 0,
             "ghl_created": 0,
             "emails_attempted": 0,
@@ -2150,43 +2155,85 @@ def run_tyler_prospecting():
     return {"agent": "tyler", "status": "error", "error": "ICP retry exhausted"}
 
 
+# ── Marcus vertical rotation ────────────────────────────────────────────────
+# Cycles through verticals so each day targets a different ICP.
+# Monday=med-spa, Tuesday=pi-law, Wednesday=real-estate, Thursday=home-builder, Friday=med-spa
+MARCUS_VERTICAL_ROTATION = {
+    0: ("med-spa", "med spa", "med spas"),
+    1: ("pi-law", "personal injury law", "personal injury law firms"),
+    2: ("real-estate", "real estate", "real estate teams and brokerages"),
+    3: ("home-builder", "custom home building", "custom home builders"),
+    4: ("med-spa", "med spa", "med spas"),     # Friday cycles back
+    5: ("pi-law", "personal injury law", "personal injury law firms"),
+    6: ("real-estate", "real estate", "real estate teams and brokerages"),
+}
+
+
+def _get_marcus_vertical_today() -> tuple:
+    """Returns (vertical_slug, industry_label, plural_label) for today."""
+    from datetime import datetime
+    import pytz
+    cst = pytz.timezone("US/Central")
+    weekday = datetime.now(cst).weekday()  # 0=Monday
+    return MARCUS_VERTICAL_ROTATION.get(weekday, MARCUS_VERTICAL_ROTATION[0])
+
+
 def _run_marcus_crew():
-    """Run Marcus's CrewAI prospecting and return raw output."""
+    """Run Marcus's CrewAI prospecting with vertical rotation and deep research."""
+    vertical_slug, industry_label, plural_label = _get_marcus_vertical_today()
+
     task = Task(
         description=(
-            "Search for small and mid-size businesses in Dallas that need digital marketing help — "
-            "businesses with outdated websites, weak social presence, no Google reviews strategy, "
-            "or recent funding/expansion news. Look for buying signals: businesses posting about "
-            "marketing struggles, hiring marketing roles, or launching new services. "
-            "For each of your 5 targets, you MUST search the web to find: "
-            "(1) the business owner or marketing decision-maker's FIRST AND LAST NAME, "
-            "(2) a direct email address for that person or the business, "
-            "(3) the business phone number, "
-            "(4) the business website URL. "
-            "Search '[business name] Dallas owner email contact' and '[business name] website contact'. "
-            "Include any found contact info in your report — real names and emails, not placeholders. "
-            "Compile 5 high-priority outreach targets for today with a consultative cold email "
-            "for each — lead with their problem, not your service. Use an educational, diagnostic tone. "
-            "Subject lines should be consultative (e.g. 'quick audit for [business]', 'your website traffic'). "
-            "Include a follow-up email angle for each prospect. "
-            "Flag any that are also strong candidates for The AI Phone Guy bundle upsell."
-            "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
-            "ONLY prospect businesses that match ALL of the following criteria:\n"
-            "- Located in the Dallas TX metro area\n"
-            "- Industry: Professional services, local retail, or service businesses\n"
-            "- Business size: 2-25 employees\n"
-            "- Signals: Active social media but low engagement, no clear digital strategy, running ads without tracking\n"
-            "EXCLUDE: Enterprise companies, national chains, businesses with in-house marketing teams\n"
-            "If a business does not match these criteria, skip it and find another. Do NOT include off-ICP prospects.\n"
-            "=== END ICP GUARDRAILS ==="
+            f"TODAY'S VERTICAL: {plural_label.upper()} (tag: {vertical_slug})\n\n"
+            f"Search for {plural_label} in Texas that are experiencing TRIGGER EVENTS — "
+            f"moments of change that create buying urgency for digital marketing services. "
+            f"You are prospecting for Calling Digital, a digital marketing agency.\n\n"
+            f"TRIGGER EVENTS TO HUNT FOR:\n"
+            f"- New location opening or expansion\n"
+            f"- Leadership change or new hire announcement\n"
+            f"- Negative Google review streak (3+ recent bad reviews)\n"
+            f"- Competitor in their city making aggressive digital moves\n"
+            f"- New service launch, rebrand, or renovation\n"
+            f"- Award, press mention, or milestone anniversary\n"
+            f"- Seasonal demand approaching (e.g. spring for med spas, Jan for PI firms)\n\n"
+            f"FOR EACH PROSPECT (find 3 high-quality targets):\n"
+            f"1. Search for the business and verify it's a real {industry_label} business in Texas\n"
+            f"2. Find the OWNER or decision-maker's FIRST AND LAST NAME\n"
+            f"3. Find their direct EMAIL address (search '[business name] [city] owner email contact')\n"
+            f"4. Find the business WEBSITE URL\n"
+            f"5. Find the business PHONE NUMBER\n"
+            f"6. Find ONE specific, verifiable fact about the business (years in business, recent award, "
+            f"number of locations, named partner, specific service niche — NOT generic marketing copy)\n"
+            f"7. Identify the TRIGGER EVENT that makes NOW the right time to reach out\n"
+            f"8. Find what their top local COMPETITOR is doing digitally that they are not\n\n"
+            f"DO NOT write cold emails. DO NOT pitch. Your job is RESEARCH and QUALIFICATION only.\n"
+            f"The emails are pre-built in Attio sequences — you just need to deliver the intelligence.\n\n"
+            f"=== ICP GUARDRAILS (MANDATORY) ===\n"
+            f"- Located in Texas (any city — statewide)\n"
+            f"- Vertical: {plural_label} ONLY for today's run\n"
+            f"- Owner-operated or small team (not enterprise/corporate)\n"
+            f"- Must have a real trigger event — do NOT prospect randomly\n"
+            f"EXCLUDE: Enterprise companies, national chains, franchises, "
+            f"businesses already using AI receptionists\n"
+            f"=== END ICP GUARDRAILS ==="
         ),
         expected_output=(
-            "Daily prospecting report: (1) 5 outreach targets with company name, industry, city, "
-            "owner/contact name, email, phone, website, key pain point, "
-            "a cold email (subject + body), and a follow-up email angle. "
-            "(2) Bundle opportunities flagged for Dek. "
-            "Contact info is REQUIRED for each target — search for it. "
-            "IMPORTANT: All outreach is via cold email only."
+            f"Structured prospect intelligence report with exactly 3 prospects.\n"
+            f"For EACH prospect, provide ALL of the following:\n"
+            f"- business_name: Full legal/trade name\n"
+            f"- business_type: '{industry_label}'\n"
+            f"- vertical: '{vertical_slug}'\n"
+            f"- city: City in Texas\n"
+            f"- contact_name: Owner/decision-maker FIRST AND LAST name\n"
+            f"- email: Direct email address (REQUIRED — search for it)\n"
+            f"- phone: Business phone number\n"
+            f"- website: Business website URL\n"
+            f"- verified_fact: One specific, verifiable fact directly from web research\n"
+            f"- trigger_event: The specific trigger event making NOW the right time\n"
+            f"- competitive_insight: What their top local competitor does digitally that they don't\n"
+            f"- reason: Why this business needs digital marketing help (2-3 sentences)\n\n"
+            f"DO NOT include cold emails. DO NOT include subject lines. "
+            f"DO NOT include follow-up angles. Research and qualification ONLY."
         ),
         agent=marcus,
     )
@@ -2931,9 +2978,9 @@ scheduler.add_job(_avo_sched_michael_meta, CronTrigger(hour=8, minute=4, timezon
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales — EVERY 2 HOURS from 8:30 to 16:30 CST (5 runs/day × 3 agents = 75 emails/day)
+# Sales — Tyler/Ryan every 2 hours from 8:30 to 16:34 CST; Marcus once daily at 8:32 CST
 # Tyler:     8:30, 10:30, 12:30, 14:30, 16:30
-# Marcus:    8:32, 10:32, 12:32, 14:32, 16:32
+# Marcus:    8:32
 # Ryan Data: 8:34, 10:34, 12:34, 14:34, 16:34
 SALES_HOURS = [8, 10, 12, 14, 16]
 
@@ -2946,19 +2993,20 @@ for hour in SALES_HOURS:
         replace_existing=True, misfire_grace_time=3600,
     )
     scheduler.add_job(
-        _avo_sched_marcus,
-        CronTrigger(hour=hour, minute=32, timezone=CST),
-        id=f"marcus_prospecting_{hour}32",
-        name=f"Marcus Prospecting {hour}:32",
-        replace_existing=True, misfire_grace_time=3600,
-    )
-    scheduler.add_job(
         _avo_sched_ryan_data,
         CronTrigger(hour=hour, minute=34, timezone=CST),
         id=f"ryan_data_prospecting_{hour}34",
         name=f"Ryan Data Prospecting {hour}:34",
         replace_existing=True, misfire_grace_time=3600,
     )
+
+scheduler.add_job(
+    _avo_sched_marcus,
+    CronTrigger(day_of_week="mon-fri", hour=8, minute=32, timezone=CST),
+    id="marcus_prospecting_daily_0832",
+    name="Marcus Prospecting Daily 8:32",
+    replace_existing=True, misfire_grace_time=3600,
+)
 
 # Marketing — 9:00, 9:02, 9:04 (once daily — content planning) [AVO wrapped]
 scheduler.add_job(_avo_sched_zoe, CronTrigger(hour=9, minute=0, timezone=CST),
