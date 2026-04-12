@@ -25,21 +25,28 @@
 {{contact.first_name}}, quick question about {{contact.company_name}}
 ```
 
+**Preview text:**
+```
+Noticed something about how you handle calls in {{contact.city}}...
+```
+
 **Body:**
 ```
 Hey {{contact.first_name}},
 
-I came across {{contact.company_name}} while researching {{contact.customField.business_type}} businesses in {{contact.city}}.
+I came across {{contact.company_name}} while researching {{contact.business_type}} businesses in {{contact.city}}.
 
-{{contact.notes}}
+{{contact.verified_fact}}
 
-Here's what I keep seeing with {{contact.customField.business_type}} businesses in the 380 Corridor: the work is great, but calls are slipping through the cracks. After-hours calls go to voicemail. Peak season overwhelms the front desk. And every missed call is a customer who calls the next company on Google.
+{{contact.trigger_event}}
+
+Here's what I keep seeing with {{contact.business_type}} businesses in the 380 Corridor: the work is great, but calls are slipping through the cracks. After-hours calls go to voicemail. Peak season overwhelms the front desk. And every missed call is a customer who calls the next company on Google.
 
 The math is brutal — one missed HVAC call in July is a $500+ job that walked. Multiply that by 5 calls a week and you're leaving $10K/month on the table.
 
-I built something that fixes this without adding staff. Worth 15 minutes to see if it fits {{contact.company_name}}?
+I built something that fixes this without adding staff.
 
-Here's my calendar: https://calendly.com/aiphoneguy/demo
+Worth a 15-minute look? <a href="https://bit.ly/4sMZpTi" target="_blank">Book demo now</a>
 
 — Michael Rodriguez
 The AI Phone Guy
@@ -51,21 +58,29 @@ The AI Phone Guy
 
 **Subject:** (Re: thread — leave blank in GHL to auto-thread)
 
+**Preview text:**
+```
+The pattern I keep seeing with {{contact.company_name}}'s competitors...
+```
+
 **Body:**
 ```
 Hey {{contact.first_name}},
 
 Following up on my note earlier this week.
 
-I looked at {{contact.company_name}}'s Google reviews — and your customers clearly love the work. But here's the pattern I see across {{contact.customField.business_type}} businesses in your area: the ones growing fastest aren't doing better work than you. They're just answering every call.
+I looked at {{contact.company_name}}'s Google reviews — and your customers clearly love the work. But here's something worth knowing: {{contact.competitive_insight}}
+
+The pattern I see across {{contact.business_type}} businesses in your area: the ones growing fastest aren't doing better work than you. They're just answering every call.
 
 Their secret isn't more techs or a bigger team. It's that when someone calls at 7pm or during a Saturday emergency, a real voice answers — not voicemail. That one difference changes everything downstream: more booked jobs, better reviews, higher close rate on estimates.
 
 Curious if that's something {{contact.company_name}} is thinking about.
 
+Worth a 15-minute look? <a href="https://bit.ly/4sMZpTi" target="_blank">Book demo now</a>
+
 — Michael Rodriguez
 The AI Phone Guy
-Book a demo: https://calendly.com/aiphoneguy/demo
 ```
 
 ---
@@ -74,11 +89,16 @@ Book a demo: https://calendly.com/aiphoneguy/demo
 
 **Subject:** (Re: thread)
 
+**Preview text:**
+```
+How one North Texas shop stopped losing after-hours calls.
+```
+
 **Body:**
 ```
 {{contact.first_name}},
 
-Quick story — a {{contact.customField.business_type}} business in North Texas was missing about 30% of their inbound calls. Not because they didn't care — because they were on jobsites, with customers, or closed for the day.
+Quick story — a {{contact.business_type}} business in North Texas was missing about 30% of their inbound calls. Not because they didn't care — because they were on jobsites, with customers, or closed for the day.
 
 We set up Sophie — an AI receptionist that answers every call, books appointments, and captures the caller's info. Same phone number, zero disruption.
 
@@ -86,9 +106,10 @@ Within 30 days, they went from 30% missed calls to zero. Booked jobs went up. Go
 
 If {{contact.company_name}} is missing calls — even a few a week — that's exactly what this solves.
 
+Worth a 15-minute look? <a href="https://bit.ly/4sMZpTi" target="_blank">Book demo now</a>
+
 — Michael Rodriguez
 The AI Phone Guy
-Book a demo: https://calendly.com/aiphoneguy/demo
 ```
 
 ---
@@ -97,17 +118,22 @@ Book a demo: https://calendly.com/aiphoneguy/demo
 
 **Subject:** (Re: thread)
 
+**Preview text:**
+```
+Last note — door stays open for {{contact.company_name}}.
+```
+
 **Body:**
 ```
 Hey {{contact.first_name}},
 
 Last note from me. I know you're busy running {{contact.company_name}} and my emails are somewhere between the supply house invoice and the next service call.
 
-If missed calls, after-hours coverage, or front desk overwhelm is ever something you want to solve without hiring — the door is open. No pitch, no pressure. Just a 15-minute demo to see if it fits.
+If missed calls, after-hours coverage, or front desk overwhelm is ever something you want to solve without hiring — the door is open. No pitch, no pressure.
+
+Worth a 15-minute look? <a href="https://bit.ly/4sMZpTi" target="_blank">Book demo now</a>
 
 Appreciate your time either way.
-
-If the timing is ever right: https://calendly.com/aiphoneguy/demo
 
 — Michael Rodriguez
 The AI Phone Guy · info@theaiphoneguy.ai
@@ -117,13 +143,17 @@ The AI Phone Guy · info@theaiphoneguy.ai
 
 ## GHL merge fields reference
 
-| Field | Source |
-|---|---|
-| `{{contact.first_name}}` | GHL Contact first name |
-| `{{contact.company_name}}` | GHL Contact company name |
-| `{{contact.city}}` | GHL Contact city |
-| `{{contact.customField.business_type}}` | Tag or custom field (HVAC, Plumbing, etc.) |
-| `{{contact.notes}}` | Tyler's enriched prospecting note (trigger event, verified fact, competitive insight) |
+| Field | Source | Type |
+|---|---|---|
+| `{{contact.first_name}}` | GHL Contact first name | standard |
+| `{{contact.company_name}}` | GHL Contact company name | standard |
+| `{{contact.city}}` | GHL Contact city | standard |
+| `{{contact.business_type}}` | HVAC, Plumbing, Dental, Roofing, PI Law | custom |
+| `{{contact.trigger_event}}` | Why NOW is the right time for outreach | custom |
+| `{{contact.verified_fact}}` | Tavily-verified research fact | custom |
+| `{{contact.competitive_insight}}` | What their closest competitor does better | custom |
+
+All custom fields are written by Tyler's GHL push code in [tools/ghl.py](../tools/ghl.py).
 
 ## What NOT to do
 

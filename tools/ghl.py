@@ -347,6 +347,9 @@ def create_contact(
     contact_name: Optional[str] = None,
     website: Optional[str] = None,
     business_key: str = "aiphoneguy",
+    trigger_event: Optional[str] = None,
+    verified_fact: Optional[str] = None,
+    competitive_insight: Optional[str] = None,
 ) -> dict:
     """
     Create a contact in GHL from any sales agent's prospect.
@@ -398,6 +401,19 @@ def create_contact(
         payload["phone"] = phone
     if website:
         payload["website"] = website
+
+    # GHL custom fields for Tyler's enrichment data (used as merge tags in email sequence)
+    custom_fields = []
+    if business_type:
+        custom_fields.append({"id": "MdSOd4zX0ShzxyrMv7rD", "value": business_type})
+    if trigger_event:
+        custom_fields.append({"key": "contact.trigger_event", "field_value": trigger_event})
+    if verified_fact:
+        custom_fields.append({"key": "contact.verified_fact", "field_value": verified_fact})
+    if competitive_insight:
+        custom_fields.append({"key": "contact.competitive_insight", "field_value": competitive_insight})
+    if custom_fields:
+        payload["customFields"] = custom_fields
 
     data = _ghl_request("create_contact", "POST", "/contacts/", json_body=payload, timeout=15)
     contact = data.get("contact", {})
@@ -666,6 +682,9 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 contact_name=p.get("contact_name"),
                 website=p.get("website"),
                 business_key=business_key,
+                trigger_event=p.get("trigger_event"),
+                verified_fact=p.get("verified_fact"),
+                competitive_insight=p.get("competitive_insight"),
             )
             contact_id = contact.get("id")
 
