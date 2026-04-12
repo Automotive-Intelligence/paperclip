@@ -256,38 +256,69 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     continue
                 new_id = _create_contact(p, source_agent, business_key)
                 _create_deal(p, source_agent, contact_id=new_id)
-                rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
-                mode = email_delivery_mode()
-                if strict_template_validation_enabled() and not rendered.get("valid", False):
+
+                # Ryan Data: email delivery handled by Instantly campaigns, not HubSpot.
+                # HubSpot is CRM data only. Instantly handles the cold email sequences.
+                if source_agent == "ryan_data":
                     email_attempted = False
                     email_sent = False
-                    logging.warning(
-                        "[HubSpot] Email blocked by template validation for %s: %s",
-                        business_name,
-                        ",".join(rendered.get("issues", [])),
-                    )
-                elif email and already_emailed(email):
-                    email_attempted = False
-                    email_sent = False
-                    logging.info(
-                        "[HubSpot] Email skipped for %s — already emailed %s within 90 days.",
-                        business_name, email,
-                    )
-                elif mode == "unified":
-                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
-                    email_sent = send_unified_email(
-                        p.get("email", ""),
-                        rendered.get("subject", ""),
-                        rendered.get("body_text", ""),
-                        business_key=business_key,
-                    ) if email_attempted else False
+                    rendered = {"template_key": "", "valid": True, "issues": []}
+
+                    # Add lead to Instantly campaign
+                    try:
+                        from tools.instantly import add_prospect_to_instantly, instantly_ready
+                        instantly_campaign_id = os.getenv("INSTANTLY_CAMPAIGN_RYAN_DATA", "")
+                        if instantly_ready() and instantly_campaign_id:
+                            instantly_result = add_prospect_to_instantly(p, instantly_campaign_id)
+                            logging.info(
+                                "[HubSpot] Ryan Data prospect %s — added to Instantly campaign: %s",
+                                business_name, instantly_result.get("status"),
+                            )
+                        elif instantly_ready() and not instantly_campaign_id:
+                            logging.warning(
+                                "[HubSpot] Ryan Data prospect %s — INSTANTLY_CAMPAIGN_RYAN_DATA not set, "
+                                "lead added to HubSpot only", business_name,
+                            )
+                        else:
+                            logging.info(
+                                "[HubSpot] Ryan Data prospect %s — Instantly not configured, HubSpot only",
+                                business_name,
+                            )
+                    except Exception as inst_err:
+                        logging.warning("[HubSpot] Instantly add failed for %s: %s", business_name, inst_err)
                 else:
-                    if rendered.get("subject"):
-                        p["subject"] = rendered.get("subject", "")
-                    if rendered.get("body_text"):
-                        p["body"] = rendered.get("body_text", "")
-                    email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text") and hubspot_email_ready())
-                    email_sent = _send_transactional_email(p) if email_attempted else False
+                    rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
+                    mode = email_delivery_mode()
+                    if strict_template_validation_enabled() and not rendered.get("valid", False):
+                        email_attempted = False
+                        email_sent = False
+                        logging.warning(
+                            "[HubSpot] Email blocked by template validation for %s: %s",
+                            business_name,
+                            ",".join(rendered.get("issues", [])),
+                        )
+                    elif email and already_emailed(email):
+                        email_attempted = False
+                        email_sent = False
+                        logging.info(
+                            "[HubSpot] Email skipped for %s — already emailed %s within 90 days.",
+                            business_name, email,
+                        )
+                    elif mode == "unified":
+                        email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text"))
+                        email_sent = send_unified_email(
+                            p.get("email", ""),
+                            rendered.get("subject", ""),
+                            rendered.get("body_text", ""),
+                            business_key=business_key,
+                        ) if email_attempted else False
+                    else:
+                        if rendered.get("subject"):
+                            p["subject"] = rendered.get("subject", "")
+                        if rendered.get("body_text"):
+                            p["body"] = rendered.get("body_text", "")
+                        email_attempted = bool((p.get("email") or "").strip() and rendered.get("subject") and rendered.get("body_text") and hubspot_email_ready())
+                        email_sent = _send_transactional_email(p) if email_attempted else False
                 results.append({
                     "business_name": business_name,
                     "contact_id": new_id,

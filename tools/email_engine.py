@@ -350,20 +350,18 @@ def _heuristic_parse_content(raw_output: str) -> list:
 PARSE_PROMPTS = {
     "tyler": {
         "keys": """Each object must have exactly these keys:
-- business_name (string)
-- city (string)
-- business_type (string, e.g. "HVAC", "Plumbing", "Dental", "Roofing", "Law Firm")
-- reason (string, why they are being targeted)
-- email_hook (string, the personalized cold email opening line)
-- subject (string, the cold email subject line — 2-4 words, lowercase)
-- body (string, the full cold email body text)
-- follow_up_subject (string, the follow-up email subject line)
-- follow_up_body (string, the follow-up email body text)
-- contact_name (string, owner or manager first and last name if found, otherwise empty string)
-- email (string, direct contact email address if found, otherwise empty string)
+- business_name (string, full business name)
+- business_type (string, e.g. "HVAC", "Plumbing", "Dental", "Roofing", "Personal Injury Law")
+- city (string, city in DFW 380 Corridor)
+- contact_name (string, owner or decision-maker first and last name — REQUIRED)
+- email (string, direct contact email address — REQUIRED)
 - phone (string, business phone number if found, otherwise empty string)
-- website (string, business website URL if found, otherwise empty string)""",
-        "context": "This is from a sales agent targeting local service businesses (HVAC, plumbing, etc.) in DFW Texas with cold emails.",
+- website (string, business website URL if found, otherwise empty string)
+- verified_fact (string, one specific verifiable fact from web research — NOT generic marketing copy)
+- trigger_event (string, the specific trigger event making now the right time to reach out)
+- competitive_insight (string, what their closest competitor does better)
+- reason (string, 2-3 sentences on why this business needs an AI receptionist)""",
+        "context": "This is from a research-focused SDR finding DFW 380 Corridor service businesses (HVAC, plumbing, roofing, dental, PI law) that need an AI receptionist. Tyler does NOT write emails — he delivers research intelligence. GHL workflows handle email delivery.",
     },
     "marcus": {
         "keys": """Each object must have exactly these keys:
@@ -383,21 +381,19 @@ PARSE_PROMPTS = {
     },
     "ryan_data": {
         "keys": """Each object must have exactly these keys:
-- business_name (string, the dealership name)
+- business_name (string, full dealership name)
+- business_type (string, e.g. "Ford Dealership", "Independent Used", "Toyota Dealership")
 - city (string, city in DFW area)
-- business_type (string, always "Auto Dealership" or more specific like "Ford Dealership")
-- reason (string, the AI readiness signal found)
-- email_hook (string, the personalized assessment offer hook)
-- subject (string, cold email subject line for dealer outreach)
-- body (string, full cold email body positioning the free AI Readiness Assessment)
-- follow_up_subject (string, follow-up subject line)
-- follow_up_body (string, follow-up body with different angle)
-- contact_name (string, BDC manager, GM, or owner name if found, otherwise empty string)
-- email (string, direct dealership contact email if found, otherwise empty string)
+- contact_name (string, GM, BDC manager, or owner first and last name — REQUIRED)
+- email (string, direct contact email address — REQUIRED)
 - phone (string, dealership phone number if found, otherwise empty string)
 - website (string, dealership website URL if found, otherwise empty string)
-- group_affiliation (string, dealership group if known, otherwise empty string)""",
-        "context": "This is from a CRO targeting DFW car dealerships with a free AI Readiness Assessment → $2,500 Audit → $7,500 Implementation pipeline.",
+- group_affiliation (string, dealership group if known, otherwise empty string)
+- verified_fact (string, one specific verifiable fact from web research — NOT generic marketing copy)
+- trigger_event (string, the specific trigger event making now the right time to reach out)
+- competitive_insight (string, what their closest competing dealer does better digitally)
+- reason (string, 2-3 sentences on why this dealership needs an AI readiness assessment)""",
+        "context": "This is from a research-focused SDR finding DFW car dealerships that need AI-powered operations. Ryan Data does NOT write emails — he delivers research intelligence. Instantly campaigns handle email delivery.",
     },
 }
 
@@ -426,13 +422,11 @@ Context: {agent_config['context']}
 If a cold email subject and body are present in the report, extract them exactly.
 If they are NOT present, generate appropriate ones based on the prospect details and the agent's style.
 
-For Tyler: Subject lines should be 2-4 words, lowercase, internal-looking (e.g. 'missed calls', 'after-hours voicemail').
-Body should use Observation > Problem > Proof > Ask framework. CTA should be interest-based ('Worth a quick look?').
+For Tyler: DO NOT generate emails. Tyler is a research agent — extract only the structured prospect data (business_name, business_type, contact_name, verified_fact, trigger_event, etc). No subject lines or email bodies needed.
 
 For Marcus: DO NOT generate emails. Marcus is a research agent — extract only the structured prospect data (business_name, vertical, contact_name, verified_fact, trigger_event, etc). No subject lines or email bodies needed.
 
-For Ryan Data: Subject should reference automotive/dealership context.
-Body should position the free AI Readiness Assessment as the entry point.
+For Ryan Data: DO NOT generate emails. Ryan Data is a research agent — extract only the structured prospect data (business_name, business_type, contact_name, verified_fact, trigger_event, group_affiliation, etc). No subject lines or email bodies needed.
 
 For ALL agents: Include CAN-SPAM compliant unsubscribe language at the end of body:
 "If you'd rather not hear from us, just reply 'stop' and we'll remove you immediately."

@@ -677,94 +677,38 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                         f"Phone: {p.get('phone', 'NOT FOUND')} | "
                         f"Website: {p.get('website', '')}"
                     )
-                    hook = p.get("email_hook", "") or p.get("reason", "")
-                    add_contact_note(
-                        contact_id,
-                        f"=== {source_agent.title()} Prospecting Note ===\n"
-                        f"{contact_line}\n\n"
-                        f"Targeting Reason:\n{p.get('reason', '')}\n\n"
-                        f"Email Hook:\n{hook}\n\n"
-                        f"CADENCE PLAN:\n"
-                        f"  Day 0  - First touch (immediate)\n"
-                        f"  Day 3  - Follow-up: {p.get('follow_up_subject', 'different angle')}\n"
-                        f"  Day 7  - Value add / case study\n"
-                        f"  Day 14 - Breakup email\n\n"
-                        f"Channel: Cold Email ONLY (no SMS without opt-in)",
-                    )
+                    # Build enriched note with trigger event + verified fact + competitive insight
+                    note_parts = [
+                        f"=== {source_agent.title()} Prospecting Note ===",
+                        contact_line,
+                        "",
+                        f"Targeting Reason:\n{p.get('reason', '')}",
+                    ]
+                    if p.get("trigger_event"):
+                        note_parts.append(f"\nTrigger Event:\n{p['trigger_event']}")
+                    if p.get("verified_fact"):
+                        note_parts.append(f"\nVerified Fact:\n{p['verified_fact']}")
+                    if p.get("competitive_insight"):
+                        note_parts.append(f"\nCompetitive Insight:\n{p['competitive_insight']}")
+                    note_parts.append(f"\nChannel: Cold Email ONLY (no SMS without opt-in)")
+                    note_parts.append(f"Email automation: GHL Workflow")
+
+                    add_contact_note(contact_id, "\n".join(note_parts))
                 except Exception as note_err:
                     logging.warning(f"[GHL] Note creation failed for {p.get('business_name')} (non-fatal): {note_err}")
 
+            # Email delivery is handled by GHL Workflow automation.
+            # The workflow triggers when a contact is added and sends the email sequence.
+            # We do NOT send emails directly from here — the workflow handles cadence,
+            # timing, and follow-ups automatically.
             email_attempted = False
             email_sent = False
             contact_email = (p.get("email") or "").strip()
-            rendered = compose_templated_email(p, business_key=business_key, agent_name=source_agent)
-
-            if contact_id:
-                try:
-                    if strict_template_validation_enabled() and not rendered.get("valid", False):
-                        logging.warning(
-                            f"[GHL] Email blocked by template validation for {p.get('business_name')}: "
-                            f"{','.join(rendered.get('issues', []))}"
-                        )
-                    elif rendered.get("subject") and rendered.get("body_text"):
-                        subject = rendered.get("subject", "")
-                        body_text = rendered.get("body_text", "")
-
-                        if contact_email and already_emailed(contact_email):
-                            logging.info(
-                                f"[GHL] Email skipped for {p.get('business_name')} — already emailed {contact_email} within 90 days."
-                            )
-                        else:
-                            mode = email_delivery_mode()
-                            if mode == "unified":
-                                if contact_email:
-                                    email_attempted = True
-                                    email_sent = send_unified_email(contact_email, subject, body_text, business_key=business_key)
-                                else:
-                                    logging.info(f"[GHL] Unified send skipped for {p.get('business_name')} - no email found.")
-                            else:
-                                if contact_email:
-                                    email_attempted = True
-                                    send_email(contact_id=contact_id, subject=subject, body=body_text)
-                                    email_sent = True
-                                else:
-                                    logging.info(
-                                        f"[GHL] Email skipped for {p.get('business_name')} - no email address found. "
-                                        f"Manual outreach required. Email draft stored in notes."
-                                    )
-                                    try:
-                                        add_contact_note(
-                                            contact_id,
-                                            f"=== UNSENT EMAIL DRAFT (no email address found) ===\n"
-                                            f"Subject: {subject}\n\n"
-                                            f"{body_text}\n\n"
-                                            f"--- Follow-up Draft (Day 3) ---\n"
-                                            f"Subject: {p.get('follow_up_subject', '')}\n\n"
-                                            f"{p.get('follow_up_body', '')}",
-                                        )
-                                    except Exception:
-                                        pass
-
-                        if email_sent:
-                            logging.info(f"[GHL] First-touch email sent to {p.get('business_name')}")
-                        if email_sent and p.get("follow_up_subject") and p.get("follow_up_body"):
-                            try:
-                                add_contact_note(
-                                    contact_id,
-                                    f"=== FOLLOW-UP CADENCE ===\n"
-                                    f"DAY 3 - Subject: {p['follow_up_subject']}\n\n"
-                                    f"{p['follow_up_body']}\n\n"
-                                    f"DAY 7 - Value-add / case study angle\n"
-                                    f"DAY 14 - Breakup email",
-                                )
-                            except Exception:
-                                pass
-                    else:
-                        logging.info(f"[GHL] Email skipped for {p.get('business_name')} - missing rendered subject/body.")
-                except Exception as email_err:
-                    logging.warning(f"[GHL] Email send failed for {p.get('business_name')}: {email_err}")
-            else:
-                logging.info(f"[GHL] Email skipped for {p.get('business_name')} - missing contact id.")
+            rendered = {"template_key": "", "valid": True, "issues": []}
+            logging.info(
+                f"[GHL] {source_agent} prospect {p.get('business_name')} — "
+                f"email handled by GHL Workflow (contact_id={contact_id})"
+            )
 
             if contact_id and pipeline_id and stage_id:
                 try:
