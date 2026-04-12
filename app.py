@@ -2279,8 +2279,10 @@ def _run_ryan_data_crew():
     """Run Ryan Data's CrewAI prospecting with trigger-event hunting and deep research."""
     task = Task(
         description=(
-            "Search for car dealerships in the Dallas-Fort Worth area that are experiencing "
+            "Search for car dealerships across the United States that are experiencing "
             "TRIGGER EVENTS — moments of change that create buying urgency for AI-powered operations.\n\n"
+            "GEOGRAPHY: NATIONWIDE — any US dealership is fair game. Mix metro markets and "
+            "secondary markets for pipeline diversity.\n\n"
             "TRIGGER EVENTS TO HUNT FOR:\n"
             "- Ownership change or acquisition (new owner wants to modernize)\n"
             "- New GM appointment (wants to make their mark in first 90 days)\n"
@@ -2291,20 +2293,20 @@ def _run_ryan_data_crew():
             "- OEM mandate or incentive program changes\n"
             "- Recent inventory buildup or slow-moving stock\n\n"
             "FOR EACH PROSPECT (find 3 high-quality dealership targets):\n"
-            "1. Search for the dealership and verify it's in the DFW area\n"
+            "1. Search for the dealership and verify it's a real US dealership\n"
             "2. Find the GM, BDC Manager, or Owner's FIRST AND LAST NAME\n"
-            "3. Find their direct EMAIL address (search '[dealership] [city] GM BDC manager email')\n"
+            "3. Find their direct EMAIL address (search '[dealership] [city] [state] GM BDC manager email')\n"
             "4. Find the dealership PHONE NUMBER\n"
             "5. Find the dealership WEBSITE URL\n"
             "6. Find ONE specific, verifiable fact (review quote, award, inventory size, "
             "recent news, CSI score — NOT generic marketing copy)\n"
             "7. Identify the TRIGGER EVENT that makes NOW the right time to reach out\n"
             "8. Find what their closest COMPETING DEALER does better digitally\n"
-            "9. Note GROUP AFFILIATION if applicable (AutoNation, Hendrick, Park Place, etc.)\n\n"
+            "9. Note GROUP AFFILIATION if applicable (AutoNation, Hendrick, Lithia, Penske, etc.)\n\n"
             "DO NOT write cold emails. DO NOT draft subject lines. Your job is RESEARCH and QUALIFICATION only.\n"
             "Instantly campaigns handle all email sequences automatically.\n\n"
             "=== ICP GUARDRAILS (MANDATORY) ===\n"
-            "- DFW franchised or independent car dealerships\n"
+            "- US franchised or independent car dealerships (nationwide)\n"
             "- Must have a real trigger event — do NOT prospect randomly\n"
             "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, "
             "auction-only operations, wholesale-only operations\n"
@@ -2315,7 +2317,7 @@ def _run_ryan_data_crew():
             "For EACH prospect, provide ALL of the following:\n"
             "- business_name: Full dealership name\n"
             "- business_type: e.g. 'Ford Dealership', 'Independent Used', 'Toyota Dealership'\n"
-            "- city: City in DFW area\n"
+            "- city: City and state (e.g. 'Plano, TX' or 'Charlotte, NC')\n"
             "- contact_name: GM/BDC Manager/Owner FIRST AND LAST name\n"
             "- email: Direct email address (REQUIRED — search for it)\n"
             "- phone: Dealership phone number\n"
@@ -3379,6 +3381,38 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.warning(f"[Revenue] Init failed — revenue tracking disabled: {e}")
 
+    # ── Register scheduler jobs before startup so readiness is not blocked by bootstrap work
+    try:
+        from core.scheduler import register_all_jobs
+        register_all_jobs(scheduler)
+        logging.info("[Paperclip] All river agents registered on scheduler")
+    except Exception as e:
+        logging.warning(f"[Paperclip] Scheduler job registration failed: {e}")
+
+    # ── Scheduler — never crash startup if APScheduler misfires
+    try:
+        scheduler.start()
+        logging.info(f"[Scheduler] Started {len(scheduler.get_jobs())} agent jobs registered.")
+    except Exception as e:
+        logging.error(f"[Scheduler] Failed to start: {e}")
+
+    startup_bootstrap_task = asyncio.create_task(asyncio.to_thread(_run_startup_bootstrap))
+    logging.info("[Startup] Background bootstrap scheduled")
+
+    yield
+
+    # ── Shutdown
+    if not startup_bootstrap_task.done():
+        startup_bootstrap_task.cancel()
+
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+    logging.info("[Scheduler] Shut down.")
+
+
+def _run_startup_bootstrap():
     # ── Zernio social media integration init
     try:
         if zernio_ready():
@@ -3395,25 +3429,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.warning(f"[Zernio] Init failed — social publishing via Zernio disabled: {e}")
 
-    # ── Scheduler — never crash startup if APScheduler misfires
-    try:
-        scheduler.start()
-        logging.info(f"[Scheduler] Started {len(scheduler.get_jobs())} agent jobs registered.")
-    except Exception as e:
-        logging.error(f"[Scheduler] Failed to start: {e}")
-
     # ── Project Paperclip Rivers — 5 rivers, all agents
     try:
-        from core.scheduler import register_all_jobs
-        register_all_jobs(scheduler)
-        logging.info("[Paperclip] All river agents registered on scheduler")
-
-        # Run HubSpot cleanup on startup
         from rivers.automotive_intelligence.cleanup import run_cleanup
         cleanup_result = run_cleanup()
         logging.info(f"[Paperclip] HubSpot cleanup: {cleanup_result}")
 
-        # Initial enrollment pass
         try:
             from rivers.ai_phone_guy.workflow import randy_run
             randy_run()
@@ -3448,15 +3469,6 @@ async def lifespan(app: FastAPI):
         logging.info("[Paperclip] Initial enrollment pass complete — 5 rivers active")
     except Exception as e:
         logging.warning(f"[Paperclip] River init failed — rivers disabled: {e}")
-
-    yield
-
-    # ── Shutdown
-    try:
-        scheduler.shutdown(wait=False)
-    except Exception:
-        pass
-    logging.info("[Scheduler] Shut down.")
 
 
 logging.basicConfig(

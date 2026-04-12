@@ -54,7 +54,7 @@ MARCUS_ICP = {
 
 RYAN_DATA_ICP = {
     "agent": "ryan_data",
-    "target_area": "dfw",
+    "target_area": "nationwide",
     "target_signals": [
         "ownership change", "new gm", "general manager", "declining reviews",
         "job posting", "bdc", "low response", "hiring",
@@ -105,7 +105,7 @@ MARCUS_ICP_BLOCK = (
 RYAN_DATA_ICP_BLOCK = (
     "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
     "ONLY prospect dealerships that match ALL of the following criteria:\n"
-    "- DFW franchised or independent car dealerships\n"
+    "- US franchised or independent car dealerships (NATIONWIDE — any state)\n"
     "- TRIGGER EVENTS to look for: ownership change, new GM, declining reviews, "
     "BDC job postings, expansion/renovation, competitor making digital moves, OEM mandate changes\n"
     "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, auction-only, wholesale-only\n"

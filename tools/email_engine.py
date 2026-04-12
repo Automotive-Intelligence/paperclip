@@ -383,7 +383,7 @@ PARSE_PROMPTS = {
         "keys": """Each object must have exactly these keys:
 - business_name (string, full dealership name)
 - business_type (string, e.g. "Ford Dealership", "Independent Used", "Toyota Dealership")
-- city (string, city in DFW area)
+- city (string, city and state e.g. "Plano, TX" or "Charlotte, NC")
 - contact_name (string, GM, BDC manager, or owner first and last name — REQUIRED)
 - email (string, direct contact email address — REQUIRED)
 - phone (string, dealership phone number if found, otherwise empty string)
@@ -393,7 +393,7 @@ PARSE_PROMPTS = {
 - trigger_event (string, the specific trigger event making now the right time to reach out)
 - competitive_insight (string, what their closest competing dealer does better digitally)
 - reason (string, 2-3 sentences on why this dealership needs an AI readiness assessment)""",
-        "context": "This is from a research-focused SDR finding DFW car dealerships that need AI-powered operations. Ryan Data does NOT write emails — he delivers research intelligence. Instantly campaigns handle email delivery.",
+        "context": "This is from a research-focused SDR finding US car dealerships nationwide that need AI-powered operations. Ryan Data does NOT write emails — he delivers research intelligence. Instantly campaigns handle email delivery.",
     },
 }
 
