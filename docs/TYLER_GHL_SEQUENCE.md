@@ -1,8 +1,18 @@
 # Tyler — GHL Email Sequence: The AI Phone Guy
 
+> **⚠️ SUPERSEDED 2026-04-12 20:30 CST**
+>
+> GHL email service for `mg.theaiphoneguy.ai` hit a 24% bounce rate and 61% delivery failure due to Tyler's pre-cleanup hallucinated domains. Sender reputation is damaged.
+>
+> **Use this file instead:** [TYLER_INSTANTLY_CAMPAIGN.md](TYLER_INSTANTLY_CAMPAIGN.md)
+>
+> Tyler now routes email delivery through Instantly from `info@theaiphoneguy.ai` (warmed-up Google Workspace mailbox). GHL remains as the CRM/pipeline tracking system only.
+
+---
+
 **For: The AI Phone Guy · Sender: Michael Rodriguez**
 **Recipients: Tyler's trigger-event prospects in DFW 380 Corridor**
-**Platform: GoHighLevel Workflow**
+**Platform: GoHighLevel Workflow (RETIRED)**
 **Updated: 2026-04-12**
 
 ---
@@ -56,7 +66,10 @@ The AI Phone Guy
 
 ## Step 2 — Wait 3 business days
 
-**Subject:** (Re: thread — leave blank in GHL to auto-thread)
+**Subject:**
+```
+one thing about {{contact.company_name}}
+```
 
 **Preview text:**
 ```
@@ -87,7 +100,10 @@ The AI Phone Guy
 
 ## Step 3 — Wait 2 business days
 
-**Subject:** (Re: thread)
+**Subject:**
+```
+30% fewer missed calls
+```
 
 **Preview text:**
 ```
@@ -116,7 +132,10 @@ The AI Phone Guy
 
 ## Step 4 — Wait 3 business days (Breakup)
 
-**Subject:** (Re: thread)
+**Subject:**
+```
+closing the loop
+```
 
 **Preview text:**
 ```

@@ -24,14 +24,14 @@
 
 **Subject:**
 ```
-{{first_name}}, something I noticed about {{company_name}}
+{{firstName}}, something I noticed about {{companyName}}
 ```
 
 **Body:**
 ```
-{{first_name}},
+{{firstName}},
 
-I came across {{company_name}} while researching dealerships in {{city}}.
+I came across {{companyName}} while researching dealerships in {{city}}.
 
 {{verified_fact}}
 
@@ -39,7 +39,7 @@ Here's what I keep seeing across dealerships right now: the ones winning aren't 
 
 The gap between a dealership that's "doing fine" and one that's dominating their PMA usually isn't inventory or pricing. It's operational speed.
 
-We built a free AI Readiness Assessment that shows you exactly where those gaps are at {{company_name}} — no cost, no obligation, just a clear picture.
+We built a free AI Readiness Assessment that shows you exactly where those gaps are at {{companyName}} — no cost, no obligation, just a clear picture.
 
 Worth 15 minutes this week?
 
@@ -55,7 +55,7 @@ Automotive Intelligence · michael@automotiveintelligence.io
 
 **Body:**
 ```
-{{first_name}},
+{{firstName}},
 
 Quick follow-up.
 
@@ -65,7 +65,7 @@ That's not a people problem. Your BDC team is doing their best with the tools th
 
 One extra deal per month from faster follow-up pays for a year of AI implementation. And that's just the internet lead side — service department no-shows, CSI score improvement, and fixed ops scheduling are all part of the same equation.
 
-Curious whether that resonates with what you're seeing at {{company_name}}.
+Curious whether that resonates with what you're seeing at {{companyName}}.
 
 — Michael Rodriguez
 Automotive Intelligence
@@ -79,7 +79,7 @@ Automotive Intelligence
 
 **Body:**
 ```
-{{first_name}},
+{{firstName}},
 
 Quick story — a dealership was spending $40K/month on third-party leads and closing at 8%. Their BDC was responding to internet leads in 3-6 hours. Follow-up sequences were inconsistent. Service appointments had a 22% no-show rate.
 
@@ -90,7 +90,7 @@ We ran an AI Readiness Assessment. Three things jumped out:
 
 They didn't spend more on leads. They fixed the systems behind the leads. Within 90 days, close rate went from 8% to 14% on the same lead volume. Service no-shows dropped to 9%.
 
-If {{company_name}} is spending on leads and not sure what's converting — or losing deals between the lead and the appointment — that's exactly what the assessment uncovers.
+If {{companyName}} is spending on leads and not sure what's converting — or losing deals between the lead and the appointment — that's exactly what the assessment uncovers.
 
 — Michael Rodriguez
 Automotive Intelligence
@@ -105,11 +105,11 @@ Book a time: https://calendly.com/autointelligence/assessment
 
 **Body:**
 ```
-{{first_name}},
+{{firstName}},
 
 Last email from me. I know you've got a dealership to run and my emails are somewhere between the DMS report and the OEM compliance deadline.
 
-If there's ever a point where {{company_name}} wants to understand where AI fits in your operation — BDC, service, follow-up, the full stack — I'm here. The assessment is free and takes 15 minutes. No pitch, no pressure.
+If there's ever a point where {{companyName}} wants to understand where AI fits in your operation — BDC, service, follow-up, the full stack — I'm here. The assessment is free and takes 15 minutes. No pitch, no pressure.
 
 Appreciate your time.
 
@@ -125,9 +125,9 @@ Automotive Intelligence · michael@automotiveintelligence.io
 
 | Tag | Source | Example |
 |---|---|---|
-| `{{first_name}}` | Lead first_name | "John" |
+| `{{firstName}}` | Lead first_name | "John" |
 | `{{last_name}}` | Lead last_name | "Smith" |
-| `{{company_name}}` | Lead company_name | "Park Place Lexus" |
+| `{{companyName}}` | Lead company_name | "Park Place Lexus" |
 | `{{city}}` | custom_variables.city | "Plano" |
 | `{{business_type}}` | custom_variables.business_type | "Lexus Dealership" |
 | `{{verified_fact}}` | custom_variables.verified_fact | "Named DealerRater Dealer of the Year 2025" |
