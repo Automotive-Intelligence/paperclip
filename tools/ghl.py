@@ -716,18 +716,44 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 except Exception as note_err:
                     logging.warning(f"[GHL] Note creation failed for {p.get('business_name')} (non-fatal): {note_err}")
 
-            # Email delivery is handled by GHL Workflow automation.
-            # The workflow triggers when a contact is added and sends the email sequence.
-            # We do NOT send emails directly from here — the workflow handles cadence,
-            # timing, and follow-ups automatically.
+            # Email delivery is handled by Instantly campaigns (as of 2026-04-12).
+            # GHL workflow deliverability was damaged (24% bounce rate from hallucinated
+            # contacts before cleanup). Tyler now routes email through Instantly which
+            # has proper sender warmup and domain reputation isolation.
+            # GHL stores CRM data + pipeline opportunity. Instantly sends emails.
             email_attempted = False
             email_sent = False
             contact_email = (p.get("email") or "").strip()
             rendered = {"template_key": "", "valid": True, "issues": []}
-            logging.info(
-                f"[GHL] {source_agent} prospect {p.get('business_name')} — "
-                f"email handled by GHL Workflow (contact_id={contact_id})"
-            )
+
+            # Tyler: add lead to Instantly campaign
+            if source_agent == "tyler":
+                try:
+                    from tools.instantly import add_prospect_to_instantly, instantly_ready
+                    instantly_campaign_id = os.getenv("INSTANTLY_CAMPAIGN_TYLER", "")
+                    if instantly_ready() and instantly_campaign_id:
+                        instantly_result = add_prospect_to_instantly(p, instantly_campaign_id)
+                        logging.info(
+                            "[GHL] Tyler prospect %s — added to Instantly campaign: %s",
+                            p.get('business_name'), instantly_result.get("status"),
+                        )
+                    elif instantly_ready() and not instantly_campaign_id:
+                        logging.warning(
+                            "[GHL] Tyler prospect %s — INSTANTLY_CAMPAIGN_TYLER not set, "
+                            "lead added to GHL only", p.get('business_name'),
+                        )
+                    else:
+                        logging.info(
+                            "[GHL] Tyler prospect %s — Instantly not configured, GHL only",
+                            p.get('business_name'),
+                        )
+                except Exception as inst_err:
+                    logging.warning("[GHL] Instantly add failed for %s: %s", p.get('business_name'), inst_err)
+            else:
+                logging.info(
+                    f"[GHL] {source_agent} prospect {p.get('business_name')} — "
+                    f"email handled by GHL Workflow (contact_id={contact_id})"
+                )
 
             if contact_id and pipeline_id and stage_id:
                 try:
