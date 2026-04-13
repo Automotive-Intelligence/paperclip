@@ -288,16 +288,18 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
     exclusion_text = f"{biz_name} {biz_type}"
 
     # ── Universal hallucination checks (all sales agents) ──
-    # Email is REQUIRED — no email means no outreach path
-    if not email or not email.strip() or "@" not in email:
-        return False, "No email address (required for outreach)"
+    # Email OR phone is required — at least one contact method must exist
+    has_email = bool(email and email.strip() and "@" in email)
+    has_phone = bool(phone and phone.strip())
+    if not has_email and not has_phone:
+        return False, "No email AND no phone (need at least one contact method)"
     if _is_placeholder_name(contact_name):
         return False, f"Placeholder contact name detected: '{contact_name}'"
-    if _has_fake_phone(phone):
+    if has_phone and _has_fake_phone(phone):
         return False, f"Fake/hallucinated phone pattern: '{phone}'"
-    if _has_fake_email_domain(email):
+    if has_email and _has_fake_email_domain(email):
         return False, f"Hallucinated email domain: '{email}'"
-    if _is_assumed_email(email):
+    if has_email and _is_assumed_email(email):
         return False, f"LLM-assumed/guessed email (not verified): '{email}'"
 
     # ── Tyler ICP checks ──
