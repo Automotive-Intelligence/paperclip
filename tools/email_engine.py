@@ -431,6 +431,12 @@ For Ryan Data: DO NOT generate emails. Ryan Data is a research agent — extract
 For ALL agents: Include CAN-SPAM compliant unsubscribe language at the end of body:
 "If you'd rather not hear from us, just reply 'stop' and we'll remove you immediately."
 
+CRITICAL: If any value in the source report is marked as "assumed", "guessed", "likely",
+"common format", "to be verified", "inferred", "probably", or any similar disclaimer
+indicating the agent was NOT certain, you MUST return an EMPTY STRING for that field.
+Do NOT include disclaimers in the output. Do NOT use partial/uncertain data.
+Only output values that are stated as verified facts in the source report.
+
 If any field is missing, use an empty string.
 
 REPORT:

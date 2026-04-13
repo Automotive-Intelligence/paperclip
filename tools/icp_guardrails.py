@@ -242,6 +242,27 @@ def _has_fake_email_domain(email: str) -> bool:
     return False
 
 
+def _is_assumed_email(email: str) -> bool:
+    """Detect LLM 'assumed' email flags — when the LLM guesses email format.
+
+    The Tyler/Marcus LLMs sometimes append disclaimers like:
+      "ryan@alexanderplumbingcompany.com (assumed based on common format)"
+    or
+      "info@company.com (guessed)"
+    or the literal string "assumed" in the email field.
+    These are fabricated emails, not verified.
+    """
+    if not email:
+        return False
+    lower = email.lower()
+    tells = [
+        "assumed", "guess", "guessed", "common format", "likely",
+        "probably", "estimated", "inferred", "not confirmed",
+        "to be verified", "tbv", "placeholder",
+    ]
+    return any(t in lower for t in tells)
+
+
 def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
     """
     Validate a parsed prospect dict against the agent's ICP.
@@ -267,12 +288,17 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
     exclusion_text = f"{biz_name} {biz_type}"
 
     # ── Universal hallucination checks (all sales agents) ──
+    # Email is REQUIRED — no email means no outreach path
+    if not email or not email.strip() or "@" not in email:
+        return False, "No email address (required for outreach)"
     if _is_placeholder_name(contact_name):
         return False, f"Placeholder contact name detected: '{contact_name}'"
     if _has_fake_phone(phone):
         return False, f"Fake/hallucinated phone pattern: '{phone}'"
     if _has_fake_email_domain(email):
         return False, f"Hallucinated email domain: '{email}'"
+    if _is_assumed_email(email):
+        return False, f"LLM-assumed/guessed email (not verified): '{email}'"
 
     # ── Tyler ICP checks ──
     if agent_name == "tyler":

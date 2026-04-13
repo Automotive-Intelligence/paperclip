@@ -124,11 +124,29 @@ class RuntimeSettings:
         return False
 
     def resolve_crm_provider(self, business_key: str, agent_id: Optional[str] = None) -> str:
+        # Business-level mapping is the source of truth.
+        # Agent-level override is only honored if it matches the business mapping.
+        # This prevents stale AGENT_CRM_MAP env vars from silently routing
+        # agents to the wrong CRM (e.g., Marcus → GHL when Calling Digital uses Attio).
+        biz_key = (business_key or "").strip().lower()
+        business_provider = self.business_crm_map.get(biz_key, "ghl")
+
         agent_key = (agent_id or "").strip().lower()
         if agent_key and agent_key in self.agent_crm_map:
-            return self.agent_crm_map[agent_key]
-        biz_key = (business_key or "").strip().lower()
-        return self.business_crm_map.get(biz_key, "ghl")
+            agent_provider = self.agent_crm_map[agent_key]
+            if agent_provider == business_provider:
+                return agent_provider
+            # Agent override conflicts with business mapping — trust the business
+            # and log the conflict so we can fix the stale config.
+            import logging
+            logging.warning(
+                "[CRMRouter] Ignoring stale AGENT_CRM_MAP override for %s: "
+                "agent_map=%s vs business_map=%s. Using business_map.",
+                agent_key, agent_provider, business_provider,
+            )
+            return business_provider
+
+        return business_provider
 
     def startup_warnings(self) -> List[str]:
         warnings: List[str] = []
