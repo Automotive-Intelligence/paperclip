@@ -1,8 +1,59 @@
 # Marcus CD Outreach — 4 Vertical-Specific Sequences (v2)
 
 **For: Calling Digital · Sender: Michael Rodriguez via connected Gmail**
-**Updated: 2026-04-10 — Corrected positioning (digital marketing + AI consulting)**
+**Updated: 2026-04-13 — Rebuilt after merge tag incident**
 **Enrichment: Verified Tavily facts with source URLs — no LLM hallucinations**
+
+---
+
+## ⚠️ CRITICAL: HOW TO PASTE THIS INTO ATTIO WITHOUT BREAKING MERGE TAGS
+
+**On 2026-04-13 we sent 71 broken emails because someone (me) copy-pasted
+the body text below straight into Attio's sequence editor.** The editor
+stored the `{{person.first_name}}` syntax as literal text, not as merge
+tags. Recipients saw raw curly braces in subject lines and body text.
+
+**Why it happens:** Attio's sequence editor stores merge tags as special
+token objects created by the "Insert Variable" button. When you paste raw
+text like `{{person.first_name}}`, the editor keeps it as plain text. It
+looks correct in the editor preview but fails at send time.
+
+**The only safe way to build a sequence in Attio:**
+
+1. **Paste the body WITHOUT merge tags first.** Replace every tag with a
+   placeholder word. For example:
+   ```
+   Hi HELLOFIRSTNAME,
+
+   I noticed HELLOCOMPANY recently...
+
+   HELLOPROSPECTNOTES
+   ```
+
+2. **Format the body normally** — paragraph breaks, spacing, emphasis.
+   Do all formatting BEFORE inserting tags. Every formatting action can
+   strip merge-tag tokens from the editor.
+
+3. **Insert each merge tag via the button, not typing:**
+   - Click where `HELLOFIRSTNAME` is, delete the placeholder word
+   - Click the **Insert Variable** / **Merge Tag** button in the Attio editor toolbar
+   - Select `Person → First Name` from the dropdown
+   - Attio creates a proper token object in that position
+   - Repeat for every tag
+
+4. **Verify in the preview pane** — Attio renders the actual merge tag
+   value (not curly braces) if the token was created correctly.
+
+5. **Send a test email to yourself** before enabling the sequence. Always.
+   Every single sequence. Every single time.
+
+## ⚠️ DO NOT DO
+
+- ❌ Copy-paste the body text from this markdown file into Attio directly
+- ❌ Type `{{person.first_name}}` by hand in the Attio editor
+- ❌ Paste with merge tags already in the text
+- ❌ Skip the test-send-to-yourself step
+- ❌ Enable a sequence before verifying merge tags render in a real test email
 
 ---
 
