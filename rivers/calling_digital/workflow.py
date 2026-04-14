@@ -7,6 +7,7 @@ Schedule: Every 2 hours.
 """
 
 import os
+import json
 import requests
 from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error, log_hot_lead
@@ -37,6 +38,47 @@ VERTICAL_MAP = {
 
 _enrolled = {}
 _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0}
+STATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "logs",
+    "calling_digital_workflow_state.json",
+)
+
+
+def _load_state() -> dict:
+    if not os.path.exists(STATE_PATH):
+        return {"initialized_at": None, "seen_ids": []}
+    try:
+        with open(STATE_PATH, "r") as f:
+            data = json.load(f)
+        return {
+            "initialized_at": data.get("initialized_at"),
+            "seen_ids": list(data.get("seen_ids", [])),
+        }
+    except Exception as e:
+        log_error("calling_digital", f"Failed to load workflow state: {e}")
+        return {"initialized_at": None, "seen_ids": []}
+
+
+def _save_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+        with open(STATE_PATH, "w") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+    except Exception as e:
+        log_error("calling_digital", f"Failed to save workflow state: {e}")
+
+
+_state = _load_state()
+
+
+def _mark_seen(contact_id: str):
+    seen_ids = set(_state.get("seen_ids", []))
+    if contact_id in seen_ids:
+        return
+    seen_ids.add(contact_id)
+    _state["seen_ids"] = sorted(seen_ids)
+    _save_state(_state)
 
 
 def brenda_run():
@@ -62,6 +104,8 @@ def _find_new_contacts() -> list:
         return []
 
     contacts = []
+    current_ids = set()
+    seen_ids = set(_state.get("seen_ids", []))
     for vertical_tag, meta in VERTICAL_MAP.items():
         try:
             url = f"{ATTIO_BASE}/objects/people/records/query"
@@ -77,7 +121,9 @@ def _find_new_contacts() -> list:
                 records = resp.json().get("data", [])
                 for r in records:
                     rid = r.get("id", {}).get("record_id", "")
-                    if rid and rid not in _enrolled:
+                    if rid:
+                        current_ids.add(rid)
+                    if rid and rid not in _enrolled and rid not in seen_ids:
                         attrs = r.get("values", {})
                         contact = _parse_attio_record(attrs, vertical_tag, meta)
                         contact["id"] = rid
@@ -87,6 +133,13 @@ def _find_new_contacts() -> list:
                 log_error("calling_digital", f"Attio query failed for {vertical_tag}: {resp.status_code} {resp.text[:200]}")
         except Exception as e:
             log_error("calling_digital", f"Attio query error for {vertical_tag}: {e}")
+
+    if not _state.get("initialized_at"):
+        _state["initialized_at"] = datetime.now().isoformat()
+        _state["seen_ids"] = sorted(current_ids)
+        _save_state(_state)
+        log_info("calling_digital", f"Workflow baseline seeded with {len(current_ids)} existing Attio contacts; only net-new contacts will enroll going forward")
+        return []
 
     log_info("calling_digital", f"Found {len(contacts)} new contacts")
     return contacts
@@ -159,6 +212,7 @@ def _score_and_enroll(contact: dict):
     }
 
     _stats["enrolled"] += 1
+    _mark_seen(cid)
     log_enrollment("calling_digital", cid, name, f"track-{track} (score={score})")
     log_info("calling_digital", f"ENROLLED: {name} → Track {track} (score={score})")
 

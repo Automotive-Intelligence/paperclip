@@ -2,7 +2,6 @@
 
 import logging
 import os
-from datetime import datetime
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -15,12 +14,12 @@ def _get_river_logger(river: str) -> logging.Logger:
         return _loggers[river]
     logger = logging.getLogger(f"paperclip.{river}")
     logger.setLevel(logging.INFO)
+    logger.propagate = True
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
     fh = logging.FileHandler(os.path.join(LOG_DIR, f"{river}_enrollments.log"))
     fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
     logger.addHandler(fh)
-    sh = logging.StreamHandler()
-    sh.setFormatter(logging.Formatter("%(asctime)s | %(name)s | %(message)s"))
-    logger.addHandler(sh)
     _loggers[river] = logger
     return logger
 
