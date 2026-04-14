@@ -2210,14 +2210,28 @@ def _get_marcus_vertical_today() -> tuple:
     return MARCUS_VERTICAL_ROTATION.get(weekday, MARCUS_VERTICAL_ROTATION[0])
 
 
-def _run_marcus_crew():
+_MARCUS_VERTICAL_LOOKUP = {
+    "med-spa": ("med-spa", "med spa", "med spas"),
+    "pi-law": ("pi-law", "personal injury law", "personal injury law firms"),
+    "real-estate": ("real-estate", "real estate", "real estate teams and brokerages"),
+    "home-builder": ("home-builder", "custom home building", "custom home builders"),
+}
+
+
+def _run_marcus_crew(vertical_override: str | None = None):
     """Run Marcus's CrewAI prospecting with vertical rotation and FORCED web_search tool usage.
 
     Mirrors Tyler's anti-fabrication guardrails (commit 3c639ce) adapted for Marcus's
     Texas + vertical rotation scope. Marcus MUST use Web Search for every fact and
     return zero prospects rather than fabricate data.
+
+    vertical_override: if provided (one of med-spa/pi-law/real-estate/home-builder),
+    bypass the weekday rotation and force Marcus onto that vertical for this run.
     """
-    vertical_slug, industry_label, plural_label = _get_marcus_vertical_today()
+    if vertical_override and vertical_override in _MARCUS_VERTICAL_LOOKUP:
+        vertical_slug, industry_label, plural_label = _MARCUS_VERTICAL_LOOKUP[vertical_override]
+    else:
+        vertical_slug, industry_label, plural_label = _get_marcus_vertical_today()
 
     task = Task(
         description=(
@@ -2308,11 +2322,17 @@ def _run_marcus_crew():
     return str(result)
 
 
-def run_marcus_prospecting():
+def run_marcus_prospecting(vertical_override: str | None = None):
+    """Run Marcus's full prospecting + ICP + enrollment pipeline.
+
+    vertical_override: optional vertical slug (med-spa/pi-law/real-estate/home-builder)
+    to force Marcus onto a specific vertical for this run, bypassing weekday rotation.
+    Used by the /admin/run-now endpoint to sweep multiple verticals in one session.
+    """
     max_icp_attempts = 3
     for attempt in range(1, max_icp_attempts + 1):
         try:
-            raw_output = _run_marcus_crew()
+            raw_output = _run_marcus_crew(vertical_override=vertical_override)
             persist_log("marcus", "prospecting", raw_output)
             logging.info("[Scheduler] Marcus prospecting complete (attempt %d).", attempt)
 
@@ -2322,7 +2342,7 @@ def run_marcus_prospecting():
                 logging.warning("[ICP] Marcus attempt %d: all prospects discarded, retrying.", attempt)
                 continue
 
-            return {"agent": "marcus", "pipeline": pipeline_result}
+            return {"agent": "marcus", "vertical_override": vertical_override, "pipeline": pipeline_result}
 
         except Exception as e:
             logging.error(f"[Scheduler] Marcus prospecting failed (attempt {attempt}): {type(e).__name__}: {e}")
@@ -4385,9 +4405,16 @@ async def run_coo_now(authorization: Optional[str] = Header(None)):
 async def run_now(
     scope: str = "sales",
     debug: bool = False,
+    marcus_vertical: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ):
-    """Trigger scheduled jobs immediately (authenticated)."""
+    """Trigger scheduled jobs immediately (authenticated).
+
+    marcus_vertical: optional override (med-spa, pi-law, real-estate, home-builder)
+    that forces Marcus onto a specific vertical for this run, bypassing his weekday
+    rotation. Useful for on-demand multi-vertical sweeps in the same session.
+    Only applies when Marcus is in the scope.
+    """
     validate_key(authorization)
 
     scope = scope.lower().strip()
@@ -4398,11 +4425,22 @@ async def run_now(
             detail=f"Invalid scope '{scope}'. Valid scopes: {', '.join(sorted(RUN_NOW_SCOPES.keys()))}",
         )
 
+    if marcus_vertical:
+        marcus_vertical = marcus_vertical.lower().strip()
+        if marcus_vertical not in {"med-spa", "pi-law", "real-estate", "home-builder"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid marcus_vertical '{marcus_vertical}'. Valid: med-spa, pi-law, real-estate, home-builder",
+            )
+
     started_at = datetime.datetime.now(CST).isoformat()
 
     async def _run_job(job_name, fn):
         try:
-            fn_result = await asyncio.to_thread(fn)
+            if job_name == "marcus_prospecting" and marcus_vertical:
+                fn_result = await asyncio.to_thread(fn, marcus_vertical)
+            else:
+                fn_result = await asyncio.to_thread(fn)
             row = {"job": job_name, "status": "ok"}
             if debug and isinstance(fn_result, dict):
                 row["debug"] = fn_result
