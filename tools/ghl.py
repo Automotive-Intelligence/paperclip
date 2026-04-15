@@ -726,25 +726,26 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
             contact_email = (p.get("email") or "").strip()
             rendered = {"template_key": "", "valid": True, "issues": []}
 
-            # Tyler: add lead to Instantly campaign
+            # Tyler: add lead to Instantly campaign in the AI Phone Guy workspace
+            # (INSTANTLY_API_KEY_TYLER env var, separate from Ryan Data's workspace)
             if source_agent == "tyler":
                 try:
                     from tools.instantly import add_prospect_to_instantly, instantly_ready
                     instantly_campaign_id = os.getenv("INSTANTLY_CAMPAIGN_TYLER", "")
-                    if instantly_ready() and instantly_campaign_id:
-                        instantly_result = add_prospect_to_instantly(p, instantly_campaign_id)
+                    if instantly_ready(agent="tyler") and instantly_campaign_id:
+                        instantly_result = add_prospect_to_instantly(p, instantly_campaign_id, agent="tyler")
                         logging.info(
                             "[GHL] Tyler prospect %s — added to Instantly campaign: %s",
                             p.get('business_name'), instantly_result.get("status"),
                         )
-                    elif instantly_ready() and not instantly_campaign_id:
+                    elif instantly_ready(agent="tyler") and not instantly_campaign_id:
                         logging.warning(
                             "[GHL] Tyler prospect %s — INSTANTLY_CAMPAIGN_TYLER not set, "
                             "lead added to GHL only", p.get('business_name'),
                         )
                     else:
                         logging.info(
-                            "[GHL] Tyler prospect %s — Instantly not configured, GHL only",
+                            "[GHL] Tyler prospect %s — Instantly not configured for Tyler workspace, GHL only",
                             p.get('business_name'),
                         )
                 except Exception as inst_err:

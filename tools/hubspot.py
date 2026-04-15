@@ -264,17 +264,18 @@ def push_prospects_to_hubspot(prospects: list, source_agent: str = "tyler", busi
                     email_sent = False
                     rendered = {"template_key": "", "valid": True, "issues": []}
 
-                    # Add lead to Instantly campaign
+                    # Add lead to Instantly campaign in Ryan Data's workspace
+                    # (default INSTANTLY_API_KEY, Automotive Intelligence workspace).
                     try:
                         from tools.instantly import add_prospect_to_instantly, instantly_ready
                         instantly_campaign_id = os.getenv("INSTANTLY_CAMPAIGN_RYAN_DATA", "")
-                        if instantly_ready() and instantly_campaign_id:
-                            instantly_result = add_prospect_to_instantly(p, instantly_campaign_id)
+                        if instantly_ready(agent="ryan_data") and instantly_campaign_id:
+                            instantly_result = add_prospect_to_instantly(p, instantly_campaign_id, agent="ryan_data")
                             logging.info(
                                 "[HubSpot] Ryan Data prospect %s — added to Instantly campaign: %s",
                                 business_name, instantly_result.get("status"),
                             )
-                        elif instantly_ready() and not instantly_campaign_id:
+                        elif instantly_ready(agent="ryan_data") and not instantly_campaign_id:
                             logging.warning(
                                 "[HubSpot] Ryan Data prospect %s — INSTANTLY_CAMPAIGN_RYAN_DATA not set, "
                                 "lead added to HubSpot only", business_name,

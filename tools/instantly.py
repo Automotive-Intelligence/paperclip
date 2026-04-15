@@ -18,12 +18,26 @@ logger = logging.getLogger(__name__)
 INSTANTLY_BASE = "https://api.instantly.ai/api/v2"
 
 
-def _api_key() -> str:
+def _api_key(agent: Optional[str] = None) -> str:
+    """Return the Instantly v2 API key for the given agent's workspace.
+
+    Each sales agent can have its own Instantly workspace (separate sender
+    reputation, separate lead inventory). The env var pattern is:
+        INSTANTLY_API_KEY_<AGENT_UPPERCASE>   — agent-specific workspace key
+        INSTANTLY_API_KEY                     — default workspace fallback
+
+    Example: Tyler (AI Phone Guy) uses `INSTANTLY_API_KEY_TYLER` while
+    Ryan Data (Automotive Intelligence) uses `INSTANTLY_API_KEY`.
+    """
+    if agent:
+        agent_key = (os.getenv(f"INSTANTLY_API_KEY_{agent.upper()}") or "").strip()
+        if agent_key:
+            return agent_key
     return (os.getenv("INSTANTLY_API_KEY") or "").strip()
 
 
-def instantly_ready() -> bool:
-    return bool(_api_key())
+def instantly_ready(agent: Optional[str] = None) -> bool:
+    return bool(_api_key(agent))
 
 
 def _instantly_request(
@@ -33,11 +47,13 @@ def _instantly_request(
     json_body: dict = None,
     params: dict = None,
     timeout: int = 15,
+    agent: Optional[str] = None,
 ) -> dict:
-    """Make an Instantly v2 API request with Bearer auth header."""
-    key = _api_key()
+    """Make an Instantly v2 API request with Bearer auth header for the
+    agent's workspace (falls back to the default workspace if unset)."""
+    key = _api_key(agent)
     if not key:
-        raise ValueError("INSTANTLY_API_KEY not configured")
+        raise ValueError(f"INSTANTLY_API_KEY not configured for agent={agent or 'default'}")
 
     url = f"{INSTANTLY_BASE}{path}"
     headers = {
@@ -71,17 +87,17 @@ def _instantly_request(
 
 # ── Campaign Management ──────────────────────────────────────────────────────
 
-def list_campaigns() -> list:
+def list_campaigns(agent: Optional[str] = None) -> list:
     """List all campaigns in the Instantly workspace (v2 API)."""
-    result = _instantly_request("list_campaigns", "GET", "/campaigns", params={"limit": 100})
+    result = _instantly_request("list_campaigns", "GET", "/campaigns", params={"limit": 100}, agent=agent)
     if not isinstance(result, dict) or result.get("_error"):
         return []
     return result.get("items", []) or []
 
 
-def get_campaign_id_by_name(name: str) -> Optional[str]:
+def get_campaign_id_by_name(name: str, agent: Optional[str] = None) -> Optional[str]:
     """Find a campaign by name, return its ID or None."""
-    campaigns = list_campaigns()
+    campaigns = list_campaigns(agent=agent)
     if isinstance(campaigns, list):
         for c in campaigns:
             if isinstance(c, dict) and c.get("name", "").lower() == name.lower():
@@ -91,12 +107,16 @@ def get_campaign_id_by_name(name: str) -> Optional[str]:
 
 # ── Lead Management ──────────────────────────────────────────────────────────
 
-def add_leads_to_campaign(campaign_id: str, leads: list) -> dict:
+def add_leads_to_campaign(campaign_id: str, leads: list, agent: Optional[str] = None) -> dict:
     """Add leads to an Instantly v2 campaign.
 
     v2 uses POST /api/v2/leads with one lead per request. The campaign
     UUID goes on the lead body as the `campaign` field. Custom merge-tag
     fields go inside `custom_variables`.
+
+    agent: which agent's workspace this campaign belongs to (for selecting
+    the correct INSTANTLY_API_KEY_<AGENT> env var). Defaults to the workspace
+    associated with INSTANTLY_API_KEY.
     """
     if not campaign_id:
         logger.error("[Instantly] No campaign_id provided")
@@ -136,7 +156,7 @@ def add_leads_to_campaign(campaign_id: str, leads: list) -> dict:
 
         body = {k: v for k, v in body.items() if v is not None}
 
-        result = _instantly_request("create_lead", "POST", "/leads", json_body=body)
+        result = _instantly_request("create_lead", "POST", "/leads", json_body=body, agent=agent)
 
         if isinstance(result, dict) and not result.get("_error") and result.get("id"):
             added += 1
@@ -147,15 +167,16 @@ def add_leads_to_campaign(campaign_id: str, leads: list) -> dict:
             logger.error("[Instantly] ✗ Failed to add lead %s to campaign %s: %s", email, campaign_id, result)
 
     status = "ok" if failed == 0 else ("partial" if added > 0 else "error")
-    logger.info("[Instantly] add_leads_to_campaign %s: added=%d failed=%d (campaign=%s)", status, added, failed, campaign_id)
+    logger.info("[Instantly] add_leads_to_campaign %s: added=%d failed=%d (campaign=%s, agent=%s)", status, added, failed, campaign_id, agent or "default")
     return {"status": status, "added": added, "failed": failed, "failures": failures}
 
 
-def add_prospect_to_instantly(prospect: dict, campaign_id: str) -> dict:
-    """Add a single Ryan Data prospect to an Instantly campaign.
+def add_prospect_to_instantly(prospect: dict, campaign_id: str, agent: Optional[str] = None) -> dict:
+    """Add a single sales-agent prospect to an Instantly campaign.
 
-    Translates the prospect dict from Ryan Data's output format
-    into Instantly's lead format with custom variables.
+    Translates the prospect dict from the source agent's output format
+    into Instantly's lead format with custom variables. The optional
+    `agent` parameter picks which workspace's API key to use.
     """
     contact_name = (prospect.get("contact_name") or "").strip()
     parts = contact_name.split() if contact_name else []
@@ -178,4 +199,4 @@ def add_prospect_to_instantly(prospect: dict, campaign_id: str) -> dict:
         "reason": prospect.get("reason", ""),
     }
 
-    return add_leads_to_campaign(campaign_id, [lead])
+    return add_leads_to_campaign(campaign_id, [lead], agent=agent)
