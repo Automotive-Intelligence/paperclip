@@ -15,7 +15,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-INSTANTLY_BASE = "https://api.instantly.ai/api/v1"
+INSTANTLY_BASE = "https://api.instantly.ai/api/v2"
 
 
 def _api_key() -> str:
@@ -26,48 +26,57 @@ def instantly_ready() -> bool:
     return bool(_api_key())
 
 
-def _instantly_request(action: str, method: str, path: str, json_body: dict = None, timeout: int = 15) -> dict:
-    """Make an Instantly API request with the api_key injected."""
+def _instantly_request(
+    action: str,
+    method: str,
+    path: str,
+    json_body: dict = None,
+    params: dict = None,
+    timeout: int = 15,
+) -> dict:
+    """Make an Instantly v2 API request with Bearer auth header."""
     key = _api_key()
     if not key:
         raise ValueError("INSTANTLY_API_KEY not configured")
 
     url = f"{INSTANTLY_BASE}{path}"
-
-    # v1 API uses api_key in the JSON body
-    if json_body is None:
-        json_body = {}
-    json_body["api_key"] = key
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
 
     try:
         if method.upper() == "GET":
-            r = requests.get(url, params={"api_key": key}, timeout=timeout)
+            r = requests.get(url, headers=headers, params=params or {}, timeout=timeout)
         else:
-            r = requests.post(url, json=json_body, timeout=timeout)
+            r = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
 
         if r.status_code == 429:
             logger.warning("[Instantly] Rate limited on %s, retrying in 3s", action)
             time.sleep(3)
             if method.upper() == "GET":
-                r = requests.get(url, params={"api_key": key}, timeout=timeout)
+                r = requests.get(url, headers=headers, params=params or {}, timeout=timeout)
             else:
-                r = requests.post(url, json=json_body, timeout=timeout)
+                r = requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
 
         if r.status_code not in (200, 201):
             logger.error("[Instantly] %s failed: %d %s", action, r.status_code, r.text[:300])
-            return {}
+            return {"_error": True, "status_code": r.status_code, "body": r.text[:300]}
 
         return r.json() if r.text.strip() else {}
     except Exception as e:
         logger.error("[Instantly] %s exception: %s", action, e)
-        return {}
+        return {"_error": True, "exception": str(e)}
 
 
 # ── Campaign Management ──────────────────────────────────────────────────────
 
 def list_campaigns() -> list:
-    """List all campaigns in the Instantly workspace."""
-    return _instantly_request("list_campaigns", "GET", "/campaign/list") or []
+    """List all campaigns in the Instantly workspace (v2 API)."""
+    result = _instantly_request("list_campaigns", "GET", "/campaigns", params={"limit": 100})
+    if not isinstance(result, dict) or result.get("_error"):
+        return []
+    return result.get("items", []) or []
 
 
 def get_campaign_id_by_name(name: str) -> Optional[str]:
@@ -83,57 +92,63 @@ def get_campaign_id_by_name(name: str) -> Optional[str]:
 # ── Lead Management ──────────────────────────────────────────────────────────
 
 def add_leads_to_campaign(campaign_id: str, leads: list) -> dict:
-    """Add leads to an Instantly campaign.
+    """Add leads to an Instantly v2 campaign.
 
-    Each lead dict should have:
-        - email (required)
-        - first_name, last_name, company_name (standard fields)
-        - Any additional keys become custom_variables for merge tags
+    v2 uses POST /api/v2/leads with one lead per request. The campaign
+    UUID goes on the lead body as the `campaign` field. Custom merge-tag
+    fields go inside `custom_variables`.
     """
     if not campaign_id:
         logger.error("[Instantly] No campaign_id provided")
-        return {"status": "error", "reason": "no_campaign_id"}
+        return {"status": "error", "reason": "no_campaign_id", "added": 0, "failed": 0}
 
-    formatted_leads = []
+    added = 0
+    failed = 0
+    failures = []
+
     for lead in leads:
         email = (lead.get("email") or "").strip()
         if not email:
             continue
 
-        # Standard Instantly fields
-        instantly_lead = {
-            "email": email,
-            "first_name": lead.get("first_name", ""),
-            "last_name": lead.get("last_name", ""),
-            "company_name": lead.get("company_name", ""),
-        }
-
-        # Everything else goes into custom_variables for merge tags
         custom_vars = {}
-        for key in ("phone", "website", "city", "business_type", "group_affiliation",
-                     "verified_fact", "trigger_event", "competitive_insight", "reason"):
+        for key in (
+            "phone", "website", "city", "business_type", "group_affiliation",
+            "verified_fact", "trigger_event", "competitive_insight", "reason",
+        ):
             val = lead.get(key, "")
             if val:
                 custom_vars[key] = str(val)
 
+        body = {
+            "email": email,
+            "first_name": lead.get("first_name", "") or None,
+            "last_name": lead.get("last_name", "") or None,
+            "company_name": lead.get("company_name", "") or None,
+            "phone": lead.get("phone", "") or None,
+            "website": lead.get("website", "") or None,
+            "campaign": campaign_id,
+            "skip_if_in_campaign": True,
+            "skip_if_in_workspace": False,
+        }
         if custom_vars:
-            instantly_lead["custom_variables"] = custom_vars
+            body["custom_variables"] = custom_vars
 
-        formatted_leads.append(instantly_lead)
+        body = {k: v for k, v in body.items() if v is not None}
 
-    if not formatted_leads:
-        return {"status": "ok", "added": 0, "reason": "no_valid_leads"}
+        result = _instantly_request("create_lead", "POST", "/leads", json_body=body)
 
-    result = _instantly_request("add_leads", "POST", "/lead/add", json_body={
-        "campaign_id": campaign_id,
-        "skip_if_in_workspace": False,
-        "skip_if_in_campaign": True,
-        "leads": formatted_leads,
-    })
+        if isinstance(result, dict) and not result.get("_error") and result.get("id"):
+            added += 1
+            logger.info("[Instantly] ✓ Added lead %s to campaign %s (lead_id=%s)", email, campaign_id, result.get("id"))
+        else:
+            failed += 1
+            failures.append({"email": email, "error": result})
+            logger.error("[Instantly] ✗ Failed to add lead %s to campaign %s: %s", email, campaign_id, result)
 
-    added = len(formatted_leads)
-    logger.info("[Instantly] Added %d leads to campaign %s", added, campaign_id)
-    return {"status": "ok", "added": added, "response": result}
+    status = "ok" if failed == 0 else ("partial" if added > 0 else "error")
+    logger.info("[Instantly] add_leads_to_campaign %s: added=%d failed=%d (campaign=%s)", status, added, failed, campaign_id)
+    return {"status": status, "added": added, "failed": failed, "failures": failures}
 
 
 def add_prospect_to_instantly(prospect: dict, campaign_id: str) -> dict:
