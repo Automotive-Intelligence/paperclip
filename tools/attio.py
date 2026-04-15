@@ -33,6 +33,26 @@ from services.http_client import request_with_retry
 ATTIO_BASE_URL = "https://api.attio.com/v2"
 
 
+_SOURCE_ANNOTATION_RE = re.compile(r"\s*\[source:[^\]]*\]\s*", re.IGNORECASE)
+
+
+def _strip_source_annotation(text: str) -> str:
+    """Remove inline `[source: <url>]` annotations from a fact string.
+
+    Marcus's verified_fact strings sometimes arrive from the LLM with an
+    appended `[source: <url>]` citation, and the paperclip pipeline used
+    to add its own on top. When that text is used as a merge tag inside a
+    cold email body (`{{company.cd_prospect_notes}}`), the `[source: ...]`
+    literal renders in the recipient's inbox and reads noisy. The source
+    URL is still preserved on the company's `website` attribute and in
+    Postgres `persist_log` entries, so stripping it here loses nothing.
+    """
+    if not text:
+        return text
+    cleaned = _SOURCE_ANNOTATION_RE.sub(" ", text)
+    return " ".join(cleaned.split()).strip()
+
+
 def _normalize_person_name(contact_name: str, business_name: str) -> tuple[str, str, str]:
     """Return a safe (first_name, last_name, full_name) tuple for Attio person records.
 
@@ -193,13 +213,17 @@ def _create_company_record(prospect: dict, source_agent: str, business_key: str)
         values["cd_prospected_date"] = [{"value": _date.today().isoformat()}]
         values["cd_outreach_stage"] = [{"value": "imported"}]
 
-        # cd_prospect_notes — verified fact for email personalization
-        verified_fact = (prospect.get("verified_fact") or "").strip()
+        # cd_prospect_notes — verified fact for email personalization.
+        # Strip any `[source: ...]` annotations so the merge tag renders
+        # cleanly in outbound cold emails. Source URL is still preserved
+        # on the company's website attribute and in Postgres logs.
+        verified_fact = _strip_source_annotation((prospect.get("verified_fact") or "").strip())
         if verified_fact:
-            source_note = f"{verified_fact} [source: {website}]" if website else verified_fact
-            values["cd_prospect_notes"] = [{"value": source_note}]
-        elif prospect.get("trigger_event"):
-            values["cd_prospect_notes"] = [{"value": prospect["trigger_event"]}]
+            values["cd_prospect_notes"] = [{"value": verified_fact}]
+        else:
+            trigger_event = _strip_source_annotation((prospect.get("trigger_event") or "").strip())
+            if trigger_event:
+                values["cd_prospect_notes"] = [{"value": trigger_event}]
 
     payload = {"data": {"values": values}}
     data = _attio_request("create_company_record", "POST", "/objects/companies/records", json_body=payload, timeout=15)
