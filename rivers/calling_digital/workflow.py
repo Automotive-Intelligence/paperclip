@@ -92,9 +92,29 @@ def brenda_run():
         _process_sequences()
         _check_hot_leads()
 
+        # Pit wall — monitor Marcus's Instantly campaign telemetry (if configured)
+        _run_pit_wall()
+
         log_info("calling_digital", f"=== BRENDA RUN COMPLETE === Enrolled: {_stats['enrolled']} | Messages: {_stats['messages_sent']}")
     except Exception as e:
         log_error("calling_digital", f"Brenda run failed: {e}")
+
+
+def _run_pit_wall():
+    """Brenda's pit wall — monitors Marcus's Instantly campaign (when configured)."""
+    try:
+        from rivers.shared.pit_wall import pull_instantly_leads, build_race_report
+        api_key = (os.environ.get("INSTANTLY_API_KEY") or "").strip()
+        campaign_id = (os.environ.get("INSTANTLY_CAMPAIGN_MARCUS") or "").strip()
+        if not api_key or not campaign_id:
+            return
+        leads = pull_instantly_leads(api_key, campaign_id)
+        if not leads:
+            return
+        result = build_race_report("Brenda", "Calling Digital", leads)
+        log_info("calling_digital", f"[Brenda PitWall]\n{result['report']}")
+    except Exception as e:
+        log_error("calling_digital", f"Brenda pit wall failed: {e}")
 
 
 def _find_new_contacts() -> list:

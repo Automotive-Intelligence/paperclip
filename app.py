@@ -3252,6 +3252,13 @@ def _run_darrell():
     except Exception as e:
         logging.error(f"[Paperclip] Darrell scheduled run failed: {e}")
 
+def _run_joshua():
+    try:
+        from rivers.ai_phone_guy.pit_wall import joshua_run
+        _avo_wrap_run("joshua", "aiphoneguy", joshua_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Joshua scheduled run failed: {e}")
+
 def _run_tammy():
     try:
         from rivers.agent_empire.workflow import tammy_run
@@ -3305,9 +3312,14 @@ scheduler.add_job(_run_brenda, IntervalTrigger(hours=2, timezone=CST),
     id="brenda_revops_2h", name="Brenda RevOps (Attio) — Every 2h",
     replace_existing=True, misfire_grace_time=3600)
 
-# Darrell (HubSpot RevOps): every 1 hour
+# Darrell (HubSpot RevOps + Pit Wall): every 1 hour
 scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
-    id="darrell_revops_1h", name="Darrell RevOps (HubSpot) — Every 1h",
+    id="darrell_revops_1h", name="Darrell RevOps (HubSpot + Pit Wall) — Every 1h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Joshua (Pit Wall — AI Phone Guy): every 2 hours
+scheduler.add_job(_run_joshua, IntervalTrigger(hours=2, timezone=CST),
+    id="joshua_pitwall_2h", name="Joshua Pit Wall (Instantly) — Every 2h",
     replace_existing=True, misfire_grace_time=3600)
 
 # Tammy (Skool Community): every 6 hours

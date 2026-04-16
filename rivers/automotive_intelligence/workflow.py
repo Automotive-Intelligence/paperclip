@@ -42,9 +42,29 @@ def darrell_run():
         _process_sequences()
         _check_hot_leads()
 
+        # Pit wall — monitor Ryan Data's Instantly campaign telemetry
+        _run_pit_wall()
+
         log_info("automotive_intelligence", f"=== DARRELL RUN COMPLETE === Enrolled: {_stats['enrolled']} | Deals: {_stats['deals_created']}")
     except Exception as e:
         log_error("automotive_intelligence", f"Darrell run failed: {e}")
+
+
+def _run_pit_wall():
+    """Darrell's pit wall — monitors Ryan Data's Instantly campaign."""
+    try:
+        from rivers.shared.pit_wall import pull_instantly_leads, build_race_report
+        api_key = (os.environ.get("INSTANTLY_API_KEY") or "").strip()
+        campaign_id = (os.environ.get("INSTANTLY_CAMPAIGN_RYAN_DATA") or "").strip()
+        if not api_key or not campaign_id:
+            return
+        leads = pull_instantly_leads(api_key, campaign_id)
+        if not leads:
+            return
+        result = build_race_report("Darrell", "Automotive Intelligence", leads)
+        log_info("automotive_intelligence", f"[Darrell PitWall]\n{result['report']}")
+    except Exception as e:
+        log_error("automotive_intelligence", f"Darrell pit wall failed: {e}")
 
 
 def _find_verified_dealers() -> list:
