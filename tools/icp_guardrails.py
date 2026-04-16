@@ -46,7 +46,7 @@ TYLER_ICP = {
 
 MARCUS_ICP = {
     "agent": "marcus",
-    "target_area": "texas",
+    "target_area": "nationwide",
     "target_verticals": [
         "med spa", "medspa", "medical spa", "aesthetics", "cosmetic",
         "personal injury", "pi law", "injury attorney", "injury lawyer",
@@ -100,7 +100,7 @@ TYLER_ICP_BLOCK = (
 MARCUS_ICP_BLOCK = (
     "\n\n=== ICP GUARDRAILS (MANDATORY) ===\n"
     "ONLY prospect businesses that match ALL of the following criteria:\n"
-    "- Located in Texas (any city — statewide)\n"
+    "- Located in the United States (any state)\n"
     "- Vertical: Med Spas, Personal Injury Law Firms, Real Estate Teams/Brokerages, or Custom Home Builders\n"
     "- Owner-operated or small team (not enterprise/corporate)\n"
     "- TRIGGER EVENTS to look for: new location, expansion, leadership change, negative review streak, "
@@ -288,11 +288,12 @@ def validate_prospect(prospect: dict, agent_name: str) -> Tuple[bool, str]:
     exclusion_text = f"{biz_name} {biz_type}"
 
     # ── Universal hallucination checks (all sales agents) ──
-    # Email OR phone is required — at least one contact method must exist
+    # At least one contact method: email, phone, or website
     has_email = bool(email and email.strip() and "@" in email)
     has_phone = bool(phone and phone.strip())
-    if not has_email and not has_phone:
-        return False, "No email AND no phone (need at least one contact method)"
+    has_website = bool(prospect.get("website", "").strip())
+    if not has_email and not has_phone and not has_website:
+        return False, "No email, phone, or website (need at least one contact method)"
     if _is_placeholder_name(contact_name):
         return False, f"Placeholder contact name detected: '{contact_name}'"
     if has_phone and _has_fake_phone(phone):

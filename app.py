@@ -2128,6 +2128,8 @@ def _run_tyler_crew():
             "and competitive_insight are OPTIONAL — return empty string if not found. "
             "Do NOT skip a real business just because you couldn't find their email.\n\n"
             "REPEAT the workflow above until you have up to 3 fully verified prospects.\n\n"
+            "MANDATORY: You MUST execute at least 3 Web Search queries before you can "
+            "report 'No verifiable prospects found'. If you have not searched yet, SEARCH NOW.\n\n"
             "=== CRITICAL CONSTRAINTS ===\n"
             "- If your web searches return nothing useful, RETURN AN EMPTY LIST with the "
             "explanation 'No verifiable prospects found this run'. This is ACCEPTABLE.\n"
@@ -2193,6 +2195,29 @@ def run_tyler_prospecting():
 # ── Marcus vertical rotation ────────────────────────────────────────────────
 # Cycles through verticals so each day targets a different ICP.
 # Monday=med-spa, Tuesday=pi-law, Wednesday=real-estate, Thursday=home-builder, Friday=med-spa
+# Region rotation — cycles per-run based on current hour so each of the
+# 7 daily runs (0, 4, 8, 10, 12, 14, 16 CST) hits a different region.
+PROSPECT_REGIONS = [
+    ("Southwest", "Texas, Arizona, New Mexico, or Nevada", "Dallas TX", "Phoenix AZ"),
+    ("Southeast", "Florida, Georgia, North Carolina, South Carolina, or Tennessee", "Miami FL", "Atlanta GA"),
+    ("Northeast", "New York, New Jersey, Connecticut, Massachusetts, or Pennsylvania", "New York NY", "Boston MA"),
+    ("Midwest", "Illinois, Ohio, Michigan, Minnesota, or Wisconsin", "Chicago IL", "Detroit MI"),
+    ("West Coast", "California, Oregon, Washington, or Colorado", "Los Angeles CA", "Denver CO"),
+    ("South Central", "Louisiana, Mississippi, Alabama, Arkansas, or Oklahoma", "New Orleans LA", "Nashville TN"),
+    ("Mid-Atlantic", "Virginia, Maryland, Washington DC, or Delaware", "Washington DC", "Richmond VA"),
+]
+
+
+def _get_prospect_region() -> tuple:
+    """Returns (region_name, states_phrase, city1, city2) rotating by hour."""
+    from datetime import datetime
+    import pytz
+    cst = pytz.timezone("US/Central")
+    hour = datetime.now(cst).hour
+    idx = hour % len(PROSPECT_REGIONS)
+    return PROSPECT_REGIONS[idx]
+
+
 MARCUS_VERTICAL_ROTATION = {
     0: ("med-spa", "med spa", "med spas"),
     1: ("pi-law", "personal injury law", "personal injury law firms"),
@@ -2236,6 +2261,8 @@ def _run_marcus_crew(vertical_override: str | None = None):
     else:
         vertical_slug, industry_label, plural_label = _get_marcus_vertical_today()
 
+    region_name, region_states, region_city1, region_city2 = _get_prospect_region()
+
     task = Task(
         description=(
             f"CRITICAL RULE: You MUST use the Web Search tool for research. NEVER fabricate "
@@ -2255,8 +2282,9 @@ def _run_marcus_crew(vertical_override: str | None = None):
             f"generic/plausible-sounding names. If no contact name is verifiable, return an "
             f"empty string.\n\n"
             f"=== YOUR TASK ===\n"
-            f"TODAY'S VERTICAL: {plural_label.upper()} (tag: {vertical_slug})\n\n"
-            f"Find {plural_label} in Texas that are experiencing TRIGGER EVENTS — "
+            f"TODAY'S VERTICAL: {plural_label.upper()} (tag: {vertical_slug})\n"
+            f"TODAY'S REGION: {region_name.upper()} ({region_states})\n\n"
+            f"Find {plural_label} in {region_states} that are experiencing TRIGGER EVENTS — "
             f"moments of change that create buying urgency for digital marketing services. "
             f"You are prospecting for Calling Digital, a digital marketing agency.\n\n"
             f"TRIGGER EVENTS TO HUNT FOR:\n"
@@ -2268,8 +2296,8 @@ def _run_marcus_crew(vertical_override: str | None = None):
             f"- Award, press mention, or milestone anniversary\n"
             f"- Seasonal demand approaching\n\n"
             f"REQUIRED SEARCH WORKFLOW (execute each step via Web Search tool):\n\n"
-            f"STEP 1: Use Web Search with queries like '{plural_label} Dallas TX trigger event' "
-            f"or '{plural_label} Austin TX new location 2026' to find REAL businesses with "
+            f"STEP 1: Use Web Search with queries like '{plural_label} {region_city1} trigger event' "
+            f"or '{plural_label} {region_city2} new location 2026' to find REAL businesses with "
             f"recent activity. From the results, pick businesses that appear in multiple sources.\n\n"
             f"STEP 2: For each candidate, use Web Search to find their official website: "
             f"'[business name] {plural_label} official website contact'. Read the contact page "
@@ -2279,9 +2307,13 @@ def _run_marcus_crew(vertical_override: str | None = None):
             f"STEP 4: Use Web Search to find their closest local competitor and identify "
             f"what that competitor is doing digitally (SEO ranking, paid ads, social presence) "
             f"that this business is not.\n\n"
-            f"STEP 5: Only if ALL of the above returned real, cited, verifiable data, "
-            f"include this business in your output.\n\n"
+            f"STEP 5: Include the business if you found business_name + city + website + "
+            f"at least ONE verified fact or trigger event. Email, phone, contact_name, "
+            f"and competitive_insight are OPTIONAL — return empty string if not found. "
+            f"Do NOT skip a real business just because you couldn't find their email.\n\n"
             f"REPEAT the workflow above until you have up to 3 fully verified prospects.\n\n"
+            "MANDATORY: You MUST execute at least 3 Web Search queries before you can "
+            "report 'No verifiable prospects found'. If you have not searched yet, SEARCH NOW.\n\n"
             f"=== CRITICAL CONSTRAINTS ===\n"
             f"- If your web searches return nothing useful, RETURN AN EMPTY LIST with the "
             f"explanation 'No verifiable prospects found this run'. This is ACCEPTABLE.\n"
@@ -2290,7 +2322,7 @@ def _run_marcus_crew(vertical_override: str | None = None):
             f"- Every field (phone, email, name, fact) must be traceable to a specific "
             f"web search result. Include the source URL in the verified_fact field.\n\n"
             f"=== ICP GUARDRAILS (MANDATORY) ===\n"
-            f"- Located in Texas (any city — statewide)\n"
+            f"- Located in {region_states}\n"
             f"- Vertical: {plural_label} ONLY for today's run\n"
             f"- Owner-operated or small team (not enterprise/corporate)\n"
             f"- Must have a real trigger event — do NOT prospect randomly\n"
@@ -2360,11 +2392,15 @@ def _run_ryan_data_crew():
 
     Same verified-research-only pattern as Tyler. Fabrication is forbidden.
     """
+    region_name, region_states, region_city1, region_city2 = _get_prospect_region()
+
     task = Task(
         description=(
-            "CRITICAL RULE: You MUST use the Web Search tool to verify EVERY piece of "
-            "information you return about a car dealership. You are FORBIDDEN from "
-            "generating plausible-sounding data without citing a specific web search result.\n\n"
+            "CRITICAL RULE: You MUST use the Web Search tool for research. NEVER fabricate "
+            "data — every fact you return must come from a real web search result. "
+            "However, you do NOT need every field filled. A prospect with business_name + "
+            "city + website + one verified fact is GOOD ENOUGH even without email or phone. "
+            "Return what you found. Leave unfound fields as empty strings.\n\n"
             "IF YOU RETURN A PHONE NUMBER, IT MUST BE A REAL NUMBER FROM A WEB SEARCH. "
             "Do NOT use 555 numbers. Do NOT use any phone with repeated or sequential "
             "digits. Do NOT invent phone numbers.\n\n"
@@ -2374,14 +2410,15 @@ def _run_ryan_data_crew():
             "Do NOT use 'John Smith', 'Jane Doe', 'Daniel Carter', 'Marcus Green', or any "
             "generic names. If no contact name is verifiable, return empty string.\n\n"
             "=== YOUR TASK ===\n"
-            "Find US car dealerships experiencing trigger events that make them ready for "
-            "AI-powered operations (BDC automation, service appointment AI, lead response).\n\n"
+            f"TODAY'S REGION: {region_name.upper()} ({region_states})\n\n"
+            f"Find car dealerships in {region_states} experiencing trigger events that make "
+            "them ready for AI-powered operations (BDC automation, service appointment AI, "
+            "lead response).\n\n"
             "REQUIRED SEARCH WORKFLOW (execute each step via Web Search tool):\n\n"
-            "STEP 1: Use Web Search with queries like:\n"
-            "  - 'car dealership new general manager announcement 2026'\n"
-            "  - 'automotive news dealership ownership change 2026'\n"
-            "  - 'dealership hiring BDC manager job posting'\n"
-            "  - 'car dealership Google reviews complaints response time'\n"
+            f"STEP 1: Use Web Search with queries like:\n"
+            f"  - 'car dealership new general manager {region_city1} 2026'\n"
+            f"  - 'dealership ownership change {region_states.split(',')[0].strip()} 2026'\n"
+            f"  - 'dealership hiring BDC manager {region_city2}'\n"
             "From results, pick ONE real dealership mentioned in multiple sources.\n\n"
             "STEP 2: For that dealership, use Web Search: "
             "'[dealership name] contact website'. Read the contact page content "
@@ -2397,6 +2434,8 @@ def _run_ryan_data_crew():
             "and competitive_insight are OPTIONAL — return empty string if not found. "
             "Do NOT skip a real dealership just because you couldn't find their email.\n\n"
             "REPEAT workflow until you have up to 3 fully verified dealership prospects.\n\n"
+            "MANDATORY: You MUST execute at least 3 Web Search queries before you can "
+            "report 'No verifiable prospects found'. If you have not searched yet, SEARCH NOW.\n\n"
             "=== CRITICAL CONSTRAINTS ===\n"
             "- If your web searches return nothing useful, RETURN AN EMPTY LIST with "
             "the explanation 'No verifiable prospects found this run'. This is ACCEPTABLE.\n"
@@ -2405,7 +2444,7 @@ def _run_ryan_data_crew():
             "- Every field must be traceable to a specific web search result. Include "
             "the source URL in the verified_fact field.\n\n"
             "=== ICP GUARDRAILS ===\n"
-            "- US franchised or independent car dealerships (any state)\n"
+            f"- Car dealerships in {region_states}\n"
             "- Must have a real, verifiable trigger event\n"
             "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, "
             "auction-only operations, wholesale-only operations\n\n"
