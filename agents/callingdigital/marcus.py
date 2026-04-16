@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm
+from config.llm import get_llm_research
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
@@ -73,7 +73,7 @@ marcus = Agent(
 
         "PERSONALITY TAGS: research-machine | trigger-hunter | challenger | vertical-expert | qualifier"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
-    llm=get_llm(),
+    llm=get_llm_research(),
     memory=False,
     tools=[web_search_tool],
     verbose=True

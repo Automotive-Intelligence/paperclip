@@ -37,3 +37,22 @@ def get_llm():
         api_key=api_key,
         max_tokens=4000,
     )
+
+
+def get_llm_research():
+    """Returns a more capable LLM for broad research tasks (Marcus, Ryan Data).
+
+    Uses Gemini Flash via OpenRouter — cheaper than DeepSeek on input,
+    1M context (vs 64K), better at tool use and open-ended reasoning.
+    Falls back to the default LLM if OpenRouter key isn't set.
+    """
+    api_key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    if not api_key:
+        return get_llm()
+
+    return LLM(
+        model="openrouter/google/gemini-flash-1.5",
+        provider="litellm",
+        api_key=api_key,
+        max_tokens=4000,
+    )
