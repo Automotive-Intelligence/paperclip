@@ -58,20 +58,23 @@ _DEALER_AI_VENDORS = {
     "conversica", "impel", "tekion",
     "puzzle auto", "orbee",
     # AI chat / virtual assistants
-    "numa", "matador ai", "matador",
-    "liveperson", "drift", "intercom",
-    # General AI signals
-    "openai", "anthropic", "chatgpt", "claude", "gemini",
-    "copilot", "gpt", "langchain", "hugging face", "huggingface",
-    "cursor",
+    "numa", "matador ai",
+    "liveperson", "drift",
+    # General AI signals (must be specific to avoid false positives)
+    "openai", "anthropic", "chatgpt", "claude ai",
+    "github copilot", "langchain", "hugging face", "huggingface",
+    "cursor",  # AI code assistant
     # AI phone / voice
-    "dialpad ai", "invoca", "marchex",
+    "dialpad ai",
 }
 
 # Category-level AI detection (matches vendor_category field)
+# IMPORTANT: Avoid short substrings like "ai" — they match inside
+# "email", "training", "container", etc. Use full phrases only.
 _AI_CATEGORIES = {
-    "ai code assistant", "machine learning", "llm",
-    "artificial intelligence", "ai", "chatbot",
+    "ai code assistant", "ai seo", "ai assistant",
+    "machine learning", "llm development",
+    "artificial intelligence", "chatbot",
     "conversational ai", "virtual assistant",
     "ai receptionist", "ai phone",
 }
@@ -97,12 +100,12 @@ _DEALER_CRM = {
     "autoraptor", "auto raptor", "selly automotive", "promax",
     "dominion dealer solutions", "dominion",
     # Enterprise CRMs used by dealer groups
-    "salesforce", "dynamics for sales", "dynamics 365", "hubspot",
+    "hubspot sales hub", "salesforce sales cloud",
+    "dynamics for sales",
 }
 
-_CRM_CATEGORIES = {
-    "crm",
-}
+# Category must be exact "CRM" — not a substring match
+_CRM_CATEGORIES = set()  # disabled — too many false positives from substring "crm"
 
 # ── DIGITAL RETAILING: Digitally mature signal ───────────────���───
 # These dealers are already investing in online buying experience.
@@ -156,8 +159,7 @@ _MANUAL_CHAT = {
 
 _CHAT_CATEGORIES = {
     "contact center", "live chat", "digital customer service",
-    "business and video communications",
-}
+}  # excluded "business and video communications" — catches Zoom/Teams/Slack/Webex
 
 # ── FIXED OPS / SERVICE: Service dept complexity ─────────────────
 # Service scheduling + no-shows cost $200+/bay-hour.
