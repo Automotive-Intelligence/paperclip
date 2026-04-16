@@ -115,9 +115,15 @@ def _search_company_by_name(name: str) -> Optional[str]:
 
 
 def _create_contact(prospect: dict, source_agent: str, business_key: str) -> str:
+    contact_name = (prospect.get("contact_name") or "").strip()
+    parts = contact_name.split() if contact_name else []
+    first_name = parts[0] if parts else ""
+    last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+
     props = {
         "email": prospect.get("email", ""),
-        "lastname": prospect.get("business_name") or "Unknown",
+        "firstname": first_name,
+        "lastname": last_name or prospect.get("business_name") or "Unknown",
         "city": prospect.get("city", ""),
         "lifecyclestage": "lead",
         "hs_lead_status": "NEW",
