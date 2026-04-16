@@ -407,11 +407,11 @@ def create_contact(
     if business_type:
         custom_fields.append({"id": "MdSOd4zX0ShzxyrMv7rD", "value": business_type})
     if trigger_event:
-        custom_fields.append({"key": "contact.trigger_event", "field_value": trigger_event})
+        custom_fields.append({"id": "GZAkAIjVSn0NqPrlaUSl", "value": trigger_event})
     if verified_fact:
-        custom_fields.append({"key": "contact.verified_fact", "field_value": verified_fact})
+        custom_fields.append({"id": "yGjtDCECP04l4tZiF1u2", "value": verified_fact})
     if competitive_insight:
-        custom_fields.append({"key": "contact.competitive_insight", "field_value": competitive_insight})
+        custom_fields.append({"id": "4Lg9lJqZBJoTVWY91YY9", "value": competitive_insight})
     if custom_fields:
         payload["customFields"] = custom_fields
 
