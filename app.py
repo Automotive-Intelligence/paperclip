@@ -2092,10 +2092,11 @@ def _run_tyler_crew():
     """
     task = Task(
         description=(
-            "CRITICAL RULE: You MUST use the Web Search tool to verify EVERY piece of "
-            "information you return. You are FORBIDDEN from generating plausible-sounding "
-            "data without citing a specific web search result. If you cannot verify a "
-            "business through web search, you MUST exclude it from your output.\n\n"
+            "CRITICAL RULE: You MUST use the Web Search tool for research. NEVER fabricate "
+            "data — every fact you return must come from a real web search result. "
+            "However, you do NOT need every field filled. A prospect with business_name + "
+            "city + website + one verified fact is GOOD ENOUGH even without email or phone. "
+            "Return what you found. Leave unfound fields as empty strings.\n\n"
             "IF YOU RETURN A PHONE NUMBER, IT MUST BE A REAL NUMBER YOU FOUND IN A WEB "
             "SEARCH RESULT. Do NOT use 555 numbers. Do NOT use any phone with repeated or "
             "sequential digits. Do NOT invent phone numbers.\n\n"
@@ -2237,10 +2238,11 @@ def _run_marcus_crew(vertical_override: str | None = None):
 
     task = Task(
         description=(
-            f"CRITICAL RULE: You MUST use the Web Search tool to verify EVERY piece of "
-            f"information you return. You are FORBIDDEN from generating plausible-sounding "
-            f"data without citing a specific web search result. If you cannot verify a "
-            f"business through web search, you MUST exclude it from your output.\n\n"
+            f"CRITICAL RULE: You MUST use the Web Search tool for research. NEVER fabricate "
+            f"data — every fact you return must come from a real web search result. "
+            f"However, you do NOT need every field filled. A prospect with business_name + "
+            f"city + website + one verified fact is GOOD ENOUGH even without email or phone. "
+            f"Return what you found. Leave unfound fields as empty strings.\n\n"
             f"IF YOU RETURN A PHONE NUMBER, IT MUST BE A REAL NUMBER YOU FOUND IN A WEB "
             f"SEARCH RESULT. Do NOT use 555 numbers. Do NOT use any phone with repeated or "
             f"sequential digits (e.g. 888-8888, 555-1234, 123-4567). Do NOT invent phone numbers.\n\n"
