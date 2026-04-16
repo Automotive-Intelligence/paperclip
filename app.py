@@ -135,6 +135,7 @@ from tools.email_engine import parse_prospects, parse_retention_actions, parse_c
 # automotiveintelligence.io — pending 
 # re-verification after DNS fix March 2026
 from tools.contact_enricher import enrich_prospects
+from tools.bloomberry import enrich_prospects_tech, bloomberry_ready
 from tools.icp_guardrails import validate_and_filter_prospects
 from tools.revenue_tracker import (
     init_revenue_tracker, init_revenue_tables, track_event,
@@ -1559,6 +1560,10 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
 
         # ── Contact enrichment: fill gaps in email/phone/name via web search ──
         prospects = enrich_prospects(prospects, only_missing_email=False)
+
+        # ── Tech stack enrichment: score AI-readiness via Bloomberry ──
+        if bloomberry_ready():
+            prospects = enrich_prospects_tech(prospects)
 
         crm_provider, crm_results = push_prospects_to_crm(
             prospects,
@@ -6297,6 +6302,19 @@ async def readiness():
     if is_ready:
         return payload
     return JSONResponse(status_code=503, content=payload)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BLOOMBERRY — Tech Stack Lookup
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/tech/{domain}")
+async def tech_stack_lookup(domain: str, category: str = None):
+    """Look up a company's tech stack via Bloomberry."""
+    from tools.bloomberry import get_tech_stack, bloomberry_ready
+    if not bloomberry_ready():
+        return JSONResponse(status_code=503, content={"error": "BLOOMBERRY_API_KEY not configured"})
+    return get_tech_stack(domain, category=category)
 
 
 # ═══════════════════════════════════════════════════════════════════
