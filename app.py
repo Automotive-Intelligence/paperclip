@@ -3100,11 +3100,11 @@ scheduler.add_job(_avo_sched_michael_meta, CronTrigger(hour=8, minute=4, timezon
     id="michael_meta_daily_briefing", name="Michael Meta Daily Briefing",
     replace_existing=True, misfire_grace_time=3600)
 
-# Sales — Tyler/Ryan every 2 hours from 8:30 to 16:34 CST; Marcus once daily at 8:32 CST
-# Tyler:     8:30, 10:30, 12:30, 14:30, 16:30
-# Marcus:    8:32
-# Ryan Data: 8:34, 10:34, 12:34, 14:34, 16:34
-SALES_HOURS = [8, 10, 12, 14, 16]
+# Sales — Tyler/Marcus/Ryan prospect during business hours + overnight runs
+# Business hours: 8:30, 10:30, 12:30, 14:30, 16:30 CST
+# Overnight:      0:00 (midnight), 4:00 CST
+# All 3 agents run every window so RevOps has fresh pipeline by morning
+SALES_HOURS = [0, 4, 8, 10, 12, 14, 16]
 
 for hour in SALES_HOURS:
     scheduler.add_job(
@@ -3115,20 +3115,19 @@ for hour in SALES_HOURS:
         replace_existing=True, misfire_grace_time=3600,
     )
     scheduler.add_job(
+        _avo_sched_marcus,
+        CronTrigger(hour=hour, minute=32, timezone=CST),
+        id=f"marcus_prospecting_{hour}32",
+        name=f"Marcus Prospecting {hour}:32",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+    scheduler.add_job(
         _avo_sched_ryan_data,
         CronTrigger(hour=hour, minute=34, timezone=CST),
         id=f"ryan_data_prospecting_{hour}34",
         name=f"Ryan Data Prospecting {hour}:34",
         replace_existing=True, misfire_grace_time=3600,
     )
-
-scheduler.add_job(
-    _avo_sched_marcus,
-    CronTrigger(day_of_week="mon-fri", hour=8, minute=32, timezone=CST),
-    id="marcus_prospecting_daily_0832",
-    name="Marcus Prospecting Daily 8:32",
-    replace_existing=True, misfire_grace_time=3600,
-)
 
 # Marketing — 9:00, 9:02, 9:04 (once daily — content planning) [AVO wrapped]
 scheduler.add_job(_avo_sched_zoe, CronTrigger(hour=9, minute=0, timezone=CST),
