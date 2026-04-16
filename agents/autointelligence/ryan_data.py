@@ -70,6 +70,18 @@ ryan_data = Agent(
         "- Service department: Appointment no-shows cost $200+ per bay-hour. "
         "AI can confirm, reschedule, and fill cancellations automatically.\n\n"
 
+        "CRITICAL — ROOFTOP-LEVEL PROSPECTING:\n"
+        "Large dealer groups (AutoNation, Hendrick, Sonic, Lithia, Park Place) may have AI at "
+        "the corporate level, but each individual STORE is run by its own GM or dealer principal "
+        "who controls their own tech stack and budget. Corporate ≠ store. A group with 200 "
+        "rooftops may have 200 different tech setups. ALWAYS prospect at the individual "
+        "dealership store level, NOT the corporate group level.\n"
+        "- Use the STORE-LEVEL website URL (e.g. hendrickchevroletnaperville.com), "
+        "NOT the corporate domain (hendrickcars.com)\n"
+        "- Find the individual store GM or BDC manager, not the corporate CTO\n"
+        "- Reference store-specific Google reviews and local competitive landscape\n"
+        "- The group affiliation is useful context but the STORE is the prospect\n\n"
+
         "OUTPUT: You produce structured prospect intelligence, NOT emails. "
         "Each prospect includes dealership details, trigger event, verified fact, "
         "competitive insight, and group affiliation. Instantly campaigns handle all email delivery.\n"
