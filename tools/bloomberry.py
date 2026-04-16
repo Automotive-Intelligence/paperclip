@@ -6,6 +6,10 @@ Scores auto-dealership AI-readiness by analyzing their current tech stack:
   - Dealers with digital retailing + chat but no AI = digitally mature, ready to buy
   - Dealers ALREADY using AI tools = exclude per ICP (they're solved)
   - Dealers with almost nothing = too early, low maturity
+
+Bloomberry API returns structured vendor objects:
+  { vendor_name, vendor_category, vendor_url,
+    usage_started_at, vendor_upper_level_category }
 """
 
 # AIBOS Operating Foundation
@@ -39,6 +43,9 @@ BLOOMBERRY_BASE_URL = "https://api.revealera.com"
 # Organized by what each category MEANS for our AI readiness pitch.
 # Ryan sells: Free Assessment → $2.5K Audit → $7.5K Implementation
 # Sweet spot = digitally mature dealer with NO AI in the stack.
+#
+# Each set matches against vendor_name AND vendor_category from the
+# Bloomberry response for maximum detection coverage.
 
 # ── EXCLUDE: Already using dealer-specific AI ────────────────────
 # Per Ryan's ICP: "EXCLUDE dealerships already using AI tools,
@@ -46,7 +53,7 @@ BLOOMBERRY_BASE_URL = "https://api.revealera.com"
 # If ANY of these show up, the dealer is already solved.
 
 _DEALER_AI_VENDORS = {
-    # Dealer AI platforms
+    # Dealer AI platforms (vendor_name matches)
     "fullpath", "autoleadstar", "auto lead star",
     "conversica", "impel", "tekion",
     "puzzle auto", "orbee",
@@ -55,10 +62,18 @@ _DEALER_AI_VENDORS = {
     "liveperson", "drift", "intercom",
     # General AI signals
     "openai", "anthropic", "chatgpt", "claude", "gemini",
-    "copilot", "gpt", "langchain", "hugging face",
+    "copilot", "gpt", "langchain", "hugging face", "huggingface",
+    "cursor",
     # AI phone / voice
     "dialpad ai", "invoca", "marchex",
-    "ai phone", "ai receptionist", "virtual assistant",
+}
+
+# Category-level AI detection (matches vendor_category field)
+_AI_CATEGORIES = {
+    "ai code assistant", "machine learning", "llm",
+    "artificial intelligence", "ai", "chatbot",
+    "conversational ai", "virtual assistant",
+    "ai receptionist", "ai phone",
 }
 
 # ── LEGACY DMS: Pain signal — stuck on old systems ───────────────
@@ -81,9 +96,15 @@ _DEALER_CRM = {
     "elead", "e-lead", "drivecentric", "drive centric",
     "autoraptor", "auto raptor", "selly automotive", "promax",
     "dominion dealer solutions", "dominion",
+    # Enterprise CRMs used by dealer groups
+    "salesforce", "dynamics for sales", "dynamics 365", "hubspot",
 }
 
-# ── DIGITAL RETAILING: Digitally mature signal ───────────────────
+_CRM_CATEGORIES = {
+    "crm",
+}
+
+# ── DIGITAL RETAILING: Digitally mature signal ───────────────���───
 # These dealers are already investing in online buying experience.
 # They GET digital — perfect audience for AI conversation.
 
@@ -94,7 +115,7 @@ _DIGITAL_RETAIL = {
     "digital motors", "motoinsight",
 }
 
-# ── INVENTORY MGMT: Operationally sophisticated ─────────────────
+# ── INVENTORY MGMT: Operationally sophisticated ────────���────────
 # Using vAuto or similar = data-driven decision makers.
 # They'll understand AI ROI because they already measure everything.
 
@@ -116,6 +137,12 @@ _LEAD_PLATFORMS = {
     "sincro", "shift digital", "reunited",
 }
 
+_MARKETING_CATEGORIES = {
+    "email marketing", "digital advertising",
+    "social media management", "demand side platform",
+    "programmatic advertising", "search engine optimization",
+}
+
 # ── CHAT / COMMUNICATION (non-AI): Manual chat = BDC pain ───────
 # Human-staffed chat = they know chat matters but pay humans
 # to do what AI could handle. Direct upgrade opportunity.
@@ -123,8 +150,13 @@ _LEAD_PLATFORMS = {
 _MANUAL_CHAT = {
     "podium", "kenect", "callrevu", "call revu",
     "xtime", "autoloop", "auto loop", "mykaarna", "mykaarma",
-    "textdrip", "zipwhip", "twilio",
+    "textdrip", "zipwhip",
     "webchat", "live chat", "olark",
+}
+
+_CHAT_CATEGORIES = {
+    "contact center", "live chat", "digital customer service",
+    "business and video communications",
 }
 
 # ── FIXED OPS / SERVICE: Service dept complexity ─────────────────
@@ -143,10 +175,17 @@ _FIXED_OPS = {
 
 _DIGITAL_INFRA = {
     "google analytics", "google tag manager", "google ads",
-    "facebook pixel", "meta pixel", "hotjar", "hubspot",
-    "salesforce", "mailchimp", "constant contact",
+    "facebook pixel", "meta pixel", "hotjar",
+    "mailchimp", "constant contact",
     "wordpress", "shopify", "wix", "squarespace",
-    "cloudflare", "aws", "azure",
+    "cloudflare", "aws", "azure", "akamai",
+}
+
+_INFRA_CATEGORIES = {
+    "tag management", "product analytics",
+    "business intelligence and analytics",
+    "user experience and session recording",
+    "personalization and customer engagement",
 }
 
 
@@ -158,25 +197,35 @@ def bloomberry_ready() -> bool:
     return bool(_api_key())
 
 
-def _headers() -> dict:
-    return {
-        "Content-Type": "application/json",
-    }
-
-
-def _match_vendors(vendor_names: list, keyword_set: set) -> list:
-    """Return vendor names that match any keyword in the set."""
+def _match_vendor_objects(vendors: list, name_keywords: set, category_keywords: set = None) -> list:
+    """
+    Match vendor dicts against name and/or category keyword sets.
+    Returns list of matched vendor_name strings.
+    """
     matched = []
-    for name in vendor_names:
-        lower = name.lower()
-        if any(kw in lower for kw in keyword_set):
-            matched.append(name)
+    for v in vendors:
+        name = (v.get("vendor_name") or "").lower()
+        cat = (v.get("vendor_category") or "").lower()
+        upper_cat = (v.get("vendor_upper_level_category") or "").lower()
+
+        name_hit = any(kw in name for kw in name_keywords)
+        cat_hit = False
+        if category_keywords:
+            cat_hit = any(kw in cat for kw in category_keywords) or any(kw in upper_cat for kw in category_keywords)
+
+        if name_hit or cat_hit:
+            display = v.get("vendor_name") or name
+            if display not in matched:
+                matched.append(display)
+
     return matched
 
 
-def _score_dealer_prospect(vendor_names: list) -> dict:
+def _score_dealer_prospect(vendors: list) -> dict:
     """
     Score a dealership prospect based on tech stack signals.
+
+    Accepts the raw vendor object list from Bloomberry.
 
     Returns a dict with category matches and a composite verdict:
       - "prime"    = Legacy tech + digital maturity + NO AI → book the assessment
@@ -184,15 +233,15 @@ def _score_dealer_prospect(vendor_names: list) -> dict:
       - "exclude"  = Already has AI vendors → skip per ICP
       - "low"      = Minimal tech footprint → probably too early
     """
-    ai_hits = _match_vendors(vendor_names, _DEALER_AI_VENDORS)
-    dms_hits = _match_vendors(vendor_names, _LEGACY_DMS)
-    crm_hits = _match_vendors(vendor_names, _DEALER_CRM)
-    digital_retail_hits = _match_vendors(vendor_names, _DIGITAL_RETAIL)
-    inventory_hits = _match_vendors(vendor_names, _INVENTORY_TOOLS)
-    lead_hits = _match_vendors(vendor_names, _LEAD_PLATFORMS)
-    chat_hits = _match_vendors(vendor_names, _MANUAL_CHAT)
-    fixed_ops_hits = _match_vendors(vendor_names, _FIXED_OPS)
-    infra_hits = _match_vendors(vendor_names, _DIGITAL_INFRA)
+    ai_hits = _match_vendor_objects(vendors, _DEALER_AI_VENDORS, _AI_CATEGORIES)
+    dms_hits = _match_vendor_objects(vendors, _LEGACY_DMS)
+    crm_hits = _match_vendor_objects(vendors, _DEALER_CRM, _CRM_CATEGORIES)
+    digital_retail_hits = _match_vendor_objects(vendors, _DIGITAL_RETAIL)
+    inventory_hits = _match_vendor_objects(vendors, _INVENTORY_TOOLS)
+    lead_hits = _match_vendor_objects(vendors, _LEAD_PLATFORMS, _MARKETING_CATEGORIES)
+    chat_hits = _match_vendor_objects(vendors, _MANUAL_CHAT, _CHAT_CATEGORIES)
+    fixed_ops_hits = _match_vendor_objects(vendors, _FIXED_OPS)
+    infra_hits = _match_vendor_objects(vendors, _DIGITAL_INFRA, _INFRA_CATEGORIES)
 
     # Count how many dealership-relevant categories have at least one hit
     category_depth = sum(1 for hits in [
@@ -233,10 +282,10 @@ def _score_dealer_prospect(vendor_names: list) -> dict:
     if crm_hits and not ai_hits:
         pain_points.append(f"Using {crm_hits[0]} CRM without AI — leads sitting in queue")
     if chat_hits:
-        pain_points.append(f"Human-staffed chat ({chat_hits[0]}) — AI could handle 80% of these")
+        pain_points.append(f"Human-staffed chat/comms ({chat_hits[0]}) — AI could handle 80% of these")
     if lead_hits:
         sources = ", ".join(lead_hits[:3])
-        pain_points.append(f"Paying for leads from {sources} — AI improves conversion on existing spend")
+        pain_points.append(f"Paying for leads/marketing ({sources}) — AI improves conversion on existing spend")
     if fixed_ops_hits:
         pain_points.append("Service dept tools detected — AI appointment confirmation reduces no-shows")
     if inventory_hits and not ai_hits:
@@ -283,7 +332,7 @@ def get_tech_stack(domain: str, category: Optional[str] = None) -> dict:
         operation="get_tech_stack",
         method="GET",
         url=f"{BLOOMBERRY_BASE_URL}/enrichments/tech.json",
-        headers=_headers(),
+        headers={"Content-Type": "application/json"},
         params=params,
         timeout=15,
     )
@@ -294,23 +343,26 @@ def get_tech_stack(domain: str, category: Optional[str] = None) -> dict:
         return {"domain": clean_domain, "vendors": [], "error": error_msg}
 
     data = resp.data or {}
-    vendors = data.get("technologies") or data.get("vendors") or data.get("tech") or []
+    vendors = data.get("vendors") or []
 
-    # Normalize — API may return list of strings or list of dicts
-    vendor_names = []
-    for v in vendors:
-        if isinstance(v, str):
-            vendor_names.append(v)
-        elif isinstance(v, dict):
-            vendor_names.append(v.get("name") or v.get("vendor") or str(v))
+    # Extract display names for the response
+    vendor_names = [v.get("vendor_name", "") for v in vendors if isinstance(v, dict)]
 
-    # Run dealership-specific scoring
-    scoring = _score_dealer_prospect(vendor_names)
+    # Run dealership-specific scoring against full vendor objects
+    scoring = _score_dealer_prospect(vendors)
 
     result = {
         "domain": clean_domain,
         "vendors": vendor_names,
         "vendor_count": len(vendor_names),
+        "vendor_details": [
+            {
+                "name": v.get("vendor_name", ""),
+                "category": v.get("vendor_category", ""),
+                "upper_category": v.get("vendor_upper_level_category", ""),
+            }
+            for v in vendors if isinstance(v, dict)
+        ],
         "verdict": scoring["verdict"],
         "reason": scoring["reason"],
         "category_depth": scoring["category_depth"],
