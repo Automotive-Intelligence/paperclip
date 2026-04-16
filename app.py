@@ -6313,24 +6313,8 @@ async def tech_stack_lookup(domain: str, category: str = None):
     """Look up a company's tech stack via Bloomberry."""
     from tools.bloomberry import get_tech_stack, bloomberry_ready
     if not bloomberry_ready():
-        return JSONResponse(status_code=503, content={
-            "error": "BLOOMBERRY_API_KEY not configured",
-            "key_length": len((os.getenv("BLOOMBERRY_API_KEY") or "")),
-        })
+        return JSONResponse(status_code=503, content={"error": "BLOOMBERRY_API_KEY not configured"})
     return get_tech_stack(domain, category=category)
-
-
-@app.get("/tech-debug")
-async def tech_debug():
-    """Debug: check if Bloomberry key is loaded."""
-    key = (os.getenv("BLOOMBERRY_API_KEY") or "")
-    return {
-        "key_loaded": bool(key.strip()),
-        "key_length": len(key),
-        "key_preview": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "too_short",
-        "has_spaces": key != key.strip(),
-        "has_quotes": key.startswith('"') or key.startswith("'"),
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════
