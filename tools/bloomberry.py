@@ -160,7 +160,6 @@ def bloomberry_ready() -> bool:
 
 def _headers() -> dict:
     return {
-        "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
     }
 
@@ -275,7 +274,7 @@ def get_tech_stack(domain: str, category: Optional[str] = None) -> dict:
     if "/" in clean_domain:
         clean_domain = clean_domain.split("/")[0]
 
-    params = {"domain": clean_domain}
+    params = {"api_key": _api_key(), "domain": clean_domain}
     if category:
         params["category"] = category
 
