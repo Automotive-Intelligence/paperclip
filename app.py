@@ -1561,8 +1561,8 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         # ── Contact enrichment: fill gaps in email/phone/name via web search ──
         prospects = enrich_prospects(prospects, only_missing_email=False)
 
-        # ── Tech stack enrichment: score AI-readiness via Bloomberry ──
-        if bloomberry_ready():
+        # ── Tech stack enrichment: score AI-readiness via Bloomberry (Ryan only) ──
+        if agent_name == "ryan_data" and bloomberry_ready():
             prospects = enrich_prospects_tech(prospects)
 
         crm_provider, crm_results = push_prospects_to_crm(
