@@ -710,7 +710,7 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                     if p.get("competitive_insight"):
                         note_parts.append(f"\nCompetitive Insight:\n{p['competitive_insight']}")
                     note_parts.append(f"\nChannel: Cold Email ONLY (no SMS without opt-in)")
-                    note_parts.append(f"Email automation: GHL Workflow")
+                    note_parts.append(f"Email automation: Instantly (warmed sender)")
 
                     add_contact_note(contact_id, "\n".join(note_parts))
                 except Exception as note_err:
@@ -769,12 +769,15 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                 except Exception as opp_err:
                     logging.warning(f"[GHL] Opportunity creation failed: {opp_err}")
 
-            workflow_id = os.getenv(f"GHL_WORKFLOW_{source_agent.upper()}", "")
-            if contact_id and workflow_id:
-                try:
-                    add_to_workflow(contact_id, workflow_id)
-                except Exception as wf_err:
-                    logging.warning(f"[GHL] Workflow add failed: {wf_err}")
+            # Tyler's email delivery goes through Instantly, not GHL workflows.
+            # Only enroll in GHL workflow for agents that still use GHL for email.
+            if source_agent != "tyler":
+                workflow_id = os.getenv(f"GHL_WORKFLOW_{source_agent.upper()}", "")
+                if contact_id and workflow_id:
+                    try:
+                        add_to_workflow(contact_id, workflow_id)
+                    except Exception as wf_err:
+                        logging.warning(f"[GHL] Workflow add failed: {wf_err}")
 
             results.append({
                 "business_name": p.get("business_name"),

@@ -2147,7 +2147,7 @@ def _run_tyler_crew():
             "- Industry: Plumbers, HVAC, Roofers, Dental offices, or Personal Injury Law\n"
             "- Owner-operated or small team (1-10 employees)\n"
             "EXCLUDE: Franchises, chains, businesses already using AI receptionists\n\n"
-            "DO NOT write cold emails. GHL workflows handle email sequences."
+            "DO NOT write cold emails. Instantly campaigns handle email sequences."
         ),
         expected_output=(
             "A structured prospect intelligence report with 0 to 3 VERIFIED prospects. "

@@ -361,7 +361,7 @@ PARSE_PROMPTS = {
 - trigger_event (string, the specific trigger event making now the right time to reach out)
 - competitive_insight (string, what their closest competitor does better)
 - reason (string, 2-3 sentences on why this business needs an AI receptionist)""",
-        "context": "This is from a research-focused SDR finding DFW 380 Corridor service businesses (HVAC, plumbing, roofing, dental, PI law) that need an AI receptionist. Tyler does NOT write emails — he delivers research intelligence. GHL workflows handle email delivery.",
+        "context": "This is from a research-focused SDR finding DFW 380 Corridor service businesses (HVAC, plumbing, roofing, dental, PI law) that need an AI receptionist. Tyler does NOT write emails — he delivers research intelligence. Instantly campaigns handle email delivery.",
     },
     "marcus": {
         "keys": """Each object must have exactly these keys:
