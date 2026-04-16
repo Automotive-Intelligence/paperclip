@@ -26,12 +26,12 @@ def web_search_tool(query: str) -> str:
         return "ERROR: TAVILY_API_KEY environment variable is not set."
     try:
         client = TavilyClient(api_key=api_key)
-        response = client.search(query, max_results=10, search_depth="advanced")
+        response = client.search(query, max_results=5, search_depth="advanced")
         results = response.get("results", [])
         if not results:
             return f"No results found for query: {query}"
         return "\n\n".join([
-            f"Title: {r['title']}\nContent: {r['content']}\nSource: {r['url']}"
+            f"Title: {r['title']}\nContent: {r['content'][:1000]}\nSource: {r['url']}"
             for r in results
         ])
     except Exception as e:
