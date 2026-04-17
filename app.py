@@ -1564,6 +1564,24 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
         # ── Tech stack enrichment: score AI-readiness via Bloomberry (Ryan only) ──
         if agent_name == "ryan_data" and bloomberry_ready():
             prospects = enrich_prospects_tech(prospects)
+            # Filter out dealerships already using AI (Bloomberry verdict = "exclude")
+            before_count = len(prospects)
+            excluded = [p for p in prospects if p.get("tech_verdict") == "exclude"]
+            prospects = [p for p in prospects if p.get("tech_verdict") != "exclude"]
+            if excluded:
+                logging.info(
+                    "[Bloomberry] Filtered %d/%d prospects (already using AI): %s",
+                    len(excluded), before_count,
+                    ", ".join(p.get("business_name", "") for p in excluded),
+                )
+            # Inject Bloomberry pain points as trigger_event for outreach
+            for p in prospects:
+                pain = p.get("tech_pain_points", [])
+                if pain and not p.get("trigger_event"):
+                    p["trigger_event"] = ". ".join(pain[:2])
+                verdict = p.get("tech_verdict", "")
+                if verdict in ("prime", "strong") and not p.get("verified_fact"):
+                    p["verified_fact"] = p.get("tech_reason", "")
 
         crm_provider, crm_results = push_prospects_to_crm(
             prospects,
@@ -2403,41 +2421,28 @@ def _run_ryan_data_crew():
         description=(
             "CRITICAL RULE: You MUST use the Web Search tool for research. NEVER fabricate "
             "data — every fact you return must come from a real web search result. "
-            "However, you do NOT need every field filled. A prospect with business_name + "
-            "city + website + one verified fact is GOOD ENOUGH even without email or phone. "
-            "Return what you found. Leave unfound fields as empty strings.\n\n"
+            "Your job is SIMPLE: find real car dealership WEBSITES. That's it. "
+            "Bloomberry will score their tech stack and qualify them automatically. "
+            "You do NOT need to find trigger events, GM names, or emails — just the "
+            "dealership name, city, and website URL.\n\n"
             "IF YOU RETURN A PHONE NUMBER, IT MUST BE A REAL NUMBER FROM A WEB SEARCH. "
-            "Do NOT use 555 numbers. Do NOT use any phone with repeated or sequential "
-            "digits. Do NOT invent phone numbers.\n\n"
-            "IF YOU RETURN AN EMAIL, IT MUST BE EXPLICITLY STATED ON A WEB PAGE. Do NOT "
-            "guess email formats. If no verifiable email, return empty string.\n\n"
-            "IF YOU RETURN A CONTACT NAME, IT MUST BE A REAL PERSON NAMED IN SEARCH RESULTS. "
-            "Do NOT use 'John Smith', 'Jane Doe', 'Daniel Carter', 'Marcus Green', or any "
-            "generic names. If no contact name is verifiable, return empty string.\n\n"
+            "Do NOT use 555 numbers. If no phone found, return empty string.\n\n"
+            "IF YOU RETURN AN EMAIL, IT MUST BE EXPLICITLY STATED ON A WEB PAGE. "
+            "If no email found, return empty string. This is FINE — enrichment handles it.\n\n"
             "=== YOUR TASK ===\n"
             f"TODAY'S REGION: {region_name.upper()} ({region_states})\n\n"
-            f"Find car dealerships in {region_states} experiencing trigger events that make "
-            "them ready for AI-powered operations (BDC automation, service appointment AI, "
-            "lead response).\n\n"
+            f"Find 3-5 car dealerships in {region_states}. Focus on finding their "
+            "official WEBSITE URL. Everything else is optional.\n\n"
             "REQUIRED SEARCH WORKFLOW (execute each step via Web Search tool):\n\n"
-            f"STEP 1: Use Web Search with queries like:\n"
-            f"  - 'car dealership new general manager {region_city1} 2026'\n"
-            f"  - 'dealership ownership change {region_states.split(',')[0].strip()} 2026'\n"
-            f"  - 'dealership hiring BDC manager {region_city2}'\n"
-            "From results, pick ONE real dealership mentioned in multiple sources.\n\n"
-            "STEP 2: For that dealership, use Web Search: "
-            "'[dealership name] contact website'. Read the contact page content "
-            "in the search results to extract phone, email, and decision-maker name.\n\n"
-            "STEP 3: Use Web Search for recent news about the dealership: "
-            "'[dealership name] 2026 news'. Find the specific trigger event "
-            "(ownership change, new GM, expansion, award, bad review streak).\n\n"
-            "STEP 4: Use Web Search for a nearby competing dealership: "
-            "'[city] [make] dealership competitors'. Identify what the competitor does "
-            "better (Google review count, response time, digital retailing, etc.).\n\n"
-            "STEP 5: Include the dealership if you found business_name + city + website + "
-            "at least ONE verified fact or trigger event. Email, phone, contact_name, "
-            "and competitive_insight are OPTIONAL — return empty string if not found. "
-            "Do NOT skip a real dealership just because you couldn't find their email.\n\n"
+            f"STEP 1: Use Web Search to find dealerships:\n"
+            f"  - 'car dealerships {region_city1}'\n"
+            f"  - 'Ford Chevrolet Honda dealership {region_city2}'\n"
+            f"  - 'auto dealer {region_states.split(',')[0].strip()}'\n"
+            "Pick dealerships that have their own website (not just a Cars.com listing).\n\n"
+            "STEP 2: For each dealership, use Web Search: '[dealership name] official website' "
+            "to confirm the website URL and find any contact info (phone, email, staff names).\n\n"
+            "STEP 3: If you find a contact page, note the phone and any staff names. "
+            "If not, that's OK — return the dealership with just name + city + website.\n\n"
             "REPEAT workflow until you have up to 3 fully verified dealership prospects.\n\n"
             "MANDATORY: You MUST execute at least 3 Web Search queries before you can "
             "report 'No verifiable prospects found'. If you have not searched yet, SEARCH NOW.\n\n"
@@ -2445,34 +2450,31 @@ def _run_ryan_data_crew():
             "- If your web searches return nothing useful, RETURN AN EMPTY LIST with "
             "the explanation 'No verifiable prospects found this run'. This is ACCEPTABLE.\n"
             "- ZERO prospects is BETTER than fabricated prospects.\n"
-            "- You will be evaluated on VERIFIABILITY, not quantity.\n"
-            "- Every field must be traceable to a specific web search result. Include "
-            "the source URL in the verified_fact field.\n\n"
+            "- You will be evaluated on finding REAL dealerships with REAL websites.\n"
+            "- Bloomberry handles qualification. You handle discovery.\n\n"
             "=== ICP GUARDRAILS ===\n"
             f"- Car dealerships in {region_states}\n"
-            "- Must have a real, verifiable trigger event\n"
-            "EXCLUDE: Dealerships already using AI tools, buy-here-pay-here lots, "
-            "auction-only operations, wholesale-only operations\n\n"
+            "- Must have their own website (not just a Cars.com or DealerRater listing)\n"
+            "EXCLUDE: Buy-here-pay-here lots, auction-only, wholesale-only\n\n"
             "DO NOT write cold emails. Instantly campaigns handle email sequences."
         ),
         expected_output=(
-            "A structured prospect intelligence report with 0 to 3 VERIFIED dealership "
-            "prospects. Return ZERO prospects if web searches did not produce verifiable data.\n\n"
-            "For each verified prospect, include ONLY fields you actually found via Web Search:\n"
-            "- business_name (required, from search results)\n"
-            "- business_type (e.g. 'Ford Dealership', 'Independent Used', 'Honda Dealership')\n"
-            "- city (city and state from search results)\n"
-            "- contact_name (GM/BDC/Owner first + last name IF found, else empty string)\n"
-            "- email (direct email IF explicitly listed, else empty string)\n"
-            "- phone (real phone from website, else empty string)\n"
-            "- website (dealership website URL)\n"
-            "- group_affiliation (AutoNation, Hendrick, Lithia, Penske, etc. if known, else empty)\n"
-            "- verified_fact (one specific fact with source URL in parentheses)\n"
-            "- trigger_event (specific event with source URL)\n"
-            "- competitive_insight (competitor name + what they do better + source URL)\n"
-            "- reason (2-3 sentences on why this needs AI readiness assessment)\n\n"
-            "IF ZERO PROSPECTS: return the text 'No verifiable prospects found this run' "
-            "and a brief explanation of what was searched and why nothing met the criteria."
+            "A list of 3-5 car dealerships with their websites. "
+            "Return ZERO if web searches found nothing.\n\n"
+            "For each dealership:\n"
+            "- business_name (required)\n"
+            "- business_type (e.g. 'Ford Dealership', 'Chevrolet Dealership', 'Independent Used')\n"
+            "- city (city and state)\n"
+            "- website (required — the dealership's own website URL)\n"
+            "- contact_name (if found, else empty string)\n"
+            "- email (if found on website, else empty string)\n"
+            "- phone (if found on website, else empty string)\n"
+            "- group_affiliation (if known, else empty string)\n"
+            "- verified_fact (anything notable from their website or reviews, else empty string)\n"
+            "- trigger_event (empty string — Bloomberry handles this)\n"
+            "- competitive_insight (empty string — not needed)\n"
+            "- reason (empty string — Bloomberry generates this)\n\n"
+            "IF ZERO: return 'No verifiable prospects found this run' with explanation."
         ),
         agent=ryan_data,
     )
