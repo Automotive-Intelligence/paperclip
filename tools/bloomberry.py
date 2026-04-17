@@ -30,6 +30,7 @@ Bloomberry API returns structured vendor objects:
 
 import os
 import logging
+from datetime import date
 from typing import Optional
 
 from services.http_client import request_with_retry
@@ -189,6 +190,26 @@ _INFRA_CATEGORIES = {
     "user experience and session recording",
     "personalization and customer engagement",
 }
+
+
+# ── Usage cap — protect free tier credits ────────────────────────
+# 200 free credits total. Cap daily usage so we don't burn through
+# them before proving value. Once paid, raise or remove the cap.
+DAILY_LOOKUP_CAP = int(os.getenv("BLOOMBERRY_DAILY_CAP", "6"))
+
+_usage_today: dict = {"date": "", "count": 0}
+
+
+def _check_and_increment_usage() -> bool:
+    """Return True if we're under the daily cap, and increment. False = skip."""
+    today = date.today().isoformat()
+    if _usage_today["date"] != today:
+        _usage_today["date"] = today
+        _usage_today["count"] = 0
+    if _usage_today["count"] >= DAILY_LOOKUP_CAP:
+        return False
+    _usage_today["count"] += 1
+    return True
 
 
 def _api_key() -> str:
@@ -385,7 +406,7 @@ def enrich_prospect_tech(prospect: dict) -> dict:
     Add tech stack intelligence to a prospect dict.
 
     Reads the 'website' or 'domain' field, runs Bloomberry lookup,
-    and adds dealership scoring fields.
+    and adds dealership scoring fields. Respects daily usage cap.
     """
     domain = (
         prospect.get("domain")
@@ -394,6 +415,10 @@ def enrich_prospect_tech(prospect: dict) -> dict:
     ).strip()
 
     if not domain or not bloomberry_ready():
+        return prospect
+
+    if not _check_and_increment_usage():
+        logging.info(f"[Bloomberry] Daily cap ({DAILY_LOOKUP_CAP}) reached — skipping {domain}")
         return prospect
 
     tech = get_tech_stack(domain)
