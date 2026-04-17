@@ -51,7 +51,7 @@ def get_llm_research():
         return get_llm()
 
     return LLM(
-        model="openrouter/google/gemini-flash-1.5",
+        model="openrouter/google/gemini-2.5-flash",
         provider="litellm",
         api_key=api_key,
         max_tokens=4000,
