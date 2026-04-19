@@ -29,6 +29,13 @@ def _get_week_number() -> int:
     return datetime.now().isocalendar()[1]
 
 
+def _iso_week_bounds(week: int, year: int) -> tuple[str, str]:
+    """Return (monday_iso, next_monday_iso) for the given ISO week."""
+    monday = datetime.fromisocalendar(year, week, 1)
+    next_monday = monday + timedelta(days=7)
+    return monday.strftime("%Y-%m-%d"), next_monday.strftime("%Y-%m-%d")
+
+
 def _read_log_tail(filename: str, lines: int = 100) -> list:
     """Read last N lines from a log file."""
     path = os.path.join(LOGS_DIR, filename)
@@ -93,13 +100,18 @@ def _get_cost_section() -> str:
         return "- Cost tracking not yet active"
 
 
-def _get_git_activity(days: int = 7) -> dict:
-    """Get git commit activity for the week."""
+def _get_git_activity(days: int = 7, week: int | None = None, year: int | None = None) -> dict:
+    """Get git commit activity.
+
+    If week/year provided, bounds to that ISO week (Mon–Sun). Otherwise uses last N days.
+    """
     try:
-        result = subprocess.run(
-            ["git", "log", f"--since={days} days ago", "--oneline", "--no-merges"],
-            capture_output=True, text=True, cwd=REPO_ROOT,
-        )
+        if week and year:
+            since, until = _iso_week_bounds(week, year)
+            args = ["git", "log", f"--since={since}", f"--until={until}", "--oneline", "--no-merges"]
+        else:
+            args = ["git", "log", f"--since={days} days ago", "--oneline", "--no-merges"]
+        result = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT)
         commits = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
 
         bugs_fixed = [c for c in commits if any(kw in c.lower() for kw in ["fix", "bug", "patch", "hotfix"])]
@@ -116,25 +128,36 @@ def _get_git_activity(days: int = 7) -> dict:
         return {"total_commits": 0, "bugs_fixed": [], "features_added": [], "all_commits": []}
 
 
-def generate_changelog() -> str:
-    """Generate weekly changelog markdown."""
-    week_num = _get_week_number()
-    year = datetime.now().year
+def generate_changelog(week: int | None = None, year: int | None = None) -> str:
+    """Generate weekly changelog markdown.
+
+    If week/year provided, generates for that historical ISO week (git-only for past weeks).
+    Otherwise generates for the current week with live pipeline/cost metrics.
+    """
+    historical = week is not None and year is not None
+    if not historical:
+        week = _get_week_number()
+        year = datetime.now().year
     now = datetime.now()
 
-    # Gather metrics from each river
-    apg_enrolled = _count_log_events("ai_phone_guy_enrollments.log", "ENROLLED")
-    cd_enrolled = _count_log_events("calling_digital_enrollments.log", "ENROLLED")
-    ai_enrolled = _count_log_events("automotive_intelligence_enrollments.log", "ENROLLED")
+    # Live metrics are only meaningful for the current week — logs rotate and
+    # cost tracker can't be rewound. For historical weeks, show 0 / "not captured".
+    if historical:
+        apg_enrolled = cd_enrolled = ai_enrolled = 0
+        apg_hot = cd_hot = ai_hot = 0
+        cost_section = "- Not captured (historical backfill)"
+    else:
+        apg_enrolled = _count_log_events("ai_phone_guy_enrollments.log", "ENROLLED")
+        cd_enrolled = _count_log_events("calling_digital_enrollments.log", "ENROLLED")
+        ai_enrolled = _count_log_events("automotive_intelligence_enrollments.log", "ENROLLED")
+        apg_hot = _count_log_events("ai_phone_guy_hot_leads.log", "HOT LEAD")
+        cd_hot = _count_log_events("calling_digital_hot_leads.log", "HOT LEAD")
+        ai_hot = _count_log_events("automotive_intelligence_hot_leads.log", "HOT LEAD")
+        cost_section = _get_cost_section()
 
-    apg_hot = _count_log_events("ai_phone_guy_hot_leads.log", "HOT LEAD")
-    cd_hot = _count_log_events("calling_digital_hot_leads.log", "HOT LEAD")
-    ai_hot = _count_log_events("automotive_intelligence_hot_leads.log", "HOT LEAD")
+    git = _get_git_activity(week=week if historical else None, year=year if historical else None)
 
-    git = _get_git_activity()
-    cost_section = _get_cost_section()
-
-    changelog = f"""# CHANGELOG — Week {week_num}, {year}
+    changelog = f"""# CHANGELOG — Week {week}, {year}
 ## AVO — Weekly Build Report
 Generated: {now.strftime("%Y-%m-%d %H:%M CST")}
 
@@ -210,7 +233,7 @@ Generated: {now.strftime("%Y-%m-%d %H:%M CST")}
 """
 
     # Write to repo root
-    filename = f"CHANGELOG_WEEK_{week_num}_{year}.md"
+    filename = f"CHANGELOG_WEEK_{week}_{year}.md"
     filepath = os.path.join(REPO_ROOT, filename)
     with open(filepath, "w") as f:
         f.write(changelog)
@@ -219,13 +242,15 @@ Generated: {now.strftime("%Y-%m-%d %H:%M CST")}
     return filepath
 
 
-def run_changelog():
-    """Entry point for scheduler — Friday 5pm CST."""
+def run_changelog(week: int | None = None, year: int | None = None):
+    """Entry point for scheduler (no args) or admin backfill (week, year)."""
     try:
-        filepath = generate_changelog()
+        filepath = generate_changelog(week=week, year=year)
         logger.info(f"[Changelog] Weekly changelog saved to {filepath}")
+        return filepath
     except Exception as e:
         logger.error(f"[Changelog] Generation failed: {e}")
+        raise
 
 
 if __name__ == "__main__":

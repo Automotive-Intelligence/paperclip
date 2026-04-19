@@ -4368,6 +4368,17 @@ async def api_changelogs(week: Optional[int] = None, year: Optional[int] = None)
     return JSONResponse(content=feed(week, year))
 
 
+@app.post("/admin/regenerate-changelog")
+async def admin_regenerate_changelog(week: Optional[int] = None, year: Optional[int] = None):
+    """Regenerate a changelog for a specific ISO week (or current week if omitted)."""
+    from paperclip.changelog_gen import run_changelog
+    try:
+        filepath = run_changelog(week=week, year=year)
+        return {"status": "ok", "filepath": filepath, "week": week, "year": year}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Changelog generation failed: {e}")
+
+
 @app.get("/pipeline")
 async def pipeline_overview():
     """Quick pipeline overview — how many prospects, emails, opportunities across all businesses."""
