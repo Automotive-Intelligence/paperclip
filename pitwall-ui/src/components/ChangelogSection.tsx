@@ -163,6 +163,13 @@ function ModalBody({
         </div>
       ) : null}
 
+      {selected.story ? (
+        <div className="mb-5 rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-4">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.15em] text-cyan-300">The Story This Week</div>
+          <div className="whitespace-pre-line text-sm leading-relaxed text-pittext">{selected.story}</div>
+        </div>
+      ) : null}
+
       <div className="mb-5 grid grid-cols-3 gap-3">
         <BigStat label="Commits" value={selected.dev.commits} />
         <BigStat label="Features" value={selected.dev.features_count} />

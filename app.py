@@ -4379,6 +4379,28 @@ async def admin_regenerate_changelog(week: Optional[int] = None, year: Optional[
         raise HTTPException(status_code=500, detail=f"Changelog generation failed: {e}")
 
 
+@app.post("/admin/backfill-changelogs-to-db")
+async def admin_backfill_changelogs_to_db():
+    """One-shot: copy committed filesystem changelogs into Postgres (idempotent)."""
+    from paperclip.changelog_view import backfill_fs_to_db
+    return backfill_fs_to_db()
+
+
+@app.post("/admin/regenerate-all-changelogs")
+async def admin_regenerate_all_changelogs(start_week: int = 10, end_week: int = 16, year: int = 2026):
+    """Regenerate every weekly changelog in [start_week, end_week] — used to pick up
+    new template sections (e.g. LLM talking points) across historical weeks."""
+    from paperclip.changelog_gen import run_changelog
+    results = []
+    for w in range(start_week, end_week + 1):
+        try:
+            fp = run_changelog(week=w, year=year)
+            results.append({"week": w, "year": year, "status": "ok", "filepath": fp})
+        except Exception as e:
+            results.append({"week": w, "year": year, "status": "error", "error": str(e)})
+    return {"results": results}
+
+
 @app.get("/pipeline")
 async def pipeline_overview():
     """Quick pipeline overview — how many prospects, emails, opportunities across all businesses."""

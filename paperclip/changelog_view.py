@@ -1,28 +1,111 @@
 """Changelog JSON feed — powers the dashboard changelog section.
 
 Route wired in app.py: GET /api/changelogs?week=&year=
-Returns list of available weeks plus parsed content for the selected week.
+Storage: Postgres `agent_logs` (agent_name='changelog'), filesystem fallback
+for historical backfills committed to git. Railway filesystem is ephemeral,
+so new weekly runs MUST persist to Postgres to survive container restarts.
 """
 
 import glob
+import logging
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+try:
+    import psycopg2 as psycopg
+except ImportError:
+    try:
+        import psycopg
+    except ImportError:
+        psycopg = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_LOG_TYPE_RE = re.compile(r"^week_(\d+)_(\d+)$")
 
 
-def _list_files() -> list[tuple[int, int, str]]:
-    """Return [(week, year, path), ...] sorted newest-first."""
-    pattern = str(REPO_ROOT / "CHANGELOG_WEEK_*.md")
-    out = []
-    for p in glob.glob(pattern):
+def _db_conn():
+    url = os.environ.get("DATABASE_URL")
+    if not url or psycopg is None:
+        return None
+    try:
+        return psycopg.connect(url, connect_timeout=5)
+    except Exception as e:
+        logging.warning(f"[changelog] DB connect failed: {e}")
+        return None
+
+
+def write_to_db(week: int, year: int, content: str) -> bool:
+    """Persist a changelog to Postgres. Returns True on success."""
+    conn = _db_conn()
+    if conn is None:
+        return False
+    try:
+        monday = datetime.fromisocalendar(year, week, 1).date()
+        log_type = f"week_{week}_{year}"
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO agent_logs (agent_name, log_type, run_date, content) VALUES (%s, %s, %s, %s)",
+                    ("changelog", log_type, monday, content),
+                )
+        logging.info(f"[changelog] Persisted week {week}/{year} to Postgres ({len(content)} chars)")
+        return True
+    except Exception as e:
+        logging.error(f"[changelog] DB write failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def _load_from_db() -> dict[tuple[int, int], str]:
+    """Return {(week, year): latest_content} from Postgres."""
+    conn = _db_conn()
+    if conn is None:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (log_type) log_type, content "
+                "FROM agent_logs WHERE agent_name = 'changelog' "
+                "ORDER BY log_type, created_at DESC"
+            )
+            rows = cur.fetchall()
+        out = {}
+        for log_type, content in rows:
+            m = _LOG_TYPE_RE.match(log_type or "")
+            if m:
+                out[(int(m.group(1)), int(m.group(2)))] = content
+        return out
+    except Exception as e:
+        logging.error(f"[changelog] DB read failed: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def _load_from_fs() -> dict[tuple[int, int], str]:
+    """Return {(week, year): content} read from repo-root markdown files."""
+    out = {}
+    for p in glob.glob(str(REPO_ROOT / "CHANGELOG_WEEK_*.md")):
         m = re.search(r"CHANGELOG_WEEK_(\d+)_(\d+)\.md$", p)
-        if m:
-            out.append((int(m.group(1)), int(m.group(2)), p))
-    out.sort(key=lambda t: (t[1], t[0]), reverse=True)
+        if not m:
+            continue
+        try:
+            with open(p, "r") as f:
+                out[(int(m.group(1)), int(m.group(2)))] = f.read()
+        except OSError:
+            continue
     return out
+
+
+def _load_all() -> dict[tuple[int, int], str]:
+    """DB first (authoritative for new runs), filesystem for historical backfill."""
+    merged = _load_from_fs()
+    merged.update(_load_from_db())  # DB wins on conflict
+    return merged
 
 
 def _week_range(week: int, year: int) -> str:
@@ -53,12 +136,17 @@ def _parse(md: str) -> dict:
         "generated": "",
         "week": None,
         "year": None,
+        "story": "",
         "rivers": [],
         "totals": {},
         "dev": {"commits": 0, "bugs_count": 0, "features_count": 0, "bugs": [], "features": []},
         "cost": [],
         "next_week": [],
     }
+
+    story_match = re.search(r"## The Story This Week\n(.+?)(?=\n---|\n## )", md, re.DOTALL)
+    if story_match:
+        out["story"] = story_match.group(1).strip()
 
     m = re.search(r"Week (\d+), (\d+)", md)
     if m:
@@ -129,23 +217,33 @@ def _parse(md: str) -> dict:
 
 
 def feed(week: Optional[int] = None, year: Optional[int] = None) -> dict:
-    files = _list_files()
-    weeks = [
-        {"week": w, "year": y, "date_range": _week_range(w, y)}
-        for (w, y, _) in files
-    ]
-
-    if not files:
+    store = _load_all()
+    if not store:
         return {"weeks": [], "selected": None}
 
-    if week is None or year is None:
-        selected_file = files[0]
+    keys = sorted(store.keys(), key=lambda t: (t[1], t[0]), reverse=True)
+    weeks = [{"week": w, "year": y, "date_range": _week_range(w, y)} for (w, y) in keys]
+
+    if week is not None and year is not None and (week, year) in store:
+        key = (week, year)
     else:
-        match = [f for f in files if f[0] == week and f[1] == year]
-        selected_file = match[0] if match else files[0]
+        key = keys[0]
 
-    with open(selected_file[2], "r") as f:
-        parsed = _parse(f.read())
-
+    parsed = _parse(store[key])
     parsed["date_range"] = _week_range(parsed["week"], parsed["year"]) if parsed["week"] and parsed["year"] else ""
     return {"weeks": weeks, "selected": parsed}
+
+
+def backfill_fs_to_db() -> dict:
+    """Copy any filesystem changelogs missing from Postgres into Postgres. Idempotent."""
+    fs = _load_from_fs()
+    db = _load_from_db()
+    inserted = 0
+    skipped = 0
+    for (week, year), content in fs.items():
+        if (week, year) in db:
+            skipped += 1
+            continue
+        if write_to_db(week, year, content):
+            inserted += 1
+    return {"inserted": inserted, "skipped": skipped, "fs_total": len(fs), "db_total": len(db)}

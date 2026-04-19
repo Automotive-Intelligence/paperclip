@@ -164,6 +164,7 @@ export type ChangelogSelected = {
   year: number;
   generated: string;
   date_range?: string;
+  story?: string;
   rivers: ChangelogRiver[];
   totals: Record<string, string>;
   dev: {
