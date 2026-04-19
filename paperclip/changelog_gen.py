@@ -222,10 +222,46 @@ def _get_cost_section() -> str:
         return "- Cost tracking not yet active"
 
 
+def _parse_commits_from_existing_md(week: int, year: int) -> dict | None:
+    """Parse commits out of an already-committed CHANGELOG_WEEK_*.md file.
+
+    Used as a fallback when `.git` isn't available in the runtime environment
+    (Railway containers don't ship the git directory). The committed markdown
+    preserves historical truth even after regeneration.
+    """
+    import re
+    filepath = os.path.join(REPO_ROOT, f"CHANGELOG_WEEK_{week}_{year}.md")
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath, "r") as f:
+            md = f.read()
+        bugs_match = re.search(r"### Bugs Fixed\n((?:- [^\n]+\n?)+)", md)
+        feats_match = re.search(r"### Features Added\n((?:- [^\n]+\n?)+)", md)
+        bugs = [ln[2:].strip() for ln in bugs_match.group(1).strip().split("\n") if ln.startswith("- ")] if bugs_match else []
+        features = [ln[2:].strip() for ln in feats_match.group(1).strip().split("\n") if ln.startswith("- ")] if feats_match else []
+        bugs = [b for b in bugs if b.lower() != "none this week"]
+        features = [f for f in features if f.lower() != "none this week"]
+        all_commits = list(dict.fromkeys(bugs + features))
+        if not all_commits:
+            return None
+        return {
+            "total_commits": len(all_commits),
+            "bugs_fixed": bugs,
+            "features_added": features,
+            "all_commits": all_commits,
+        }
+    except Exception as e:
+        logger.debug(f"[Changelog] MD fallback parse failed: {e}")
+        return None
+
+
 def _get_git_activity(days: int = 7, week: int | None = None, year: int | None = None) -> dict:
     """Get git commit activity.
 
-    If week/year provided, bounds to that ISO week (Mon–Sun). Otherwise uses last N days.
+    Primary: `git log --since --until --oneline --no-merges` bounded to ISO week.
+    Fallback: when `.git` is absent (Railway), parse commits from an already-
+    committed CHANGELOG markdown file for the same week.
     """
     try:
         if week and year:
@@ -235,19 +271,25 @@ def _get_git_activity(days: int = 7, week: int | None = None, year: int | None =
             args = ["git", "log", f"--since={days} days ago", "--oneline", "--no-merges"]
         result = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT)
         commits = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
-
-        bugs_fixed = [c for c in commits if any(kw in c.lower() for kw in ["fix", "bug", "patch", "hotfix"])]
-        features = [c for c in commits if any(kw in c.lower() for kw in ["add", "new", "feat", "build", "create"])]
-
-        return {
-            "total_commits": len(commits),
-            "bugs_fixed": bugs_fixed,
-            "features_added": features,
-            "all_commits": commits,
-        }
     except Exception as e:
         logger.error(f"Git activity failed: {e}")
-        return {"total_commits": 0, "bugs_fixed": [], "features_added": [], "all_commits": []}
+        commits = []
+
+    if not commits and week and year:
+        fallback = _parse_commits_from_existing_md(week, year)
+        if fallback:
+            logger.info(f"[Changelog] Using MD fallback for git activity (week {week}/{year})")
+            return fallback
+
+    bugs_fixed = [c for c in commits if any(kw in c.lower() for kw in ["fix", "bug", "patch", "hotfix"])]
+    features = [c for c in commits if any(kw in c.lower() for kw in ["add", "new", "feat", "build", "create"])]
+
+    return {
+        "total_commits": len(commits),
+        "bugs_fixed": bugs_fixed,
+        "features_added": features,
+        "all_commits": commits,
+    }
 
 
 def generate_changelog(week: int | None = None, year: int | None = None) -> str:

@@ -234,6 +234,22 @@ def feed(week: Optional[int] = None, year: Optional[int] = None) -> dict:
     return {"weeks": weeks, "selected": parsed}
 
 
+def purge_db() -> dict:
+    """Delete all 'changelog' rows from agent_logs. Used to discard polluted
+    regeneration output and rebuild from filesystem + fresh git/LLM calls."""
+    conn = _db_conn()
+    if conn is None:
+        return {"deleted": 0, "note": "DB unavailable"}
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM agent_logs WHERE agent_name = 'changelog'")
+                deleted = cur.rowcount
+        return {"deleted": deleted}
+    finally:
+        conn.close()
+
+
 def backfill_fs_to_db() -> dict:
     """Copy any filesystem changelogs missing from Postgres into Postgres. Idempotent."""
     fs = _load_from_fs()

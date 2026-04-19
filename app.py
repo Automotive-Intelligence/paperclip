@@ -4386,6 +4386,13 @@ async def admin_backfill_changelogs_to_db():
     return backfill_fs_to_db()
 
 
+@app.post("/admin/purge-changelogs-db")
+async def admin_purge_changelogs_db():
+    """Delete all changelog rows from Postgres. Use before regenerate-all to get a clean rebuild."""
+    from paperclip.changelog_view import purge_db
+    return purge_db()
+
+
 @app.post("/admin/regenerate-all-changelogs")
 async def admin_regenerate_all_changelogs(start_week: int = 10, end_week: int = 16, year: int = 2026):
     """Regenerate every weekly changelog in [start_week, end_week] — used to pick up
