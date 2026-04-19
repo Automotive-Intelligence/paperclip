@@ -29,7 +29,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header, Request
-from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
@@ -4359,6 +4359,13 @@ async def publish_content_to_ghost_endpoint(
         "failed": failed,
         "results": results,
     }
+
+
+@app.get("/api/changelogs")
+async def api_changelogs(week: Optional[int] = None, year: Optional[int] = None):
+    """JSON feed for the dashboard changelog section. Returns week list + selected week data."""
+    from paperclip.changelog_view import feed
+    return JSONResponse(content=feed(week, year))
 
 
 @app.get("/pipeline")

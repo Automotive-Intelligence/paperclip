@@ -149,6 +149,39 @@ export type AgentLogs = {
   runs: AgentLogEntry[];
 };
 
+export type ChangelogCommit = { sha: string; msg: string };
+export type ChangelogRiver = { name: string; items: string[] };
+export type ChangelogCostItem = { kind: 'heading' | 'item'; text: string };
+
+export type ChangelogWeek = {
+  week: number;
+  year: number;
+  date_range: string;
+};
+
+export type ChangelogSelected = {
+  week: number;
+  year: number;
+  generated: string;
+  date_range?: string;
+  rivers: ChangelogRiver[];
+  totals: Record<string, string>;
+  dev: {
+    commits: number;
+    bugs_count: number;
+    features_count: number;
+    bugs: ChangelogCommit[];
+    features: ChangelogCommit[];
+  };
+  cost: ChangelogCostItem[];
+  next_week: string[];
+};
+
+export type ChangelogFeed = {
+  weeks: ChangelogWeek[];
+  selected: ChangelogSelected | null;
+};
+
 export type ClearAlertsResponse = {
   status: string;
   alerts_remaining: number;
@@ -183,4 +216,8 @@ export const api = {
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),
   agentLogs: (agentId: string) => fetchJson<AgentLogs>(`/logs/${agentId}/history?limit=20`),
   clearAlerts: () => postJson<ClearAlertsResponse>('/api/pitwall/clear-alerts'),
+  changelog: (week?: number, year?: number) => {
+    const qs = week && year ? `?week=${week}&year=${year}` : '';
+    return fetchJson<ChangelogFeed>(`/api/changelogs${qs}`);
+  },
 };

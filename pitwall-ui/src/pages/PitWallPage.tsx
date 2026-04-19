@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-table';
 import { api, AxiomPanel, CostPanel, OpsAgentHealth, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
 import StatusDot from '../components/StatusDot';
+import ChangelogSection from '../components/ChangelogSection';
 
 const NIVO_THEME = {
   background: 'transparent',
@@ -253,6 +254,10 @@ export default function PitWallPage() {
             ))}
           </div>
         </div>
+      </section>
+
+      <section className="mb-6">
+        <ChangelogSection />
       </section>
 
       <section className="mb-6">
