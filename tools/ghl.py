@@ -551,15 +551,28 @@ def create_opportunity(
     name: str,
     pipeline_id: str,
     stage_id: str,
-    monetary_value: float = 0,
+    monetary_value: float = 482,
     source_agent: str = "tyler",
 ) -> dict:
     """
     Create a pipeline opportunity in GHL linked to a contact.
-    This tracks revenue in the pipeline.
+    Default monetary_value is $482 — AI Phone Guy standard MRR. Never pass 0:
+    opps at $0 pollute the revenue dashboard.
     """
     location_id = os.getenv("GHL_LOCATION_ID", "")
 
+    # POST https://services.leadconnectorhq.com/opportunities/
+    # Body sent to GHL (v2 API, Version: 2021-07-28):
+    # {
+    #   "pipelineId": "<GHL_PIPELINE_ID>",
+    #   "locationId": "<GHL_LOCATION_ID>",      # ZoxVB4ibMZZ2lZ5QpXep
+    #   "contactId": "<contact_id>",
+    #   "name": "{Business Name} - {Industry}",
+    #   "pipelineStageId": "<GHL_STAGE_NEW_PROSPECT>",
+    #   "status": "open",
+    #   "monetaryValue": 482,                   # AI Phone Guy MRR
+    #   "source": "tyler AI Prospecting"
+    # }
     payload = {
         "pipelineId": pipeline_id,
         "locationId": location_id,
@@ -646,7 +659,8 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
     pipeline_id = os.getenv("GHL_PIPELINE_ID", "")
     stage_id = os.getenv("GHL_STAGE_NEW_PROSPECT", "")
 
-    # Monetary values by business
+    # Monetary values by business. Fallback is 482 (AI Phone Guy MRR) so
+    # an unexpected source_agent never lands a $0 opp in the pipeline.
     deal_values = {
         "tyler": 482,       # AI Phone Guy standard rate
         "marcus": 2500,     # Calling Digital retainer
@@ -758,12 +772,13 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
 
             if contact_id and pipeline_id and stage_id:
                 try:
+                    industry = (p.get("business_type") or "Service Business").strip()
                     create_opportunity(
                         contact_id=contact_id,
-                        name=f"{p.get('business_name', 'Unknown')} - {source_agent.title()} Outreach",
+                        name=f"{p.get('business_name', 'Unknown')} - {industry}",
                         pipeline_id=pipeline_id,
                         stage_id=stage_id,
-                        monetary_value=deal_values.get(source_agent, 0),
+                        monetary_value=deal_values.get(source_agent, 482),
                         source_agent=source_agent,
                     )
                 except Exception as opp_err:
