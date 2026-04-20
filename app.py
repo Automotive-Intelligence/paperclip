@@ -94,6 +94,10 @@ from tools.ghl import (
     ghl_site_publish_ready,
     publish_content_to_ghl_social,
     ghl_social_publish_ready,
+    search_contact,
+    update_contact_tags,
+    create_opportunity,
+    get_pipeline_opportunities,
 )
 from tools.ghost import publish_content_to_ghost, ghost_publish_ready
 from tools.zernio import (
@@ -5267,6 +5271,80 @@ async def ghl_webhook(payload: dict):
                         contact_id=contact_id, monetary_value=monetary_value)
 
     return {"status": "received"}
+
+
+@app.post("/webhooks/instantly")
+async def instantly_webhook(payload: dict, request: Request):
+    """
+    Instantly fires this on lead reply. Promotes the GHL contact to an
+    Opportunity at $482 in the Intent Shown stage so the pipeline only
+    contains intent-qualified leads (Phase 2b architecture).
+
+    Auth: shared secret in X-Instantly-Secret header (env INSTANTLY_WEBHOOK_SECRET).
+    Dedup: skips if the contact already has an opp in the pipeline.
+    """
+    secret = os.getenv("INSTANTLY_WEBHOOK_SECRET", "").strip()
+    sent = (request.headers.get("X-Instantly-Secret") or "").strip()
+    if secret and sent != secret:
+        logging.warning("[instantly_webhook] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+
+    event = (payload.get("event_type") or payload.get("event") or "").lower()
+    email = (payload.get("lead_email") or payload.get("email") or "").strip().lower()
+    if "reply" not in event or not email:
+        return {"status": "ignored", "event": event}
+
+    contact = search_contact(email=email)
+    if not contact:
+        logging.warning("[instantly_webhook] contact not found for %s", email)
+        return {"status": "contact_not_found", "email": email}
+
+    contact_id = contact.get("id", "")
+    existing_tags = [str(t) for t in (contact.get("tags") or [])]
+    if "intent-shown" not in [t.lower() for t in existing_tags]:
+        try:
+            update_contact_tags(contact_id, existing_tags + ["replied", "intent-shown"])
+        except Exception as e:
+            logging.warning("[instantly_webhook] tag update failed: %s", e)
+
+    pipeline_id = os.getenv("GHL_PIPELINE_ID", "").strip()
+    stage_id = os.getenv("GHL_STAGE_INTENT_SHOWN", "").strip()
+    if not (pipeline_id and stage_id):
+        logging.error("[instantly_webhook] GHL_PIPELINE_ID or GHL_STAGE_INTENT_SHOWN not set")
+        return {"status": "config_missing"}
+
+    existing_opps = get_pipeline_opportunities(pipeline_id)
+    if any((o.get("contactId") or "") == contact_id for o in existing_opps):
+        track_event("email_replied", "tyler", "aiphoneguy", contact_id=contact_id)
+        return {"status": "opp_already_exists", "contact_id": contact_id}
+
+    business = contact.get("companyName") or contact.get("contactName") or "Unknown"
+    # Business Type is stored in GHL custom field id MdSOd4zX0ShzxyrMv7rD
+    # (see reference_tyler_pipeline.md). Fall back to a generic label if missing.
+    custom = contact.get("customFields") or []
+    industry = next(
+        (str(c.get("value") or "").strip() for c in custom if c.get("id") == "MdSOd4zX0ShzxyrMv7rD"),
+        "",
+    ) or "Service Business"
+    try:
+        opp = create_opportunity(
+            contact_id=contact_id,
+            name=f"{business} - {industry}",
+            pipeline_id=pipeline_id,
+            stage_id=stage_id,
+            monetary_value=482,
+            source_agent="tyler",
+        )
+    except Exception as e:
+        logging.error("[instantly_webhook] create_opportunity failed: %s", e)
+        return {"status": "opp_create_failed", "error": str(e)}
+
+    track_event("email_replied", "tyler", "aiphoneguy", contact_id=contact_id)
+    return {
+        "status": "promoted",
+        "contact_id": contact_id,
+        "opp_id": (opp.get("opportunity") or opp).get("id", ""),
+    }
 
 
 # ── Dashboard API Endpoints ──────────────────────────────────────────────────
