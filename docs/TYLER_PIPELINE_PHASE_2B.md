@@ -1,138 +1,74 @@
 # Tyler Pipeline — Phase 2b Hand-Off Checklist
 
 **Date written:** 2026-04-19
+**Last updated:** 2026-04-19 (webhook deployed + smoke-tested)
 **Owner:** Michael
-**Status:** Ready to execute. Phases 1 + 2a + 3 already shipped. This doc finishes the architecture.
+**Status:** **95% done.** Code, env vars, and stage all live. Only remaining step: configure Instantly's reply webhook to POST to our endpoint.
 
 ## What Phase 2b does
 
-Wires the missing half of the contacts-only architecture: when a Tyler cold-email recipient **replies** in Instantly, an Opportunity is created in GHL at $482 in a new "Intent Shown" stage. Until this is done, no new Opportunities are created at all (Phase 2a removed cold-push opp creation).
+Closes the contacts-only architecture loop: when a Tyler cold-email recipient **replies** in Instantly, an Opportunity is created in GHL at $482 in the Intent Shown stage so the pipeline only contains intent-qualified leads. Until this final step is configured in Instantly, replies will not auto-promote.
 
-## Current state after Phases 1, 2a, 3
+## Current state (as of this update)
 
 | Layer | State |
 |---|---|
-| Tyler cold push | Creates Contact only (tagged `tyler-prospect` + `cold-email` + `{industry}`). No Opportunity. |
-| GHL Lead Pipeline | 19 backfilled opps at $482. New opps not being created. |
-| Instantly | Sending Tyler's cadence as before. Reply detection not wired into paperclip. |
-| GHL `pit-…` token | Has `opportunities.readonly` + `opportunities.write` scopes (added 2026-04-19). |
+| Tyler cold push | ✅ Contact only (tagged `tyler-prospect` + `cold-email` + `{industry}`). No Opportunity created. |
+| GHL Lead Pipeline | ✅ 19 backfilled opps at $482 in `Requested 📝`. New replied-opps will land in `Contacted ✉️ᯓ➤`. |
+| GHL `pit-…` token | ✅ Has `opportunities.readonly` + `opportunities.write` scopes. |
+| `/webhooks/instantly` route | ✅ Live at `https://paperclip-production-ba14.up.railway.app/webhooks/instantly` (commit `6b93f22`). |
+| `INSTANTLY_WEBHOOK_SECRET` | ✅ Set in Railway. Value is a 32-byte URL-safe random token (only Michael can read it via `railway variables --kv`). |
+| `GHL_STAGE_INTENT_SHOWN` | ✅ Set to `b734ba61-f185-48c6-8e8e-8bb4084c3a4d` (the existing empty `Contacted ✉️ᯓ➤` stage). |
+| Instantly webhook config | ❌ **Not wired yet — final manual step (5 min).** |
 
-## Step 1 — GHL UI: create the new pipeline stage
+## Stage choice
 
-1. GHL → **Opportunities** → **Pipelines** → open **Lead Pipeline**.
-2. Add a stage named `Intent Shown` and place it **first** (before `Requested 📝`).
-3. Save.
-4. Copy the new stage's id from the URL or stage settings.
-5. Set Railway env var: `GHL_STAGE_INTENT_SHOWN=<that id>` (env: production, service: paperclip).
+Used the existing **`Contacted ✉️ᯓ➤`** stage instead of creating a new one. Rationale: stage was empty, name semantically fits "we're in conversation now," and avoids GHL UI work. To re-route to a different stage later, change the `GHL_STAGE_INTENT_SHOWN` Railway env var only — no code change.
 
-(Optional cleanup: rename `Requested 📝` → `Old / Pre-2b` so it's clear it's legacy. Don't delete it — the 19 backfilled opps live there.)
+If you'd rather have a clearly-named "Intent Shown" stage, create it in GHL UI and update the env var. The webhook code doesn't care which stage id it points at.
 
-## Step 2 — Instantly: configure the reply webhook
+## Smoke-test results (2026-04-19)
 
-1. Instantly → Settings → **Webhooks** (or the campaign-level webhook config).
-2. Add a webhook:
-   - URL: `https://<paperclip-railway-domain>/webhooks/instantly`
-   - Events: `reply_received` (and optionally `email_opened` if we want open-3x as a softer intent signal — start with reply only)
-   - Auth: shared secret. Pick a strong random string. Set it as Railway env var `INSTANTLY_WEBHOOK_SECRET=<value>` and configure Instantly to send it as a header `X-Instantly-Secret`.
-3. Save.
+| Case | Expected | Actual |
+|---|---|---|
+| No `X-Instantly-Secret` header | 401 unauthorized | ✅ 401 |
+| Wrong secret | 401 unauthorized | ✅ 401 |
+| Correct secret + `email_opened` event | 200 ignored | ✅ 200 ignored |
+| Correct secret + reply for unknown email | 200 contact_not_found | ✅ 200 contact_not_found |
 
-## Step 3 — Code: add the webhook handler
+Auth and dispatch logic verified live. Happy-path (real reply → opp created) intentionally not smoke-tested to avoid creating a synthetic opp; it will activate naturally on the first real reply once Instantly is wired.
 
-Add to `app.py` next to the existing `/webhooks/ghl` handler around [app.py:5184](app.py#L5184):
+## The one remaining step — configure Instantly
 
-```python
-@app.post("/webhooks/instantly")
-async def instantly_webhook(payload: dict, request: Request):
-    """
-    Instantly fires this on lead reply. Promotes the GHL contact to an
-    Opportunity at that point so the pipeline only contains intent-qualified leads.
-    """
-    secret = os.getenv("INSTANTLY_WEBHOOK_SECRET", "").strip()
-    sent = request.headers.get("X-Instantly-Secret", "").strip()
-    if secret and sent != secret:
-        return {"status": "unauthorized"}
+1. Pull the secret value:
+   ```sh
+   railway variables --kv | grep ^INSTANTLY_WEBHOOK_SECRET=
+   ```
+2. Instantly → **Settings → Webhooks** (or the campaign-level webhook config for campaign `cc56b15a-e148-4f64-a9dd-fd06b4b4b479`).
+3. Add a webhook:
+   - **URL**: `https://paperclip-production-ba14.up.railway.app/webhooks/instantly`
+   - **Event**: `reply_received` (Instantly's exact event name may vary — see "Event-name tolerance" below)
+   - **Custom header**: `X-Instantly-Secret: <secret-from-step-1>`
+4. Save.
+5. Send a real reply to a Tyler email from a personal inbox to test end-to-end.
+6. Verify in GHL: contact gets `replied` + `intent-shown` tags AND a new $482 opp exists in `Contacted ✉️ᯓ➤` stage.
 
-    event = (payload.get("event_type") or payload.get("event") or "").lower()
-    email = (payload.get("lead_email") or payload.get("email") or "").strip().lower()
-    if event != "reply_received" or not email:
-        return {"status": "ignored", "event": event}
+## Event-name tolerance built into the handler
 
-    from tools.ghl import (
-        search_contact, update_contact_tags,
-        create_opportunity, get_pipeline_opportunities,
-    )
+The handler matches **any event whose name contains "reply"** (case-insensitive). It also accepts payload keys `event_type` or `event`, and email under `lead_email` or `email`. So Instantly's exact field naming doesn't need to match a single string — anything reply-shaped will trigger the promotion.
 
-    contact = search_contact(email=email)
-    if not contact:
-        logging.warning("[instantly_webhook] contact not found for %s", email)
-        return {"status": "contact_not_found"}
+## Backfill of already-replied contacts
 
-    contact_id = contact["id"]
-    existing_tags = [str(t) for t in (contact.get("tags") or [])]
-    if "intent-shown" not in [t.lower() for t in existing_tags]:
-        update_contact_tags(contact_id, existing_tags + ["replied", "intent-shown"])
+If there are GHL contacts already tagged `replied` from prior workflow activity but no Opportunity, write a one-off script following the [tools/ghl_backfill.py](../tools/ghl_backfill.py) pattern (dry-run default, `--execute` writes). Estimated count: low double-digits at most. Optional polish — not blocking.
 
-    pipeline_id = os.getenv("GHL_PIPELINE_ID", "").strip()
-    stage_id    = os.getenv("GHL_STAGE_INTENT_SHOWN", "").strip()
-    if not (pipeline_id and stage_id):
-        logging.error("[instantly_webhook] GHL_PIPELINE_ID or GHL_STAGE_INTENT_SHOWN not set")
-        return {"status": "config_missing"}
+## Rollback
 
-    # Dedup: don't create a second opp if the contact already has one in this pipeline.
-    existing = get_pipeline_opportunities(pipeline_id)
-    if any((o.get("contactId") or "") == contact_id for o in existing):
-        return {"status": "opp_already_exists"}
-
-    industry = (contact.get("companyName") or "Service Business")
-    create_opportunity(
-        contact_id=contact_id,
-        name=f"{contact.get('companyName', 'Unknown')} - {industry}",
-        pipeline_id=pipeline_id,
-        stage_id=stage_id,
-        monetary_value=482,
-        source_agent="tyler",
-    )
-    track_event("email_replied", "tyler", "aiphoneguy", contact_id=contact_id)
-    return {"status": "promoted"}
-```
-
-`Request` import: `from fastapi import Request` (already imported in app.py if FastAPI's there; otherwise add).
-
-## Step 4 — Test
-
-1. Send a real reply from a personal inbox to a Tyler cold email already in Instantly.
-2. Watch Railway logs: `railway logs --service paperclip --follow | grep instantly_webhook`
-3. In GHL: confirm the contact got `replied` + `intent-shown` tags AND a new Opportunity exists in `Intent Shown` stage at $482.
-4. Send a SECOND reply from the same address to verify dedup → log should show `opp_already_exists`.
-
-## Step 5 — Backfill replies that already happened
-
-If there are contacts already tagged `replied` in GHL (from prior workflow activity) but no Opportunity, run a one-off promote script. Skeleton (don't run blind, audit first):
-
-```python
-# tools/promote_replied_contacts.py
-# Find contacts tagged 'replied' but with no opp in Lead Pipeline,
-# create the opp at $482. Same pattern as ghl_backfill.py — dry-run default.
-```
-
-Estimated impact: low double digits at most. Optional polish, not blocker.
-
-## Risk & rollback
-
-- **Risk:** Instantly sends `event_type` strings that don't match `reply_received` exactly. → log every payload first time, adjust the matcher.
-- **Rollback:** Delete the `/webhooks/instantly` route and unset the Instantly webhook in their UI. Phase 2a state (no new opps from cold push) remains.
+- **Webhook misbehaving:** unset `INSTANTLY_WEBHOOK_SECRET` in Railway → all Instantly POSTs will be silently ignored (since handler requires the header to match a non-empty secret). Or remove the webhook from Instantly's UI.
+- **Wrong stage:** change `GHL_STAGE_INTENT_SHOWN` Railway env var to a different stage id; takes effect on next webhook fire (no redeploy).
+- **Want to re-enable cold-push opp creation:** revert commit `0805cb0` (Phase 2a). All other phases remain compatible.
 
 ## Out of scope for Phase 2b
 
-- GHL stage automation (e.g. auto-move `Intent Shown` → `Demo Booked` on calendar event). Separate effort.
-- Won/lost tracking via GHL webhook — already wired at [app.py:5184](app.py#L5184), no changes needed.
-- Instantly `email_opened` as intent signal. Start with reply-only; add opens later if reply-only feels too narrow.
-
-## Estimated time
-
-- GHL UI changes (Step 1): 5 min
-- Instantly webhook config (Step 2): 5 min
-- Code + commit + deploy (Step 3): 30 min
-- End-to-end test (Step 4): 15 min
-
-**Total: ~1 hour. Best done at a desk with both GHL and Instantly tabs open.**
+- GHL stage automation (e.g. auto-move `Contacted ✉️ᯓ➤` → `CLOSED 💰` on calendar event). Separate effort.
+- Won/lost tracking via GHL webhook — already wired at `/webhooks/ghl`, no changes needed.
+- Instantly `email_opened` as soft intent signal. Start with reply only; add opens later if reply-only feels too narrow.
