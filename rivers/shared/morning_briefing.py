@@ -27,7 +27,7 @@ BRIEFING_RECIPIENT = os.getenv("BRIEFING_RECIPIENT", "michael@automotiveintellig
 BRIEFING_SMS_TO = os.getenv("MICHAEL_PHONE", "")
 BRIEFING_FROM = os.getenv(
     "BRIEFING_FROM",
-    os.getenv("MAIL_FROM_AUTOINTELLIGENCE", "Paperclip <onboarding@resend.dev>"),
+    "Paperclip Briefing <briefing@mail.automotiveintelligence.io>",
 )
 
 INSTANTLY_BASE = "https://api.instantly.ai/api/v2"
