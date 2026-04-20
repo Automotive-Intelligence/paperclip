@@ -3324,6 +3324,18 @@ scheduler.add_job(_run_joshua, IntervalTrigger(hours=2, timezone=CST),
     id="joshua_pitwall_2h", name="Joshua Pit Wall (Instantly) — Every 2h",
     replace_existing=True, misfire_grace_time=3600)
 
+# Morning Briefing — daily 8am CDT email + SMS to Michael
+def _run_morning_briefing():
+    try:
+        from rivers.shared.morning_briefing import morning_briefing_run
+        morning_briefing_run()
+    except Exception as e:
+        logging.error(f"[Paperclip] Morning briefing failed: {e}")
+
+scheduler.add_job(_run_morning_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
+    id="morning_briefing_daily_8am", name="Morning Briefing (Email + SMS) — Daily 8am CST",
+    replace_existing=True, misfire_grace_time=3600)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
