@@ -61,13 +61,13 @@ export const businesses: Business[] = [
   },
   {
     key: "apg",
-    name: "AI Phone Guy",
-    domain: "aiphoneguy.ai",
-    hostname: "book.aiphoneguy.ai",
+    name: "The AI Phone Guy",
+    domain: "theaiphoneguy.ai",
+    hostname: "book.theaiphoneguy.ai",
     accentClass: "text-cyan-600",
     accentBgClass: "bg-cyan-50",
     numberBgClass: "bg-cyan-600",
-    email: "michael@aiphoneguy.ai",
+    email: "info@theaiphoneguy.ai",
     steps: [
       {
         title: "We pull your missed-call data",

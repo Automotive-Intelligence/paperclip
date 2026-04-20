@@ -24,11 +24,13 @@ TTL: leave at default (or set to 300 for faster propagation).
 | CNAME | `book` | `75v43lp9.up.railway.app` |
 | TXT | `_railway-verify.book` | `railway-verify=railway-verify=a5e588e535899ed63178107904d05be01cdf4b221afd4871af55b0975d390a7b` |
 
-#### aiphoneguy.ai
+#### theaiphoneguy.ai
 | Type | Name | Value |
 |---|---|---|
-| CNAME | `book` | `v1bmva4x.up.railway.app` |
-| TXT | `_railway-verify.book` | `railway-verify=railway-verify=0ca3a3b90c94c2295c6c34570eb7233c6a6fcc9b25003c9cbf92a9038c8efbb7` |
+| CNAME | `book` | `6faszd83.up.railway.app` |
+| TXT | `_railway-verify.book` | `railway-verify=railway-verify=01f7396e1e3a4d211ed97ff7cfb59200af4929c54604c0258b79222b65f3ea4e` |
+
+> **Note:** There's an unused `book.aiphoneguy.ai` (without "the") domain still attached to the Railway service from the initial deploy before the TAPG correction. It's harmless since no DNS points to it, but you can delete it in the Railway dashboard: Project → thank-you-pages → Settings → Networking.
 
 DNS typically propagates in 5–60 minutes. Railway auto-provisions SSL once the records verify.
 
@@ -47,14 +49,14 @@ Free plan doesn't support auto-redirect after booking. Two options:
 
 #### GoHighLevel (AI Phone Guy) — free redirect
 - Calendar settings → Confirmation → "Redirect to external URL"
-- URL: `https://book.aiphoneguy.ai`
+- URL: `https://book.theaiphoneguy.ai`
 
 ### 3. Verify each page is live (after DNS propagates)
 
 Open each URL in an incognito window:
 - https://book.automotiveintelligence.io
 - https://book.calling.digital
-- https://book.aiphoneguy.ai
+- https://book.theaiphoneguy.ai
 
 Each should load the correct branded "You're booked" page.
 
