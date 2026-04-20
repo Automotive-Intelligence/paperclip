@@ -14,7 +14,7 @@ HUBSPOT_BASE_URL = "https://api.hubapi.com"
 
 
 def _hs_key() -> str:
-    return os.environ.get("HUBSPOT_API_KEY", "")
+    return (os.environ.get("HUBSPOT_API_KEY") or os.environ.get("HUBSPOT_ACCESS_TOKEN") or "").strip()
 
 
 def _hs_headers() -> dict:
