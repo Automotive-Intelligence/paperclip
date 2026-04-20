@@ -649,23 +649,20 @@ def remove_from_workflow(contact_id: str, workflow_id: str) -> dict:
 def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business_key: str = "aiphoneguy") -> list:
     """
     Master function — takes any sales agent's parsed prospect list and pushes all to GHL.
-    Creates contacts, sends first-touch cold emails, and creates pipeline opportunities.
+    Creates contacts and routes them to the email cadence (Instantly for tyler,
+    GHL workflow for other agents).
+
+    Cold prospects are Contacts only — no Opportunity is created here. An
+    Opportunity is created downstream when the contact replies / books a
+    demo, so the pipeline only contains intent-qualified leads. See the
+    /webhooks/instantly handler in app.py (Phase 2b).
 
     Each prospect dict should have:
         business_name, city, business_type, reason, email_hook
-        Optional: email, phone, subject, body, follow_up_subject, follow_up_body, monetary_value
+        Optional: email, phone, contact_name, website, trigger_event,
+                  verified_fact, competitive_insight
     """
     results = []
-    pipeline_id = os.getenv("GHL_PIPELINE_ID", "")
-    stage_id = os.getenv("GHL_STAGE_NEW_PROSPECT", "")
-
-    # Monetary values by business. Fallback is 482 (AI Phone Guy MRR) so
-    # an unexpected source_agent never lands a $0 opp in the pipeline.
-    deal_values = {
-        "tyler": 482,       # AI Phone Guy standard rate
-        "marcus": 2500,     # Calling Digital retainer
-        "ryan_data": 2500,  # Automotive Intelligence audit
-    }
 
     for p in prospects:
         try:
@@ -770,19 +767,10 @@ def push_prospects_to_ghl(prospects: list, source_agent: str = "tyler", business
                     f"email handled by GHL Workflow (contact_id={contact_id})"
                 )
 
-            if contact_id and pipeline_id and stage_id:
-                try:
-                    industry = (p.get("business_type") or "Service Business").strip()
-                    create_opportunity(
-                        contact_id=contact_id,
-                        name=f"{p.get('business_name', 'Unknown')} - {industry}",
-                        pipeline_id=pipeline_id,
-                        stage_id=stage_id,
-                        monetary_value=deal_values.get(source_agent, 482),
-                        source_agent=source_agent,
-                    )
-                except Exception as opp_err:
-                    logging.warning(f"[GHL] Opportunity creation failed: {opp_err}")
+            # No Opportunity is created here on cold push. Contacts live in GHL
+            # tagged with {agent}-prospect + cold-email + {industry}. The
+            # /webhooks/instantly handler promotes the contact to an Opportunity
+            # on first reply (Phase 2b architecture).
 
             # Tyler's email delivery goes through Instantly, not GHL workflows.
             # Only enroll in GHL workflow for agents that still use GHL for email.
