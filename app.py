@@ -3422,6 +3422,9 @@ RUN_NOW_SCOPES = {
     "ghost": [
         ("ghost_drain_callingdigital", run_ghost_drain_callingdigital),
     ],
+    "briefing": [
+        ("morning_briefing", lambda: __import__("rivers.shared.morning_briefing", fromlist=["morning_briefing_run"]).morning_briefing_run()),
+    ],
     "retention": [
         ("jennifer_retention", run_jennifer_retention),
         ("carlos_retention", run_carlos_retention),
