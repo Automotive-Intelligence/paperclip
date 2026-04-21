@@ -1,24 +1,121 @@
 """
-services/cockpit_bridge.py
+=============================================================================
+AVO COCKPIT BRIDGE — INTELLIGENT ROUTING LAYER
+=============================================================================
+Built: April 2026
 
-Bridges the AVO Cockpit's avo-telemetry repo (GitHub-backed markdown flags)
-into Paperclip's agent_handoffs PostgreSQL table.
+WHY THIS EXISTS
+---------------
+Michael Rodriguez runs four autonomous businesses (Rivers) plus the
+CustomerAdvocate build, with 24 CrewAI agents handling execution across
+AI Phone Guy, Calling Digital, Automotive Intelligence, Agent Empire, and
+CustomerAdvocate. The goal is a fully hands-free autonomous revenue system
+where Michael can direct agent work from anywhere — including from the
+dealership floor — without opening a laptop.
 
-Flow:
-  1. Poll avo-telemetry every 60s via GitHub API.
-  2. Parse the "Flags for other chats" section of each of the 8 telemetry files.
-  3. For each flag not yet seen, map the target chat to a Paperclip agent/river
-     and call core.handoff.create_handoff().
-  4. Record the mapping in cockpit_bridge_seen_flags so we do not double-create.
-  5. On a separate poll, find bridge-created handoffs that have been marked
-     complete, and commit a flag removal to avo-telemetry via GitHub API.
+The AVO Cockpit is the human interface. Michael speaks a flag into his
+phone. The flag gets written to avo-telemetry (a GitHub repo with 8
+markdown files, one per chat context). This bridge reads those flags and
+routes them to the right agent in Paperclip.
 
-Design constraints:
-  - No new infra. Uses existing Paperclip Postgres and APScheduler.
-  - Polling (not webhook) for v1. Webhook is a v2 optimization.
-  - One-way content flow: cockpit -> Paperclip for create, Paperclip ->
-    cockpit for close. No in-flight edits sync back.
-  - Build & Tech flags are skipped (Claude Code lane, not agent work).
+THIS IS AN OBEDIENCE SYSTEM
+---------------------------
+Flags do not route to categories or teams. They route to specific named
+agents who are accountable for the outcome. The routing intelligence reads
+the full flag content — client name, work type, urgency, business context —
+and makes an accountable routing decision using GPT-4o. Every routing
+decision is logged with its reasoning and stored on the handoff payload so
+it can be audited.
+
+This is not a task queue. It is an accountability layer. When a flag lands
+with an agent, that agent owns the outcome. If the work is not completed
+by the stated deadline, that surfaces as an execution gap.
+
+HOW IT WORKS
+------------
+1. Bridge polls avo-telemetry every 60 seconds via GitHub API.
+2. New flags are parsed from the "Flags for other chats" section of each
+   of the 8 telemetry files.
+3. Each new flag is passed to route_flag_intelligently() which calls
+   GPT-4o with the full flag content plus the live agent roster and
+   returns a RoutingDecision: target_agent, river, priority, confidence,
+   reasoning.
+4. A handoff row is created in Paperclip's agent_handoffs table targeting
+   the specific named agent. The routing reasoning is embedded in the
+   handoff payload under _routing so every decision is auditable.
+5. The agent picks up the handoff on their next scheduled run and executes.
+6. When the agent calls complete_handoff(), the bridge removes the flag
+   from avo-telemetry automatically.
+
+AGENT ACCOUNTABILITY ROSTER (24 CrewAI agents + axiom)
+------------------------------------------------------
+AI Phone Guy:            Alex (CEO), Zoe (Marketing), Tyler (Sales),
+                         Jennifer (CS), Randy (RevOps), Joshua (Pit Wall)
+Calling Digital:         Dek (CEO), Sofia (Content), Marcus (Sales),
+                         Carlos (CS), Nova (Implementation), Brenda (RevOps)
+Automotive Intelligence: Michael Meta (CEO), Chase (Marketing),
+                         Ryan Data (Sales), Phoenix (Implementation),
+                         Atlas (Research), Darrell (RevOps)
+Agent Empire:            Wade (Biz Dev / de facto CEO), Debra (Producer),
+                         Tammy (Community), Sterling (Web)
+CustomerAdvocate:        Clint (Tech Builder), Sherry (Web Design)
+Master:                  Axiom (CEO Orchestration, cross-river strategy)
+
+Excluded from routing: michael_meta_ii (PostgreSQL inventory module) and
+vera (buyer-agent negotiation class). Both are infrastructure, not
+autonomous workers. They have no scheduler entry and no pending-handoff
+consumer.
+
+ROUTING INTELLIGENCE
+--------------------
+Routing is NOT a static lookup table. A GPT-4o call reads the full flag
+content and reasons about which agent is accountable based on:
+  - Business line (identified from client names, product context, keywords)
+  - Work type (revenue, delivery, content, community, technical, strategy)
+  - Urgency (drives priority: high / medium / low)
+  - Ambiguity (surfaced via confidence score, reasoning text)
+
+Pit Wall flags route to the CEO of the most relevant business line:
+  AI Phone Guy -> Alex, Calling Digital -> Dek,
+  Automotive Intelligence -> Michael Meta, Agent Empire -> Wade.
+When Pit Wall flags are cross-river or strategic-meta, they route to Axiom.
+
+Build & Tech flags are skipped (SKIPPED_TARGETS) — they stay in the Claude
+Code lane. Free-text "Other..." targets that can't be routed fall back to
+Axiom with a low-confidence marker so he can triage on his nightly run.
+
+KNOWN ISSUES AND HISTORY
+------------------------
+v1 (April 21 2026): Shipped with a static ROUTING_MAP. Bug discovered
+  where create_handoff() returned True (boolean) not an integer ID,
+  causing duplicate handoffs every 60 seconds. Token blanked to stop the
+  bleeding. Hotfix (PR #6) added the real RETURNING id and a
+  POST /bridge/cleanup endpoint.
+v2 (April 21 2026): Replaced the static ROUTING_MAP with
+  route_flag_intelligently() backed by GPT-4o. Reasoning is persisted on
+  each handoff payload under _routing.
+
+ENVIRONMENT VARIABLES REQUIRED
+------------------------------
+GITHUB_TOKEN_TELEMETRY  — fine-grained PAT, Contents Read+Write on
+                          salesdroid/avo-telemetry
+TELEMETRY_REPO          — salesdroid/avo-telemetry
+OPENAI_API_KEY          — used for routing intelligence (GPT-4o via
+                          litellm). On routing-call failure the bridge
+                          falls back to Axiom with reasoning="fallback:
+                          <error>" so the flag still reaches a human-ish
+                          escalation path.
+
+OBSERVABILITY
+-------------
+GET  /bridge/status   — enabled state, routing mode, agent roster snapshot,
+                        counts, recent 20 flags with handoff ids
+POST /bridge/tick     — force one full cycle (new flags + close completed)
+POST /bridge/cleanup  — one-shot recovery: purge pending bridge handoffs +
+                        wipe seen-flags table. Use after a buggy tick.
+Railway logs: grep for "[CockpitBridge]" and "[Routing]" to see every
+decision plus its reasoning.
+=============================================================================
 """
 
 import base64
@@ -51,29 +148,67 @@ TELEMETRY_FILES: List[Dict[str, str]] = [
 ]
 
 
-# Target chat name -> Paperclip receiver (to_agent, river).
-# Based on Paperclip's actual agent layout:
-#   CEO: axiom (orchestrator, routes cross-river strategy)
-#   COO: coo_agent (operational commander)
-#   CustomerAdvocate river: clint, sherry, darrell
-#   AgentEmpire: wade, tammy, debra, sterling
-#   CD/AIPG/AutoIntel: per-business sales/marketing/client-success specialists
+# Live accountability roster. Every entry is a real CrewAI agent currently
+# scheduled in Paperclip's app.py. This list is the ONLY set of valid
+# to_agent values the routing intelligence may return.
 #
-# First cut mapping. Content-aware sub-routing (e.g. "this sales flag is for
-# AI Phone Guy, route to tyler") is a v2 enhancement; for v1 the named
-# receiver becomes responsible for onward routing if needed.
-ROUTING_MAP: Dict[str, Dict[str, str]] = {
-    "Revenue & Sales": {"to_agent": "axiom", "river": "shared"},
-    "B2B Operations": {"to_agent": "clint", "river": "customer_advocate"},
-    "Agent Empire": {"to_agent": "wade", "river": "agent_empire"},
-    "Internal Marketing": {"to_agent": "wade", "river": "agent_empire"},
-    "Sales Marketing": {"to_agent": "axiom", "river": "shared"},
-    "Client Marketing": {"to_agent": "axiom", "river": "shared"},
-    "Pit Wall": {"to_agent": "axiom", "river": "shared"},
-    # "Build & Tech" intentionally omitted: handled in Claude Code, not Paperclip.
+# Excluded on purpose:
+#   - michael_meta_ii: PostgreSQL dealership inventory module, not a CrewAI
+#     worker (no Agent object, no scheduler entry).
+#   - vera: AI-to-AI buyer negotiation class (AATA protocol), infrastructure
+#     that Clint is building — not a pending-handoff consumer.
+#   - coo_agent: operational commander that runs the daily accountability
+#     check; receives nothing inbound from the cockpit, only audits.
+AGENT_ROSTER: List[Dict[str, Any]] = [
+    # AI Phone Guy
+    {"name": "alex",        "river": "aiphoneguy",       "role": "CEO of The AI Phone Guy",                             "is_ceo": True},
+    {"name": "zoe",         "river": "aiphoneguy",       "role": "Head of Marketing at The AI Phone Guy",               "is_ceo": False},
+    {"name": "tyler",       "river": "aiphoneguy",       "role": "Senior SDR and pipeline builder at The AI Phone Guy", "is_ceo": False},
+    {"name": "jennifer",    "river": "aiphoneguy",       "role": "Head of Client Success at The AI Phone Guy",          "is_ceo": False},
+    {"name": "randy",       "river": "aiphoneguy",       "role": "RevOps (GoHighLevel workflow architect) at The AI Phone Guy", "is_ceo": False},
+    {"name": "joshua",      "river": "aiphoneguy",       "role": "Pit Wall RevOps race engineer — reads Instantly campaign telemetry for Tyler", "is_ceo": False},
+    # Calling Digital
+    {"name": "dek",         "river": "callingdigital",   "role": "CEO of Calling Digital",                              "is_ceo": True},
+    {"name": "sofia",       "river": "callingdigital",   "role": "Head of Content and Creative at Calling Digital",     "is_ceo": False},
+    {"name": "marcus",      "river": "callingdigital",   "role": "Senior SDR and pipeline builder at Calling Digital",  "is_ceo": False},
+    {"name": "carlos",      "river": "callingdigital",   "role": "Head of Client Success at Calling Digital",           "is_ceo": False},
+    {"name": "nova",        "river": "callingdigital",   "role": "AI Implementation Director at Calling Digital",       "is_ceo": False},
+    {"name": "brenda",      "river": "callingdigital",   "role": "RevOps (Attio workflow architect) at Calling Digital","is_ceo": False},
+    # Automotive Intelligence
+    {"name": "michael_meta","river": "autointelligence", "role": "CEO of Automotive Intelligence",                      "is_ceo": True},
+    {"name": "chase",       "river": "autointelligence", "role": "Head of Marketing at Automotive Intelligence",        "is_ceo": False},
+    {"name": "ryan_data",   "river": "autointelligence", "role": "Senior SDR and pipeline builder at Automotive Intelligence","is_ceo": False},
+    {"name": "phoenix",     "river": "autointelligence", "role": "Head of Implementation at Automotive Intelligence",   "is_ceo": False},
+    {"name": "atlas",       "river": "autointelligence", "role": "Research Analyst (dealer briefs) at Automotive Intelligence", "is_ceo": False},
+    {"name": "darrell",     "river": "autointelligence", "role": "RevOps (HubSpot workflow architect) at Automotive Intelligence", "is_ceo": False},
+    # Agent Empire
+    {"name": "wade",        "river": "agent_empire",     "role": "Biz Dev (sponsor outreach) and de facto lead at Agent Empire", "is_ceo": True},
+    {"name": "debra",       "river": "agent_empire",     "role": "Producer at Agent Empire (episodes, calendars, outlines)",    "is_ceo": False},
+    {"name": "tammy",       "river": "agent_empire",     "role": "Community agent at Agent Empire (Skool engagement)",  "is_ceo": False},
+    {"name": "sterling",    "river": "agent_empire",     "role": "Web agent at Agent Empire (buildagentempire.com builder/maintainer)", "is_ceo": False},
+    # CustomerAdvocate
+    {"name": "clint",       "river": "customer_advocate","role": "Technical Builder at CustomerAdvocate (VERA scoring + AATA protocol)", "is_ceo": False},
+    {"name": "sherry",      "river": "customer_advocate","role": "Web Design agent at CustomerAdvocate",                "is_ceo": False},
+    # Master
+    {"name": "axiom",       "river": "shared",           "role": "Master CEO orchestration; cross-river strategy and fallback target", "is_ceo": True},
+]
+
+# Per-river CEO, used when Pit Wall flags reference a specific business.
+RIVER_CEO: Dict[str, str] = {
+    "aiphoneguy": "alex",
+    "callingdigital": "dek",
+    "autointelligence": "michael_meta",
+    "agent_empire": "wade",
+    "customer_advocate": "axiom",  # no river CEO; master CEO handles it
+    "shared": "axiom",
 }
 
+VALID_AGENTS = {a["name"] for a in AGENT_ROSTER}
+VALID_RIVERS = {a["river"] for a in AGENT_ROSTER}
+
 SKIPPED_TARGETS = {"Build & Tech"}
+
+ROUTING_MODEL = os.environ.get("BRIDGE_ROUTING_MODEL", "gpt-4o")
 
 GITHUB_API_BASE = "https://api.github.com"
 BRIDGE_FROM_AGENT = "cockpit_bridge"
@@ -350,11 +485,167 @@ def mark_flag_closed(flag_hash: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Intelligent routing (GPT-4o)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RoutingDecision:
+    target_agent: str
+    river: str
+    priority: str  # "high" | "medium" | "low"
+    confidence: float  # 0.0 - 1.0
+    reasoning: str
+    source: str  # "intelligent" | "fallback"
+
+
+def _routing_system_prompt() -> str:
+    roster_lines: List[str] = []
+    for a in AGENT_ROSTER:
+        ceo_tag = " [CEO]" if a["is_ceo"] else ""
+        roster_lines.append(f"- {a['name']} (river: {a['river']}){ceo_tag} — {a['role']}")
+    roster_block = "\n".join(roster_lines)
+
+    river_ceo_block = "\n".join(
+        f"- {river}: {ceo}" for river, ceo in RIVER_CEO.items()
+    )
+
+    return f"""You are the routing intelligence for AVO Cockpit. You receive a handoff flag written by Michael (operator of AI Phone Guy, Calling Digital, Automotive Intelligence, Agent Empire, and the CustomerAdvocate build) and you assign it to the ONE accountable agent in Paperclip who should own the outcome.
+
+This is an obedience system, not a task queue. Flags route to specific named agents. When a flag lands with an agent, that agent owns the outcome; deadline misses surface as execution gaps. Be willing to commit to a name.
+
+Live agent roster (the ONLY valid values for target_agent):
+{roster_block}
+
+Per-river CEOs (used when the flag is Pit Wall / strategic / cross-river, or when ambiguity forces escalation):
+{river_ceo_block}
+
+How to reason:
+1. Identify the business line. Look for client names, product names, keywords. Map:
+   - "AI Phone Guy", "AIPG", "theaiphoneguy.ai", outbound-call automation -> aiphoneguy
+   - "Calling Digital", "CD", "CD client", monthly GA reports for small biz, Worden Welding, Garrett (Worden), Ryan Velazquez, Book'd -> callingdigital
+   - "Automotive Intelligence", "AI Intel", dealer/dealership work, HubSpot dealer briefs -> autointelligence
+   - "Agent Empire", "AE", "Skool", YouTube episodes, sponsor outreach, community -> agent_empire
+   - VERA, AATA, consumer-buyer agent, "The Architect" protocol -> customer_advocate
+2. Identify the work type: revenue/sales, client delivery/CS, marketing/content, RevOps/workflow, research/analysis, implementation/build, community, strategy.
+3. Pick the accountable agent from that (river, work type) pair.
+4. Pit Wall flags: if a specific business is referenced, route to that river's CEO. If cross-river / meta / strategic with no clear business, route to axiom.
+5. If the flag is genuinely ambiguous, pick your best guess and set confidence accordingly; axiom is the safe fallback target (set reasoning to explain the escalation).
+6. Priority: "high" if the by_when field contains urgency cues (immediately, ASAP, now, today, EOD, this morning) or a same-day deadline; "low" only if the flag is explicitly deprioritized; else "medium".
+
+Output JSON only, exactly this shape:
+{{
+  "target_agent": "<one of the names above>",
+  "river": "<the river for that agent>",
+  "priority": "high|medium|low",
+  "confidence": 0.0-1.0,
+  "reasoning": "<one or two short sentences explaining the decision>"
+}}"""
+
+
+def _render_flag_for_prompt(flag: ParsedFlag) -> str:
+    parts = [
+        f"Source file: {flag.source_file}",
+        f"Source chat (posted by): {flag.posted_by}",
+        f"Target chat on the flag: {flag.target}",
+        f"What: {flag.what}",
+    ]
+    if flag.why_now:
+        parts.append(f"Why now: {flag.why_now}")
+    if flag.by_when:
+        parts.append(f"By when: {flag.by_when}")
+    parts.append(f"Posted at: {flag.posted}")
+    return "\n".join(parts)
+
+
+def _fallback_decision(flag: ParsedFlag, reason: str) -> RoutingDecision:
+    priority = "high" if flag.by_when and any(
+        w in flag.by_when.lower() for w in ("immediately", "asap", "now", "today", "eod")
+    ) else "medium"
+    return RoutingDecision(
+        target_agent="axiom",
+        river="shared",
+        priority=priority,
+        confidence=0.2,
+        reasoning=f"fallback: {reason}",
+        source="fallback",
+    )
+
+
+def route_flag_intelligently(flag: ParsedFlag) -> RoutingDecision:
+    """GPT-4o-backed routing. Returns a RoutingDecision. Falls back to axiom
+    with a fallback reasoning string on any failure so the flag still reaches
+    an accountable owner."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return _fallback_decision(flag, "OPENAI_API_KEY not set")
+
+    try:
+        from litellm import completion  # type: ignore
+    except Exception as e:
+        return _fallback_decision(flag, f"litellm import failed: {e}")
+
+    try:
+        response = completion(
+            model=ROUTING_MODEL,
+            messages=[
+                {"role": "system", "content": _routing_system_prompt()},
+                {"role": "user", "content": _render_flag_for_prompt(flag)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            timeout=30,
+        )
+        content = (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.warning("[Routing] completion failed for target=%s posted=%s: %s",
+                       flag.target, flag.posted, e)
+        return _fallback_decision(flag, f"completion error: {e}")
+
+    try:
+        parsed = json.loads(content)
+    except Exception as e:
+        logger.warning("[Routing] invalid JSON for target=%s: %s | raw=%s",
+                       flag.target, e, content[:300])
+        return _fallback_decision(flag, f"invalid JSON: {e}")
+
+    target_agent = str(parsed.get("target_agent", "")).strip()
+    river = str(parsed.get("river", "")).strip()
+    priority = str(parsed.get("priority", "medium")).strip().lower()
+    if priority not in ("high", "medium", "low"):
+        priority = "medium"
+    try:
+        confidence = float(parsed.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+    reasoning = str(parsed.get("reasoning", "")).strip() or "no reasoning provided"
+
+    if target_agent not in VALID_AGENTS:
+        return _fallback_decision(
+            flag,
+            f"model picked unknown agent {target_agent!r}; original reasoning: {reasoning}",
+        )
+
+    # Trust the roster's river for the agent (keeps to_agent/river coherent
+    # even if the model disagrees on the river name).
+    canonical_river = next((a["river"] for a in AGENT_ROSTER if a["name"] == target_agent), river)
+
+    return RoutingDecision(
+        target_agent=target_agent,
+        river=canonical_river,
+        priority=priority,
+        confidence=confidence,
+        reasoning=reasoning,
+        source="intelligent",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Core poll cycles
 # ---------------------------------------------------------------------------
 
 def poll_new_flags() -> Dict[str, int]:
-    """Scan all 8 telemetry files; for each new flag, create a Paperclip handoff."""
+    """Scan all 8 telemetry files; for each new flag, route it intelligently
+    and create a Paperclip handoff."""
     cfg = get_bridge_config()
     if cfg is None or not cfg.enabled:
         logger.debug("[CockpitBridge] skipped poll — GITHUB_TOKEN_TELEMETRY/TELEMETRY_REPO not set")
@@ -383,15 +674,13 @@ def poll_new_flags() -> Dict[str, int]:
             mark_seen(flag, handoff_id=None)
             skipped += 1
             continue
-        mapping = ROUTING_MAP.get(flag.target)
-        if mapping is None:
-            logger.info(
-                "[CockpitBridge] No routing rule for target=%r; logging as seen but not dispatching",
-                flag.target,
-            )
-            mark_seen(flag, handoff_id=None)
-            skipped += 1
-            continue
+
+        decision = route_flag_intelligently(flag)
+        logger.info(
+            "[Routing] flag target=%s -> agent=%s river=%s priority=%s confidence=%.2f source=%s reasoning=%s",
+            flag.target, decision.target_agent, decision.river,
+            decision.priority, decision.confidence, decision.source, decision.reasoning,
+        )
 
         payload = {
             "source_file": flag.source_file,
@@ -401,33 +690,36 @@ def poll_new_flags() -> Dict[str, int]:
             "by_when": flag.by_when,
             "posted_by": flag.posted_by,
             "posted": flag.posted,
+            "_routing": {
+                "target_agent": decision.target_agent,
+                "river": decision.river,
+                "priority": decision.priority,
+                "confidence": decision.confidence,
+                "reasoning": decision.reasoning,
+                "source": decision.source,
+                "model": ROUTING_MODEL if decision.source == "intelligent" else None,
+            },
         }
-        priority = "high" if flag.by_when and any(
-            word in flag.by_when.lower() for word in ("immediately", "asap", "now", "today")
-        ) else "medium"
 
         handoff_id = create_handoff(
             from_agent=BRIDGE_FROM_AGENT,
-            to_agent=mapping["to_agent"],
-            river=mapping["river"],
+            to_agent=decision.target_agent,
+            river=decision.river,
             handoff_type=BRIDGE_HANDOFF_TYPE,
             payload=payload,
-            priority=priority,
+            priority=decision.priority,
         )
         if handoff_id is not None:
             mark_seen(flag, handoff_id=handoff_id)
             created += 1
             logger.info(
-                "[CockpitBridge] Created handoff #%s for flag target=%s file=%s",
-                handoff_id,
-                flag.target,
-                flag.source_file,
+                "[CockpitBridge] Created handoff #%s for flag target=%s file=%s -> %s",
+                handoff_id, flag.target, flag.source_file, decision.target_agent,
             )
         else:
             logger.warning(
                 "[CockpitBridge] create_handoff returned None for flag target=%s posted=%s",
-                flag.target,
-                flag.posted,
+                flag.target, flag.posted,
             )
 
     return {"seen": len(all_flags), "created": created, "skipped": skipped}
@@ -568,10 +860,18 @@ def bridge_status() -> Dict[str, Any]:
     except DatabaseError as e:
         logger.warning("[CockpitBridge] recent query failed: %s", e)
 
+    routing_mode = "intelligent" if os.environ.get("OPENAI_API_KEY") else "fallback-only"
+
     return {
         "enabled": enabled,
         "repo": f"{cfg.owner}/{cfg.repo}" if cfg else None,
-        "routing_map": ROUTING_MAP,
+        "routing_mode": routing_mode,
+        "routing_model": ROUTING_MODEL,
+        "agent_roster": [
+            {"name": a["name"], "river": a["river"], "is_ceo": a["is_ceo"], "role": a["role"]}
+            for a in AGENT_ROSTER
+        ],
+        "river_ceo": RIVER_CEO,
         "skipped_targets": sorted(SKIPPED_TARGETS),
         "counts": counts,
         "recent": recent,
