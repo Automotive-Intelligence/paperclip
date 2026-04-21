@@ -486,6 +486,43 @@ def bridge_tick() -> Dict[str, Any]:
     return {"new": new_stats, "close": close_stats}
 
 
+def cleanup_for_fresh_start() -> Dict[str, Any]:
+    """Idempotent recovery:
+    delete any pending cockpit_bridge handoffs (likely duplicates from an earlier buggy tick)
+    and wipe the seen-flags dedupe table so the next tick re-creates cleanly.
+
+    Safe to call multiple times. Only touches rows owned by the bridge.
+    """
+    deleted_handoffs = -1
+    deleted_seen = -1
+    try:
+        before = fetch_all(
+            "SELECT COUNT(*) FROM agent_handoffs WHERE from_agent = %s AND status = 'pending'",
+            (BRIDGE_FROM_AGENT,),
+        )
+        count_before = int(before[0][0]) if before else 0
+        execute_query(
+            "DELETE FROM agent_handoffs WHERE from_agent = %s AND status = 'pending'",
+            (BRIDGE_FROM_AGENT,),
+        )
+        deleted_handoffs = count_before
+    except DatabaseError as e:
+        logger.warning("[CockpitBridge] cleanup agent_handoffs failed: %s", e)
+
+    try:
+        before = fetch_all("SELECT COUNT(*) FROM cockpit_bridge_seen_flags", ())
+        count_before = int(before[0][0]) if before else 0
+        execute_query("DELETE FROM cockpit_bridge_seen_flags", ())
+        deleted_seen = count_before
+    except DatabaseError as e:
+        logger.warning("[CockpitBridge] cleanup seen table failed: %s", e)
+
+    return {
+        "pending_handoffs_deleted": deleted_handoffs,
+        "seen_rows_deleted": deleted_seen,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Status for observability
 # ---------------------------------------------------------------------------

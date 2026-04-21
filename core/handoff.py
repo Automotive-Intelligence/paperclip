@@ -46,17 +46,19 @@ def create_handoff(
     """
     try:
         payload_json = json.dumps(payload, default=str)
-        execute_query(
+        rows = fetch_all(
             "INSERT INTO agent_handoffs "
             "(from_agent, to_agent, river, handoff_type, payload, priority, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, 'pending')",
+            "VALUES (%s, %s, %s, %s, %s, %s, 'pending') "
+            "RETURNING id",
             (from_agent, to_agent, river, handoff_type, payload_json, priority),
         )
+        handoff_id: Optional[int] = int(rows[0][0]) if rows and rows[0] else None
         logger.info(
-            "[Handoff] %s → %s (%s/%s) priority=%s",
-            from_agent, to_agent, river, handoff_type, priority,
+            "[Handoff] #%s %s → %s (%s/%s) priority=%s",
+            handoff_id, from_agent, to_agent, river, handoff_type, priority,
         )
-        return True
+        return handoff_id
     except DatabaseError as e:
         logger.warning("[Handoff] create_handoff failed: %s", e)
         return None

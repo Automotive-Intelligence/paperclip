@@ -6588,3 +6588,11 @@ async def bridge_tick_endpoint():
     """Run one bridge cycle immediately (in-band with request). Useful for manual testing."""
     from services.cockpit_bridge import bridge_tick
     return bridge_tick()
+
+
+@app.post("/bridge/cleanup")
+async def bridge_cleanup_endpoint():
+    """One-shot recovery: wipe pending cockpit_bridge handoffs and seen-flag rows.
+    Use after a buggy tick to reset state. Idempotent."""
+    from services.cockpit_bridge import cleanup_for_fresh_start
+    return cleanup_for_fresh_start()
