@@ -842,12 +842,25 @@ def bridge_status() -> Dict[str, Any]:
     recent: List[Dict[str, Any]] = []
     try:
         rows = fetch_all(
-            "SELECT flag_hash, source_file, target, posted, handoff_id, flag_closed_at, created_at "
-            "FROM cockpit_bridge_seen_flags "
-            "ORDER BY created_at DESC LIMIT 20",
+            "SELECT sf.flag_hash, sf.source_file, sf.target, sf.posted, "
+            "       sf.handoff_id, sf.flag_closed_at, sf.created_at, "
+            "       ah.to_agent, ah.river, ah.priority, ah.status, ah.payload "
+            "FROM cockpit_bridge_seen_flags sf "
+            "LEFT JOIN agent_handoffs ah ON ah.id = sf.handoff_id "
+            "ORDER BY sf.created_at DESC LIMIT 20",
             (),
         )
         for r in rows:
+            routing_info: Optional[Dict[str, Any]] = None
+            payload_raw = r[11]
+            if payload_raw:
+                try:
+                    payload_dict = (
+                        payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
+                    )
+                    routing_info = payload_dict.get("_routing")
+                except Exception:
+                    routing_info = None
             recent.append({
                 "flag_hash": r[0],
                 "source_file": r[1],
@@ -856,6 +869,11 @@ def bridge_status() -> Dict[str, Any]:
                 "handoff_id": r[4],
                 "flag_closed_at": str(r[5]) if r[5] else None,
                 "created_at": str(r[6]),
+                "to_agent": r[7],
+                "river": r[8],
+                "priority": r[9],
+                "handoff_status": r[10],
+                "routing": routing_info,
             })
     except DatabaseError as e:
         logger.warning("[CockpitBridge] recent query failed: %s", e)
