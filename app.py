@@ -3375,6 +3375,38 @@ scheduler.add_job(_avo_sched_axiom, CronTrigger(hour=23, minute=30, timezone=CST
     id="axiom_ceo_nightly", name="AXIOM CEO Orchestration — Nightly 11:30pm",
     replace_existing=True, misfire_grace_time=3600)
 
+# Cockpit Bridge: poll avo-telemetry every 60s for new flags and close completed ones
+try:
+    from services.cockpit_bridge import (
+        bridge_tick as _cockpit_bridge_tick,
+        ensure_table as _cockpit_bridge_ensure_table,
+    )
+
+    try:
+        _cockpit_bridge_ensure_table()
+    except Exception as _bridge_migrate_err:
+        logging.warning(f"[CockpitBridge] table migration failed: {_bridge_migrate_err}")
+
+    def _run_cockpit_bridge_tick():
+        try:
+            stats = _cockpit_bridge_tick()
+            if stats["new"]["created"] or stats["close"]["closed"]:
+                logging.info(f"[CockpitBridge] tick stats: {stats}")
+        except Exception as e:
+            logging.warning(f"[CockpitBridge] tick failed: {e}")
+
+    scheduler.add_job(
+        _run_cockpit_bridge_tick,
+        IntervalTrigger(seconds=60),
+        id="cockpit_bridge_tick",
+        name="Cockpit Bridge — poll every 60s",
+        replace_existing=True,
+        misfire_grace_time=60,
+        max_instances=1,
+    )
+except Exception as _bridge_reg_err:
+    logging.warning(f"[CockpitBridge] scheduler registration failed: {_bridge_reg_err}")
+
 # Changelog: Friday 5pm CST
 def _run_changelog():
     try:
@@ -6542,3 +6574,17 @@ async def paperclip_cleanup():
     """Re-run HubSpot contact classification."""
     from rivers.automotive_intelligence.cleanup import run_cleanup
     return run_cleanup()
+
+
+@app.get("/bridge/status")
+async def bridge_status_endpoint():
+    """Cockpit Bridge observability: enabled state, routing map, counts, recent flags."""
+    from services.cockpit_bridge import bridge_status
+    return bridge_status()
+
+
+@app.post("/bridge/tick")
+async def bridge_tick_endpoint():
+    """Run one bridge cycle immediately (in-band with request). Useful for manual testing."""
+    from services.cockpit_bridge import bridge_tick
+    return bridge_tick()
