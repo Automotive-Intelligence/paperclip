@@ -119,7 +119,18 @@ def wade_run():
 
 
 def _send_sponsor_pitch(target: dict):
-    """Send sponsor pitch email via Gmail MCP."""
+    """Draft a sponsor pitch and email it to Michael for review-and-forward.
+
+    v1 (revenue-safe path): Wade does not yet send directly to the sponsor.
+    Instead, each pitch is emailed to Michael with a [FOR: ...] subject prefix,
+    a mailto: link preloading the composed email to the sponsor, and the
+    plaintext copy/paste version. Michael reads on phone, taps the mailto
+    link, the Mail app opens a composed message to the sponsor, Michael hits
+    send. Fallback: copy/paste the plaintext version.
+
+    Gated by WADE_SEND_ENABLED env var. If not 'true', logs only (previous
+    behavior preserved for safety).
+    """
     tool = target["tool"]
     email = target.get("contact_email", "")
     subject = f"Agent Empire — we build with {tool} live on YouTube"
@@ -135,9 +146,95 @@ Michael Rodriguez · buildagentempire.com"""
         log_info("agent_empire", f"[WADE] No contact email for {tool} — skipping")
         return
 
-    # Send via Gmail MCP or direct SMTP
-    log_info("agent_empire", f"[WADE] Pitch sent to {tool} ({email}): {subject}")
-    log_sequence_event("agent_empire", tool, "sponsor_pitch_sent", f"email_to_{email}")
+    send_enabled = os.environ.get("WADE_SEND_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    if not send_enabled:
+        # Previous behavior: log-only. Keeps the kill-switch in Michael's hands.
+        log_info(
+            "agent_empire",
+            f"[WADE] (WADE_SEND_ENABLED off) Pitch drafted for {tool} ({email}): {subject}",
+        )
+        log_sequence_event("agent_empire", tool, "sponsor_pitch_drafted", f"log_only_{email}")
+        return
+
+    ok = _send_pitch_to_review_inbox(tool=tool, sponsor_email=email, subject=subject, body=body)
+    if ok:
+        log_info(
+            "agent_empire",
+            f"[WADE] Pitch for {tool} ({email}) sent to review inbox",
+        )
+        log_sequence_event("agent_empire", tool, "sponsor_pitch_queued_for_review", f"review_email_for_{email}")
+    else:
+        log_error("agent_empire", f"[WADE] Review send FAILED for {tool} ({email}); pitch NOT delivered")
+
+
+def _send_pitch_to_review_inbox(tool: str, sponsor_email: str, subject: str, body: str) -> bool:
+    """Email Michael a review-ready pitch draft. Returns True on success.
+
+    Uses SMTP credentials already configured in Railway:
+      MAIL_USERNAME_CALLINGDIGITAL  (from+to address; defaults to michael@calling.digital)
+      MAIL_PASSWORD_CALLINGDIGITAL  (Gmail app password)
+
+    Review email structure:
+      Subject: [WADE PITCH {tool}] FOR: sponsor_email — <original subject>
+      Body: mailto link (one-tap composed send) + plaintext pitch + metadata
+    """
+    import smtplib
+    from email.message import EmailMessage
+    from email.utils import make_msgid
+    from urllib.parse import quote
+
+    user = os.environ.get("MAIL_USERNAME_CALLINGDIGITAL", "michael@calling.digital")
+    password = os.environ.get("MAIL_PASSWORD_CALLINGDIGITAL", "")
+
+    if not password:
+        log_error(
+            "agent_empire",
+            "[WADE] MAIL_PASSWORD_CALLINGDIGITAL not set — cannot send review email",
+        )
+        return False
+
+    mailto = (
+        f"mailto:{sponsor_email}"
+        f"?subject={quote(subject)}"
+        f"&body={quote(body)}"
+    )
+
+    review_subject = f"[WADE PITCH {tool}] FOR: {sponsor_email} — {subject}"
+    review_body = f"""Wade drafted a sponsor pitch for {tool}.
+
+━━━ ONE-TAP SEND ━━━
+Tap this link to open a pre-composed email in Mail. Review, then hit Send.
+{mailto}
+
+━━━ MANUAL COPY/PASTE ━━━
+To: {sponsor_email}
+Subject: {subject}
+
+{body}
+
+━━━ METADATA ━━━
+Tool: {tool}
+Drafted: {datetime.now().isoformat(timespec='seconds')}
+Source: Wade (Agent Empire) via AVO Cockpit Bridge
+Kill switch: set WADE_SEND_ENABLED=false in Railway to revert to log-only.
+"""
+
+    try:
+        msg = EmailMessage()
+        msg["From"] = f"Wade (Agent Empire) <{user}>"
+        msg["To"] = user
+        msg["Subject"] = review_subject
+        msg["Message-ID"] = make_msgid(domain=user.split("@")[-1])
+        msg.set_content(review_body)
+
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        log_error("agent_empire", f"[WADE] SMTP review-send failed for {tool}: {e}")
+        return False
 
 
 # ─── DEBRA — Producer Agent ───
