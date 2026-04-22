@@ -716,6 +716,22 @@ def poll_new_flags() -> Dict[str, int]:
                 "[CockpitBridge] Created handoff #%s for flag target=%s file=%s -> %s",
                 handoff_id, flag.target, flag.source_file, decision.target_agent,
             )
+            # Event-driven trigger: if BRIDGE_EVENT_DRIVEN is on, fire the
+            # target agent immediately in a daemon thread. If off (default),
+            # this is a no-op and the scheduled run picks up the handoff.
+            # Trigger failures never block handoff creation.
+            try:
+                from services.agent_triggers import trigger_agent_run
+                trigger_agent_run(
+                    decision.target_agent,
+                    origin="cockpit_bridge",
+                    handoff_id=handoff_id,
+                )
+            except Exception as trig_err:
+                logger.warning(
+                    "[CockpitBridge] trigger_agent_run raised for %s (handoff #%s): %s",
+                    decision.target_agent, handoff_id, trig_err,
+                )
         else:
             logger.warning(
                 "[CockpitBridge] create_handoff returned None for flag target=%s posted=%s",
@@ -880,6 +896,13 @@ def bridge_status() -> Dict[str, Any]:
 
     routing_mode = "intelligent" if os.environ.get("OPENAI_API_KEY") else "fallback-only"
 
+    triggers_info: Dict[str, Any] = {}
+    try:
+        from services.agent_triggers import trigger_status
+        triggers_info = trigger_status()
+    except Exception as e:
+        logger.warning("[CockpitBridge] trigger_status failed: %s", e)
+
     return {
         "enabled": enabled,
         "repo": f"{cfg.owner}/{cfg.repo}" if cfg else None,
@@ -893,4 +916,5 @@ def bridge_status() -> Dict[str, Any]:
         "skipped_targets": sorted(SKIPPED_TARGETS),
         "counts": counts,
         "recent": recent,
+        "triggers": triggers_info,
     }
