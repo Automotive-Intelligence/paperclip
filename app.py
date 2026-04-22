@@ -3407,6 +3407,54 @@ try:
 except Exception as _bridge_reg_err:
     logging.warning(f"[CockpitBridge] scheduler registration failed: {_bridge_reg_err}")
 
+# Agent Triggers: register every scheduled runner so the bridge can fire
+# them on demand when BRIDGE_EVENT_DRIVEN=true. Same functions that
+# APScheduler already calls, same side effects, same code paths — just
+# now-instead-of-later. Default off; no change in behavior until the
+# env var flips to true.
+try:
+    from services.agent_triggers import register_runner as _register_agent_runner
+
+    _AGENT_RUNNER_BINDINGS = {
+        # _avo_sched_ family (daily cron schedule)
+        "alex":         _avo_sched_alex,
+        "dek":          _avo_sched_dek,
+        "michael_meta": _avo_sched_michael_meta,
+        "tyler":        _avo_sched_tyler,
+        "marcus":       _avo_sched_marcus,
+        "ryan_data":    _avo_sched_ryan_data,
+        "zoe":          _avo_sched_zoe,
+        "sofia":        _avo_sched_sofia,
+        "chase":        _avo_sched_chase,
+        "jennifer":     _avo_sched_jennifer,
+        "carlos":       _avo_sched_carlos,
+        "nova":         _avo_sched_nova,
+        "atlas":        _avo_sched_atlas,
+        "phoenix":      _avo_sched_phoenix,
+        "axiom":        _avo_sched_axiom,
+        # _run_ family (interval or weekly)
+        "randy":        _run_randy,
+        "brenda":       _run_brenda,
+        "darrell":      _run_darrell,
+        "joshua":       _run_joshua,
+        "tammy":        _run_tammy,
+        "wade":         _run_wade,
+        "debra":        _run_debra,
+        "clint":        _run_clint,
+        "sherry":       _run_sherry,
+        "sterling":     _run_sterling,
+    }
+
+    for _name, _fn in _AGENT_RUNNER_BINDINGS.items():
+        _register_agent_runner(_name, _fn)
+
+    logging.info(
+        "[AgentTrigger] registered %d runners for event-driven mode",
+        len(_AGENT_RUNNER_BINDINGS),
+    )
+except Exception as _trigger_reg_err:
+    logging.warning(f"[AgentTrigger] runner registration failed: {_trigger_reg_err}")
+
 # Changelog: Friday 5pm CST
 def _run_changelog():
     try:
