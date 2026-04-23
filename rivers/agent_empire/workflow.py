@@ -140,7 +140,7 @@ We use {tool} in every build and film it live. Our students are {tool}'s exact c
 
 I'd love to explore a founding sponsor partnership. 15 minutes this week?
 
-Michael Rodriguez · buildagentempire.com"""
+Michael Rodriguez · https://www.youtube.com/@BuildAgentEmpire"""
 
     if not email:
         log_info("agent_empire", f"[WADE] No contact email for {tool} — skipping")
