@@ -6644,3 +6644,79 @@ async def bridge_cleanup_endpoint():
     Use after a buggy tick to reset state. Idempotent."""
     from services.cockpit_bridge import cleanup_for_fresh_start
     return cleanup_for_fresh_start()
+
+
+# ── Meta Marketing API (Phase 1, single-tenant prototype) ────────────────────
+
+class CreateCampaignRequest(BaseModel):
+    name: str
+    objective: str
+    daily_budget_cents: Optional[int] = None
+    special_ad_categories: Optional[list[str]] = None
+
+
+@app.get("/meta/status")
+async def meta_status_endpoint():
+    """Report whether Meta API env vars are configured. No secrets returned."""
+    from services.meta_ads import status_summary
+    return status_summary()
+
+
+@app.get("/meta/account/{account_id}/state")
+async def meta_account_state_endpoint(
+    account_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Read diagnostic snapshot of a Meta ad account: status, currency, balance, business, pixels."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        state = client.read_account_state(account_id)
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {
+        "account_id": state.account_id,
+        "name": state.name,
+        "currency": state.currency,
+        "timezone_name": state.timezone_name,
+        "account_status": state.account_status,
+        "disable_reason": state.disable_reason,
+        "spend_cap": state.spend_cap,
+        "amount_spent": state.amount_spent,
+        "business_id": state.business_id,
+        "business_name": state.business_name,
+        "funding_source": state.funding_source,
+        "pixels": state.pixels,
+    }
+
+
+@app.post("/meta/account/{account_id}/campaign")
+async def meta_create_campaign_endpoint(
+    account_id: str,
+    request: CreateCampaignRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Create a PAUSED campaign on the given ad account. Operator un-pauses manually in Ads Manager."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        result = client.create_campaign(
+            account_id=account_id,
+            name=request.name,
+            objective=request.objective,
+            daily_budget_cents=request.daily_budget_cents,
+            special_ad_categories=request.special_ad_categories,
+        )
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return result
