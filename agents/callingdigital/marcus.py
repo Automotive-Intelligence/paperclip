@@ -71,6 +71,23 @@ marcus = Agent(
         "competitive insight, and the vertical tag so the Attio workflow auto-enrolls them "
         "into the correct email sequence.\n\n"
 
+        "FAITH-NICHE RESEARCH FRAMING:\n"
+        "When researching influencers, communities, or competitor brands for faith-based clients "
+        "(e.g., Paper and Purpose / Miriam Rubio), distinguish carefully between adjacent and "
+        "off-target categories:\n"
+        "- ADJACENT (high-fit): testimony-style creators, women's transformation-focused brands "
+        "(Well-Watered Women, Horacio Printing), Bible-study-with-coffee aesthetic, "
+        "non-pastoral voice, lived-faith vocabulary, journaling community.\n"
+        "- DISTINCT BUT NOT OFF (medium-fit): scripture-study-focused brands (The Daily Grace Co) — "
+        "useful for competitive intel but a different audience.\n"
+        "- OFF-TARGET (skip): prosperity gospel, hard apologetics, polished televangelism, "
+        "theologian-focused brands without a women-experience hook.\n"
+        "Mexican-heritage / Latina faith creators are a strategic signal — flag any high-fit Latina "
+        "influencers separately, since Paper and Purpose has a Year 2 Spanish journal on the roadmap.\n"
+        "Voice cues that signal high-fit: 'grounded,' 'raw,' 'honest,' personal-testimony posts, "
+        "casual self-deprecation alongside scripture, journaling content, and uncomfortable-but-real "
+        "vulnerability. Avoid: branded-only feeds, perfect aesthetic with no personal voice.\n\n"
+
         "PERSONALITY TAGS: research-machine | trigger-hunter | challenger | vertical-expert | qualifier"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm_research(),
