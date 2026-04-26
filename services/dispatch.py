@@ -205,6 +205,112 @@ def _dispatch_stub(artifact: Artifact, channel: str) -> DeliveryReceipt:
     )
 
 
+def _dispatch_zernio(artifact: Artifact, channel: str) -> DeliveryReceipt:
+    """
+    Social-channel dispatch via Zernio. Used for instagram / tiktok / facebook /
+    linkedin / twitter / youtube / pinterest / threads / bluesky.
+
+    Pulls media URLs from artifact.metadata (image_url, video_url) and the
+    target platforms from artifact.channel_candidates. Publishes via
+    publish_to_zernio if a scheduled_for timestamp is present and parseable
+    as ISO 8601; otherwise creates a draft (the operator can schedule from
+    Zernio dashboard).
+
+    metadata schema (all optional unless noted):
+      image_url:        single image URL
+      video_url:        single video URL
+      scheduled_for:    ISO 8601 string for scheduled publish (or human-
+                        readable; if not parseable, falls back to draft)
+    """
+    meta = artifact.metadata or {}
+    media_urls: list[str] = []
+    if meta.get("image_url"):
+        media_urls.append(str(meta["image_url"]))
+    if meta.get("video_url"):
+        media_urls.append(str(meta["video_url"]))
+
+    # Use ALL candidate channels that look like social platforms (filter out
+    # email/crm/log if they snuck in)
+    social_only = [c for c in (artifact.channel_candidates or []) if c not in ("email", "crm", "log", "sms")]
+    if not social_only:
+        social_only = [channel]
+
+    try:
+        from tools.zernio import (
+            create_zernio_draft,
+            publish_to_zernio,
+            zernio_ready,
+            ZERNIO_PLATFORMS,
+        )
+    except Exception as exc:
+        logger.warning("[dispatch] zernio import failed for %s: %s", artifact.artifact_id, exc)
+        return _dispatch_stub(artifact, channel)
+
+    if not zernio_ready():
+        logger.info(
+            "[dispatch] zernio not configured — falling back to stub for artifact=%s",
+            artifact.artifact_id,
+        )
+        return _dispatch_stub(artifact, channel)
+
+    # Map our channel names to Zernio's expected names; drop any unknowns
+    zernio_targets = [c for c in social_only if c in ZERNIO_PLATFORMS]
+    if not zernio_targets:
+        logger.info(
+            "[dispatch] no Zernio-compatible channels in %s — falling back to stub",
+            social_only,
+        )
+        return _dispatch_stub(artifact, channel)
+
+    scheduled = (meta.get("scheduled_for") or "").strip()
+    try:
+        if scheduled:
+            # Try ISO parse — anything else falls through to draft
+            import datetime as _dt
+            try:
+                _dt.datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
+                result = publish_to_zernio(
+                    content=artifact.content,
+                    platforms=zernio_targets,
+                    media_urls=media_urls or None,
+                    scheduled_at=scheduled,
+                )
+                kind = "scheduled"
+            except (ValueError, TypeError):
+                result = create_zernio_draft(
+                    content=artifact.content,
+                    platforms=zernio_targets,
+                    media_urls=media_urls or None,
+                )
+                kind = "draft (scheduled_for not ISO parseable)"
+        else:
+            result = create_zernio_draft(
+                content=artifact.content,
+                platforms=zernio_targets,
+                media_urls=media_urls or None,
+            )
+            kind = "draft (no scheduled_for)"
+    except Exception as exc:
+        logger.exception("[dispatch] zernio call failed for %s", artifact.artifact_id)
+        return make_receipt(
+            artifact.artifact_id,
+            channel,
+            status="failed",
+            error=f"zernio dispatch failed: {type(exc).__name__}: {exc}",
+        )
+
+    logger.info(
+        "[dispatch] zernio %s artifact=%s targets=%s zernio_id=%s",
+        kind, artifact.artifact_id, zernio_targets, result.get("_id"),
+    )
+    return make_receipt(
+        artifact.artifact_id,
+        channel,
+        status="dispatched",
+        provider_response={"zernio_id": result.get("_id"), "kind": kind, "targets": zernio_targets},
+    )
+
+
 def _dispatch_log(artifact: Artifact) -> DeliveryReceipt:
     """
     Log channel — for internal notes, reports, and any artifact that does not
@@ -277,14 +383,23 @@ def _validate_channel_metadata(artifact: Artifact, channel: str) -> Optional[str
 # ---------------------------------------------------------------------------
 
 _CHANNEL_ADAPTERS = {
-    "log":      _dispatch_log,
-    "email":    _dispatch_email,
-    "crm":      _dispatch_crm,
-    "sms":      _dispatch_sms,
-    "linkedin": lambda a: _dispatch_stub(a, "linkedin"),
-    "twitter":  lambda a: _dispatch_stub(a, "twitter"),
-    "meta":     lambda a: _dispatch_stub(a, "meta"),
-    "google":   lambda a: _dispatch_stub(a, "google"),
+    "log":       _dispatch_log,
+    "email":     _dispatch_email,
+    "crm":       _dispatch_crm,
+    "sms":       _dispatch_sms,
+    # Social channels route through Zernio (publish or draft based on scheduled_for)
+    "instagram": lambda a: _dispatch_zernio(a, "instagram"),
+    "tiktok":    lambda a: _dispatch_zernio(a, "tiktok"),
+    "facebook":  lambda a: _dispatch_zernio(a, "facebook"),
+    "linkedin":  lambda a: _dispatch_zernio(a, "linkedin"),
+    "twitter":   lambda a: _dispatch_zernio(a, "twitter"),
+    "youtube":   lambda a: _dispatch_zernio(a, "youtube"),
+    "pinterest": lambda a: _dispatch_zernio(a, "pinterest"),
+    "threads":   lambda a: _dispatch_zernio(a, "threads"),
+    "bluesky":   lambda a: _dispatch_zernio(a, "bluesky"),
+    # Ads stay stubbed — Meta uses tools/meta_ads, not Zernio
+    "meta":      lambda a: _dispatch_stub(a, "meta"),
+    "google":    lambda a: _dispatch_stub(a, "google"),
 }
 
 
