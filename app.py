@@ -28,7 +28,9 @@ from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header, Request
+import html as html_module
+
+from fastapi import FastAPI, Form, HTTPException, Header, Request
 from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
@@ -3407,6 +3409,40 @@ try:
 except Exception as _bridge_reg_err:
     logging.warning(f"[CockpitBridge] scheduler registration failed: {_bridge_reg_err}")
 
+# Approval Digest: weekly Sunday 6PM CT, send one digest per business_key
+# that has pending_approval artifacts and a configured DIGEST_RECIPIENT_<KEY>.
+try:
+    def _run_weekly_digest():
+        try:
+            from services.approval_digest import (
+                build_and_send_digest,
+                known_business_keys_with_pending,
+            )
+            keys = known_business_keys_with_pending()
+            if not keys:
+                logging.info("[digest] weekly run: no businesses with pending artifacts")
+                return
+            for bk in keys:
+                try:
+                    res = build_and_send_digest(bk)
+                    logging.info("[digest] weekly run business_key=%s result=%s", bk, res)
+                except Exception as e:
+                    logging.error("[digest] weekly run failed for %s: %s", bk, e)
+        except Exception as e:
+            logging.error(f"[digest] weekly job error: {e}")
+
+    scheduler.add_job(
+        _run_weekly_digest,
+        CronTrigger(day_of_week="sun", hour=18, minute=0, timezone=CST),
+        id="approval_digest_weekly",
+        name="Approval Digest — Sunday 6:00 PM CT",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        max_instances=1,
+    )
+except Exception as _digest_reg_err:
+    logging.warning(f"[digest] scheduler registration failed: {_digest_reg_err}")
+
 # Agent Triggers: register every scheduled runner so the bridge can fire
 # them on demand when BRIDGE_EVENT_DRIVEN=true. Same functions that
 # APScheduler already calls, same side effects, same code paths — just
@@ -6720,3 +6756,225 @@ async def meta_create_campaign_endpoint(
         raise HTTPException(status_code=502, detail=str(e))
 
     return result
+
+
+# ── Approval Digest (weekly batch for client-facing approval) ────────────────
+
+class DigestRejectRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+def _digest_html_response(title: str, body_html: str, status_code: int = 200):
+    """Render a tiny standalone HTML page for Miriam's button-click landing.
+    No frameworks — works on every email client + mobile browser."""
+    from fastapi.responses import HTMLResponse
+    page = f"""<!DOCTYPE html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html_module.escape(title)}</title>
+<style>
+  body{{font-family:Inter,system-ui,Arial,sans-serif;background:#f3f4f6;margin:0;padding:24px;color:#111827}}
+  .card{{max-width:520px;margin:40px auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.06)}}
+  h1{{font-size:22px;margin:0 0 14px 0}}
+  p{{font-size:15px;line-height:1.55;color:#374151}}
+  .ok{{color:#16a34a}} .err{{color:#b91c1c}} .muted{{color:#6b7280;font-size:13px}}
+  textarea{{width:100%;min-height:90px;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;font-size:14px;box-sizing:border-box}}
+  button{{background:#111827;color:#fff;border:0;padding:10px 18px;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer;margin-top:10px}}
+</style></head><body><div class="card">{body_html}</div></body></html>"""
+    return HTMLResponse(content=page, status_code=status_code)
+
+
+@app.get("/admin/digest/status")
+async def digest_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability: which businesses have a configured digest recipient + the secret status."""
+    validate_key(authorization)
+    from services.approval_digest import status_summary
+    return status_summary()
+
+
+@app.post("/admin/digest/send")
+async def digest_send_endpoint(
+    business_key: str,
+    dry_run: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    """Manually trigger a digest send for one business_key. Useful for testing
+    before the weekly cron fires."""
+    validate_key(authorization)
+    from services.approval_digest import build_and_send_digest
+    return build_and_send_digest(business_key, dry_run=dry_run)
+
+
+@app.get("/m/approve/{artifact_id}")
+async def public_approve_endpoint(artifact_id: str, t: str):
+    """Token-gated 1-click approve. Linked from digest email."""
+    from services.approval_digest import verify_action_token
+    from services.approval_queue import approve_artifact, get_artifact_record
+    from services.dispatch import dispatch_artifact
+
+    ok, reason = verify_action_token(t, artifact_id, "approve")
+    if not ok:
+        return _digest_html_response(
+            "Link not valid",
+            f'<h1 class="err">Link not valid</h1><p>{html_module.escape(reason)}.</p>'
+            f'<p class="muted">If you think this is a mistake, reply to the digest email.</p>',
+            status_code=400,
+        )
+
+    record = get_artifact_record(artifact_id)
+    if not record:
+        return _digest_html_response(
+            "Post not found",
+            '<h1 class="err">Post not found</h1>'
+            '<p>This post may have already been actioned. Reply to the digest if you need help.</p>',
+            status_code=404,
+        )
+    if record["status"] not in ("pending_approval", "escalated"):
+        return _digest_html_response(
+            "Already actioned",
+            f'<h1>Already actioned</h1>'
+            f'<p>This post is currently <strong>{html_module.escape(record["status"])}</strong>. '
+            f'No further action needed.</p>',
+        )
+
+    approved = approve_artifact(artifact_id, reviewer="client_via_digest")
+    if not approved:
+        return _digest_html_response(
+            "Could not approve",
+            '<h1 class="err">Could not approve</h1>'
+            '<p>Something went wrong. Reply to the digest email and we\'ll help.</p>',
+            status_code=500,
+        )
+
+    # Reconstruct Artifact for dispatch
+    import datetime as _dt
+    artifact = Artifact(
+        artifact_id=record["artifact_id"], agent_id=record["agent_id"],
+        business_key=record["business_key"], artifact_type=record["artifact_type"],
+        audience=record["audience"], intent=record["intent"],
+        content=record["content"], subject=record.get("subject"),
+        channel_candidates=record.get("channel_candidates") or [],
+        confidence=float(record.get("confidence", 0.8)),
+        risk_level=record["risk_level"],
+        requires_human_approval=bool(record.get("requires_human_approval", True)),
+        metadata=record.get("metadata") or {},
+        created_at=record["created_at"] if isinstance(record["created_at"], _dt.datetime) else _dt.datetime.utcnow(),
+        status="approved",
+    )
+    try:
+        dispatch_artifact(artifact)
+    except Exception as exc:
+        logging.error("[digest] dispatch after public approval failed for %s: %s", artifact_id, exc)
+        return _digest_html_response(
+            "Approved — dispatch pending",
+            '<h1 class="ok">✓ Approved</h1>'
+            '<p>The post is approved but the publish step hit a snag. The team has been notified.</p>',
+        )
+
+    return _digest_html_response(
+        "Approved",
+        '<h1 class="ok">✓ Approved</h1>'
+        '<p>This post is approved and scheduled to publish. Thank you!</p>'
+        '<p class="muted">You can close this tab.</p>',
+    )
+
+
+@app.get("/m/edit/{artifact_id}")
+async def public_edit_endpoint(artifact_id: str, t: str):
+    """Token-gated edit landing. Phase 1 stub: show post content + ask client
+    to reply to the digest email with desired changes. Full edit UI later."""
+    from services.approval_digest import verify_action_token
+    from services.approval_queue import get_artifact_record
+
+    ok, reason = verify_action_token(t, artifact_id, "edit")
+    if not ok:
+        return _digest_html_response(
+            "Link not valid",
+            f'<h1 class="err">Link not valid</h1><p>{html_module.escape(reason)}.</p>',
+            status_code=400,
+        )
+    record = get_artifact_record(artifact_id)
+    if not record:
+        return _digest_html_response(
+            "Post not found",
+            '<h1 class="err">Post not found</h1>',
+            status_code=404,
+        )
+    subject = html_module.escape(record.get("subject") or "(untitled)")
+    content = html_module.escape(record.get("content") or "")
+    return _digest_html_response(
+        "Edit this post",
+        f'<h1>Edit: {subject}</h1>'
+        f'<p class="muted">Reply to the digest email with the changes you want, '
+        f'and the team will revise this post and re-send it for approval.</p>'
+        f'<pre style="white-space:pre-wrap;background:#f9fafb;padding:12px;border-radius:6px;border:1px solid #f3f4f6;font-size:14px">{content}</pre>',
+    )
+
+
+@app.get("/m/reject/{artifact_id}")
+async def public_reject_form_endpoint(artifact_id: str, t: str):
+    """Token-gated reject form (GET). Shows a textarea for the client to enter
+    a reason; submitting POSTs back with the same token."""
+    from services.approval_digest import verify_action_token
+    from services.approval_queue import get_artifact_record
+
+    ok, reason = verify_action_token(t, artifact_id, "reject")
+    if not ok:
+        return _digest_html_response(
+            "Link not valid",
+            f'<h1 class="err">Link not valid</h1><p>{html_module.escape(reason)}.</p>',
+            status_code=400,
+        )
+    record = get_artifact_record(artifact_id)
+    if not record:
+        return _digest_html_response(
+            "Post not found",
+            '<h1 class="err">Post not found</h1>',
+            status_code=404,
+        )
+
+    subject = html_module.escape(record.get("subject") or "(untitled)")
+    return _digest_html_response(
+        "Reject this post",
+        f'<h1>Reject: {subject}</h1>'
+        f'<p>Tell us briefly why this post doesn\'t work — we\'ll send back a revised version next week.</p>'
+        f'<form method="POST" action="/m/reject/{artifact_id}?t={html_module.escape(t)}">'
+        f'<textarea name="reason" placeholder="What needs to change?"></textarea>'
+        f'<button type="submit">Submit rejection</button>'
+        f'</form>',
+    )
+
+
+@app.post("/m/reject/{artifact_id}")
+async def public_reject_submit_endpoint(artifact_id: str, t: str, reason: str = Form("")):
+    """Token-gated reject submission. Same token as the GET form."""
+    from services.approval_digest import verify_action_token
+    from services.approval_queue import reject_artifact, get_artifact_record
+
+    ok, vreason = verify_action_token(t, artifact_id, "reject")
+    if not ok:
+        return _digest_html_response(
+            "Link not valid",
+            f'<h1 class="err">Link not valid</h1><p>{html_module.escape(vreason)}.</p>',
+            status_code=400,
+        )
+    record = get_artifact_record(artifact_id)
+    if not record:
+        return _digest_html_response(
+            "Post not found",
+            '<h1 class="err">Post not found</h1>',
+            status_code=404,
+        )
+    rejected = reject_artifact(artifact_id, reviewer="client_via_digest", reason=reason or "")
+    if not rejected:
+        return _digest_html_response(
+            "Could not reject",
+            '<h1 class="err">Could not reject</h1>'
+            '<p>Something went wrong. Reply to the digest email for help.</p>',
+            status_code=500,
+        )
+    return _digest_html_response(
+        "Rejected",
+        '<h1>✗ Rejected</h1>'
+        '<p>Got it. The team will revise and send a new version in next week\'s digest.</p>'
+        '<p class="muted">You can close this tab.</p>',
+    )
