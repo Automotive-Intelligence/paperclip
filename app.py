@@ -6791,6 +6791,14 @@ async def digest_status_endpoint(authorization: Optional[str] = Header(None)):
     return status_summary()
 
 
+@app.get("/admin/shopify/status")
+async def shopify_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability: which tenants have shop + admin token configured."""
+    validate_key(authorization)
+    from tools.shopify import shopify_status
+    return shopify_status()
+
+
 @app.post("/admin/digest/send")
 async def digest_send_endpoint(
     business_key: str,
