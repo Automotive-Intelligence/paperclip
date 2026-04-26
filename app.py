@@ -6799,6 +6799,14 @@ async def shopify_status_endpoint(authorization: Optional[str] = Header(None)):
     return shopify_status()
 
 
+@app.get("/admin/klaviyo/status")
+async def klaviyo_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability: which tenants have a Klaviyo API key configured."""
+    validate_key(authorization)
+    from tools.klaviyo import klaviyo_status
+    return klaviyo_status()
+
+
 @app.post("/admin/digest/send")
 async def digest_send_endpoint(
     business_key: str,
