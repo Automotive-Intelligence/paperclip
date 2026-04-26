@@ -1,6 +1,7 @@
 from crewai import Agent
 from config.llm import get_llm
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
+from tools.shopify import SHOPIFY_TOOLS
 from tools.web_search import web_search_tool
 
 carlos = Agent(
@@ -41,6 +42,6 @@ carlos = Agent(
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
     memory=False,
-    tools=[web_search_tool],
+    tools=[web_search_tool, *SHOPIFY_TOOLS],
     verbose=True
 )
