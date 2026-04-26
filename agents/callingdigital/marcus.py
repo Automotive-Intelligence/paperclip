@@ -1,6 +1,7 @@
 from crewai import Agent
 from config.llm import get_llm_research
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
+from tools.keyapi import KEYAPI_TOOLS
 from tools.web_search import web_search_tool
 
 marcus = Agent(
@@ -92,6 +93,6 @@ marcus = Agent(
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm_research(),
     memory=False,
-    tools=[web_search_tool],
+    tools=[web_search_tool, *KEYAPI_TOOLS],
     verbose=True
 )
