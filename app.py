@@ -3443,6 +3443,32 @@ try:
 except Exception as _digest_reg_err:
     logging.warning(f"[digest] scheduler registration failed: {_digest_reg_err}")
 
+# Book'd autonomous ad pipeline runner — fires when bridge routes a flag
+# to to_agent='bookd_pipeline'. Same shape as the other agent runners (no
+# args, returns None). Pulls pending bookd_pipeline handoffs from
+# agent_handoffs and processes each via services.book_d_ad_pipeline.run().
+def _bookd_pipeline_runner_wrapper():
+    try:
+        from services.bookd_pipeline_runner import runner as _bookd_runner
+        _bookd_runner()
+    except Exception as e:
+        logging.error(f"[BookdPipeline] runner failed: {e}")
+
+# Backstop scheduled poll: every 5 min, in case event-driven trigger missed
+# a handoff. Cheap (one DB SELECT, returns immediately when nothing pending).
+try:
+    scheduler.add_job(
+        _bookd_pipeline_runner_wrapper,
+        IntervalTrigger(minutes=5),
+        id="bookd_pipeline_poll",
+        name="Book'd Pipeline — backstop poll every 5 min",
+        replace_existing=True,
+        misfire_grace_time=300,
+        max_instances=1,
+    )
+except Exception as _bookd_sched_err:
+    logging.warning(f"[BookdPipeline] scheduler registration failed: {_bookd_sched_err}")
+
 # Agent Triggers: register every scheduled runner so the bridge can fire
 # them on demand when BRIDGE_EVENT_DRIVEN=true. Same functions that
 # APScheduler already calls, same side effects, same code paths — just
@@ -3479,6 +3505,8 @@ try:
         "clint":        _run_clint,
         "sherry":       _run_sherry,
         "sterling":     _run_sterling,
+        # Pipeline runners (synchronous orchestrators, not CrewAI agents)
+        "bookd_pipeline": _bookd_pipeline_runner_wrapper,
     }
 
     for _name, _fn in _AGENT_RUNNER_BINDINGS.items():

@@ -270,9 +270,74 @@ def sofia_queue_for_approval(
         return f"ERROR: queue failed: {type(e).__name__}: {e}"
 
 
+@tool("Run Book'd Ad Pipeline")
+def run_bookd_ad_pipeline(
+    script: str,
+    hook_label: str,
+    landing_url: str = "",
+    daily_budget_cents: int = 0,
+    optimization_goal: str = "",
+    headline: str = "",
+    primary_message: str = "",
+) -> str:
+    """Fire the autonomous Book'd Launch ad pipeline for one hook script.
+
+    Chains: HeyGen render at 9:16/1:1/16:9 with captions → Meta Ads video
+    upload × 3 → AdCreatives × 3 → AdSet → 3 PAUSED Ads → approval digest
+    artifact. After this returns, Michael gets an approval email with the
+    3 ad variants. Tap Approve → un-pauses ads in Meta Ads Manager → live.
+
+    All Meta writes are PAUSED — nothing auto-spends without a human tap.
+    Cost per call: ~$0.18 HeyGen credits (3 × $0.06) for a typical 5-15s
+    hook script. Meta API calls are free.
+
+    Use for the 5 hook scripts + VSL chunks of Book'd Launch 2. Ad #1
+    (founder story) is recorded by Ryan natively — do NOT pipe through this.
+
+    Args:
+        script: The spoken hook text. 5-60 seconds typical.
+        hook_label: Short label used for ad / creative / artifact naming
+            (e.g. 'hook-1-founder-anxiety', 'vsl-segment-2'). Lower-kebab-case.
+        landing_url: Click-through URL. Empty = use META_BOOKD_LANDING_URL env var.
+        daily_budget_cents: Daily budget for the ad set. 0 = use
+            META_BOOKD_DAILY_BUDGET_CENTS env var (default $20/day).
+        optimization_goal: Meta optimization goal. Empty = LINK_CLICKS default.
+        headline: Optional headline shown below the video.
+        primary_message: Optional primary text body of the ad post.
+
+    Returns: JSON string with the full PipelineResult — ad_ids, creative_ids,
+        ad_set_id, artifact_id, errors[]. Or error string if config missing.
+    """
+    script = (script or "").strip()
+    hook_label = (hook_label or "").strip()
+    if not script:
+        return "ERROR: script is required."
+    if not hook_label:
+        return "ERROR: hook_label is required (used in ad/creative naming)."
+
+    try:
+        from services.book_d_ad_pipeline import run as run_pipeline
+        result = run_pipeline(
+            script=script,
+            hook_label=hook_label,
+            aspects=("9:16", "1:1", "16:9"),
+            landing_url=landing_url or None,
+            daily_budget_cents=int(daily_budget_cents) if daily_budget_cents else None,
+            optimization_goal=optimization_goal or None,
+            call_to_action_type="LEARN_MORE",
+            headline=headline,
+            primary_message=primary_message,
+        )
+        return _truncate_json(result.to_dict())
+    except Exception as e:
+        logger.exception("run_bookd_ad_pipeline failed")
+        return f"ERROR: pipeline crashed: {type(e).__name__}: {e}"
+
+
 SOFIA_CREATIVE_TOOLS = [
     sofia_generate_image,
     sofia_generate_video,
     sofia_create_zernio_draft,
     sofia_queue_for_approval,
+    run_bookd_ad_pipeline,
 ]
