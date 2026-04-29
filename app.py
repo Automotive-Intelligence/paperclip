@@ -6921,6 +6921,61 @@ async def meta_create_ad_endpoint(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+# ── Book'd autonomous ad pipeline (orchestrator) ─────────────────────────
+
+class BookdPipelineRunRequest(BaseModel):
+    script: str
+    hook_label: str
+    aspects: Optional[list[str]] = None
+    landing_url: Optional[str] = None
+    daily_budget_cents: Optional[int] = None
+    optimization_goal: Optional[str] = None
+    call_to_action_type: Optional[str] = "LEARN_MORE"
+    headline: Optional[str] = ""
+    primary_message: Optional[str] = ""
+
+
+@app.get("/admin/bookd/pipeline/status")
+async def bookd_pipeline_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability for the autonomous Book'd ad pipeline — reports which
+    env vars are set without leaking values."""
+    validate_key(authorization)
+    from services.book_d_ad_pipeline import status_summary
+    return status_summary()
+
+
+@app.post("/admin/bookd/pipeline/run")
+async def bookd_pipeline_run_endpoint(
+    request: BookdPipelineRunRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Run the full Book'd autonomous ad pipeline for one script.
+
+    Chains: HeyGen render (3 aspects, captioned) → Meta video uploads → Meta
+    AdCreatives → Meta AdSet → 3 PAUSED Meta Ads → Approval digest artifact.
+
+    All ads are created PAUSED. Operator un-pauses in Ads Manager after
+    approving the digest email.
+
+    Returns the full PipelineResult including ad_ids, creative_ids, etc.
+    """
+    validate_key(authorization)
+    from services.book_d_ad_pipeline import run as run_pipeline
+    aspects = tuple(request.aspects) if request.aspects else ("9:16", "1:1", "16:9")
+    result = run_pipeline(
+        script=request.script,
+        hook_label=request.hook_label,
+        aspects=aspects,
+        landing_url=request.landing_url,
+        daily_budget_cents=request.daily_budget_cents,
+        optimization_goal=request.optimization_goal,
+        call_to_action_type=request.call_to_action_type or "LEARN_MORE",
+        headline=request.headline or "",
+        primary_message=request.primary_message or "",
+    )
+    return result.to_dict()
+
+
 # ── Approval Digest (weekly batch for client-facing approval) ────────────────
 
 class DigestRejectRequest(BaseModel):
