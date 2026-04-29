@@ -519,10 +519,62 @@ def heygen_status() -> dict[str, Any]:
     }
 
 
+@tool("Render HeyGen Ad Variants (multi-aspect)")
+def render_heygen_ad_variants(
+    script: str,
+    avatar_id: str,
+    voice_id: str,
+    hook_label: str = "",
+    aspects: str = "9:16,1:1,16:9",
+    captioned: bool = True,
+    background_color: str = "#FFFFFF",
+) -> str:
+    """Render the same script at multiple HeyGen aspect ratios in parallel
+    with captions baked in (HeyGen's built-in caption feature — no Submagic
+    required). One call returns 9:16 (Reels/TikTok), 1:1 (Feed), and 16:9
+    (in-stream) versions of the same talking-avatar ad.
+
+    This is the input ingestion side of the autonomous Book'd ad pipeline —
+    used by the orchestrator to produce all aspect variants of one hook
+    before handing off to Meta Ads upload.
+
+    Args:
+        script: Spoken text. Same script used across all aspect variants.
+        avatar_id: HeyGen avatar_id (use list_heygen_avatars first).
+        voice_id: HeyGen voice_id (use list_heygen_voices first).
+        hook_label: Short label for traceability (e.g. 'hook-1-founder',
+            'vsl-segment-2'). Stamped into video titles. Empty = 'untitled'.
+        aspects: Comma-separated aspect list. Default '9:16,1:1,16:9'.
+            Supported: 9:16, 1:1, 16:9, 4:5.
+        captioned: When True (default), recommended_url per aspect is the
+            captioned variant (video_url_caption). False = bare video_url.
+        background_color: Hex background. Default '#FFFFFF'.
+
+    Returns: JSON string with per-aspect URLs and overall ok flag, or error.
+    """
+    from services.heygen_renderer import render_ad_variants
+
+    aspect_list = [a.strip() for a in (aspects or "").split(",") if a.strip()]
+    if not aspect_list:
+        return "ERROR: aspects is required (e.g. '9:16,1:1,16:9')."
+
+    result = render_ad_variants(
+        script=script,
+        avatar_id=avatar_id,
+        voice_id=voice_id,
+        hook_label=hook_label or "untitled",
+        aspects=tuple(aspect_list),
+        captioned=captioned,
+        background_color=background_color or "#FFFFFF",
+    )
+    return _truncate_json(result)
+
+
 HEYGEN_TOOLS = [
     list_heygen_avatars,
     list_heygen_voices,
     generate_avatar_video,
     poll_heygen_video_status,
     download_heygen_video,
+    render_heygen_ad_variants,
 ]

@@ -6823,6 +6823,44 @@ async def heygen_status_endpoint(authorization: Optional[str] = Header(None)):
     return heygen_status()
 
 
+class HeygenRenderVariantsRequest(BaseModel):
+    script: str
+    avatar_id: str
+    voice_id: str
+    hook_label: Optional[str] = ""
+    aspects: Optional[list[str]] = None
+    captioned: bool = True
+    background_color: Optional[str] = "#FFFFFF"
+
+
+@app.post("/admin/heygen/render-variants")
+async def heygen_render_variants_endpoint(
+    request: HeygenRenderVariantsRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Synchronous multi-aspect HeyGen render — submits 9:16/1:1/16:9 (or
+    custom aspect list) in parallel, polls all to completion, returns
+    captioned URLs per aspect.
+
+    Used directly during testing and from the orchestrator (PR 24) for
+    the autonomous Book'd ad pipeline. Costs HeyGen credits per aspect
+    (typical 5-15 sec hook = ~$0.05-0.20 per aspect, ~$0.15-0.60 total
+    across all 3 aspects).
+    """
+    validate_key(authorization)
+    from services.heygen_renderer import render_ad_variants
+    aspects = tuple(request.aspects) if request.aspects else ("9:16", "1:1", "16:9")
+    return render_ad_variants(
+        script=request.script,
+        avatar_id=request.avatar_id,
+        voice_id=request.voice_id,
+        hook_label=request.hook_label or "untitled",
+        aspects=aspects,
+        captioned=request.captioned,
+        background_color=request.background_color or "#FFFFFF",
+    )
+
+
 @app.post("/admin/digest/send")
 async def digest_send_endpoint(
     business_key: str,
