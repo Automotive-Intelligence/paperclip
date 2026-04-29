@@ -6807,6 +6807,14 @@ async def klaviyo_status_endpoint(authorization: Optional[str] = Header(None)):
     return klaviyo_status()
 
 
+@app.get("/admin/higgsfield/status")
+async def higgsfield_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability: HF credentials + configured application paths + R2 status."""
+    validate_key(authorization)
+    from tools.higgsfield import higgsfield_status
+    return higgsfield_status()
+
+
 @app.post("/admin/digest/send")
 async def digest_send_endpoint(
     business_key: str,
