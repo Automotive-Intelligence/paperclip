@@ -6758,6 +6758,169 @@ async def meta_create_campaign_endpoint(
     return result
 
 
+# ── Meta Ads Phase 2: Pages, video upload, ad creative, ad set, ad ──
+
+@app.get("/meta/account/{account_id}/pages")
+async def meta_list_pages_endpoint(
+    account_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """List Facebook Pages owned by the account's business. Required for ad creatives."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        return {"pages": client.list_pages_for_account(account_id)}
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class UploadVideoRequest(BaseModel):
+    video_url: str
+    name: str
+
+
+@app.post("/meta/account/{account_id}/video")
+async def meta_upload_video_endpoint(
+    account_id: str,
+    request: UploadVideoRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Upload a video to Meta's AdVideo library by URL. Meta fetches the URL.
+    Returns the video_id used for AdCreative."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        return client.upload_video_from_url(account_id=account_id,
+                                            video_url=request.video_url,
+                                            name=request.name)
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class CreateVideoCreativeRequest(BaseModel):
+    video_id: str
+    page_id: str
+    name: str
+    link_url: Optional[str] = None
+    message: Optional[str] = ""
+    headline: Optional[str] = ""
+    call_to_action_type: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
+
+@app.post("/meta/account/{account_id}/creative/video")
+async def meta_create_video_creative_endpoint(
+    account_id: str,
+    request: CreateVideoCreativeRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Create an AdCreative referencing an uploaded video. Returns creative_id."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        return client.create_video_ad_creative(
+            account_id=account_id,
+            video_id=request.video_id,
+            page_id=request.page_id,
+            name=request.name,
+            link_url=request.link_url,
+            message=request.message or "",
+            headline=request.headline or "",
+            call_to_action_type=request.call_to_action_type,
+            thumbnail_url=request.thumbnail_url,
+        )
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class CreateAdSetRequest(BaseModel):
+    campaign_id: str
+    name: str
+    daily_budget_cents: int
+    optimization_goal: Optional[str] = "LINK_CLICKS"
+    billing_event: Optional[str] = "IMPRESSIONS"
+    bid_strategy: Optional[str] = "LOWEST_COST_WITHOUT_CAP"
+    targeting: Optional[dict] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+
+
+@app.post("/meta/account/{account_id}/adset")
+async def meta_create_ad_set_endpoint(
+    account_id: str,
+    request: CreateAdSetRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Create a PAUSED ad set under an existing campaign."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        return client.create_ad_set(
+            account_id=account_id,
+            campaign_id=request.campaign_id,
+            name=request.name,
+            daily_budget_cents=request.daily_budget_cents,
+            optimization_goal=request.optimization_goal or "LINK_CLICKS",
+            billing_event=request.billing_event or "IMPRESSIONS",
+            bid_strategy=request.bid_strategy or "LOWEST_COST_WITHOUT_CAP",
+            targeting=request.targeting,
+            start_time=request.start_time,
+            end_time=request.end_time,
+        )
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class CreateAdRequest(BaseModel):
+    ad_set_id: str
+    creative_id: str
+    name: str
+
+
+@app.post("/meta/account/{account_id}/ad")
+async def meta_create_ad_endpoint(
+    account_id: str,
+    request: CreateAdRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Create a PAUSED Ad referencing an AdCreative inside an AdSet. Operator
+    un-pauses manually in Ads Manager once approved."""
+    validate_key(authorization)
+    from services.meta_ads import MetaAdsClient, MetaAdsConfigError, MetaAdsApiError
+    try:
+        client = MetaAdsClient()
+        return client.create_paused_ad(
+            account_id=account_id,
+            ad_set_id=request.ad_set_id,
+            creative_id=request.creative_id,
+            name=request.name,
+        )
+    except MetaAdsConfigError as e:
+        raise HTTPException(status_code=503, detail=f"Meta API not configured: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MetaAdsApiError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # ── Approval Digest (weekly batch for client-facing approval) ────────────────
 
 class DigestRejectRequest(BaseModel):
