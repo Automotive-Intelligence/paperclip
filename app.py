@@ -6815,6 +6815,14 @@ async def higgsfield_status_endpoint(authorization: Optional[str] = Header(None)
     return higgsfield_status()
 
 
+@app.get("/admin/heygen/status")
+async def heygen_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Observability: HeyGen credentials + budget + R2 share with Higgsfield."""
+    validate_key(authorization)
+    from tools.heygen import heygen_status
+    return heygen_status()
+
+
 @app.post("/admin/digest/send")
 async def digest_send_endpoint(
     business_key: str,
