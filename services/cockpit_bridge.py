@@ -191,6 +191,10 @@ AGENT_ROSTER: List[Dict[str, Any]] = [
     {"name": "sherry",      "river": "customer_advocate","role": "Web Design agent at CustomerAdvocate",                "is_ceo": False},
     # Master
     {"name": "axiom",       "river": "shared",           "role": "Master CEO orchestration; cross-river strategy and fallback target", "is_ceo": True},
+    # Pipeline runners (synchronous orchestrators, not CrewAI agents — fired
+    # via agent_triggers like any other agent runner; the bridge LLM router
+    # picks them when the flag's intent matches their domain)
+    {"name": "bookd_pipeline","river": "shared",          "role": "Autonomous Book'd ad pipeline — turns one hook script into 3 PAUSED Meta video ads (HeyGen render → Meta upload → AdCreative → AdSet → Ad → approval digest). Route here when the flag asks to generate / produce / ship / launch a Book'd ad, hook, or talking-avatar ad. Never route here for non-Book'd content.", "is_ceo": False},
 ]
 
 # Per-river CEO, used when Pit Wall flags reference a specific business.
