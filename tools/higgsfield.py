@@ -55,7 +55,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_DOWNLOAD_DIR = "/tmp/higgsfield_outputs"
 DEFAULT_MAX_CALLS = 25
 DEFAULT_TIMEOUT = 30
-HIGGSFIELD_CLOUD_BASE = "https://cloud.higgsfield.ai"
+# API host is platform.higgsfield.ai (cloud.higgsfield.ai is the dashboard).
+# Auth scheme is `Authorization: Key <api_key:api_secret>`, NOT Bearer.
+# Both confirmed by inspecting higgsfield_client SDK source 2026-04-28.
+HIGGSFIELD_API_BASE = "https://platform.higgsfield.ai"
 
 # Status names mirror higgsfield_client.types_ — kept as plain strings so
 # this module doesn't crash at import time if the SDK is missing.
@@ -475,25 +478,64 @@ def download_higgsfield_output(generation_id: str, filename: str = "") -> str:
 # Discovery: what models does this account expose via Cloud API?
 # ---------------------------------------------------------------------------
 
+# Curated application paths to probe during discovery. Verified or plausible
+# based on Higgsfield's public model lineup (Speak v2, Lipsync-2, InfiniteTalk,
+# Kling AI Avatar/Lipsync, Veo 3, Sora 2, Soul, FLUX, Seedream, Seedance) and
+# the documented pattern '<vendor>/<model>/<variant>'. Probe with empty body —
+# valid paths return 422 (validation) or 400 (missing fields), invalid paths
+# return 404 'Model not found'. Verified working as of 2026-04-28:
+#   bytedance/seedream/v4/text-to-image
+KNOWN_VERIFIED_PATHS = [
+    "bytedance/seedream/v4/text-to-image",  # ✓ confirmed live 2026-04-28
+]
+CANDIDATE_PATHS = [
+    # text/image generation
+    "bytedance/seedream/v4/image-to-image",
+    "bytedance/seedream/v3/text-to-image",
+    "black-forest-labs/flux/v1/text-to-image",
+    "black-forest-labs/flux/v2/text-to-image",
+    "higgsfield/soul/v1/text-to-image",
+    "higgsfield/nano-banana-pro/v1/text-to-image",
+    # video generation
+    "bytedance/seedance/v1/text-to-video",
+    "bytedance/seedance/v1/image-to-video",
+    "kling/v3/text-to-video",
+    "kling/v3/image-to-video",
+    "openai/sora/v2/text-to-video",
+    "openai/sora/v2/image-to-video",
+    "google/veo/v3/text-to-video",
+    "google/veo/v3.1/text-to-video",
+    # lipsync / talking avatar
+    "higgsfield/lipsync/v2",
+    "higgsfield/speak/v2",
+    "kling/avatar/v1",
+    "kling/lipsync/v1",
+    # avatar / digital twin
+    "higgsfield/soul-id/train",
+    "higgsfield/soul-id/generate",
+]
+
+
 @tool("List Higgsfield Models")
 def list_higgsfield_models() -> str:
-    """Probe Higgsfield Cloud for the application paths exposed via API.
+    """Probe Higgsfield's API for application paths your account can access.
 
-    The official SDK does not expose a dedicated list-applications method,
-    so this tool tries documented + plausible REST endpoints against
-    cloud.higgsfield.ai using the same credentials. Used during onboarding
-    to discover the real path strings for HF_APP_LIPSYNC, HF_APP_TEXT2VIDEO,
-    HF_APP_IMAGE2VIDEO, and to confirm which models (Soul ID, Sora 2,
-    Veo 3.1) are accessible vs web-UI-only.
+    The official Higgsfield Cloud API does not expose a list-applications
+    endpoint. This tool probes a curated list of known + plausible application
+    path strings via POST with an empty body. Valid paths return 4xx-with-body
+    (e.g. 422 'missing fields'); invalid paths return 404 'Model not found'.
+    Costs no credits — generation is not started since no required fields
+    are passed.
 
-    Returns: JSON string with discovered application list, or error string.
-    If discovery fails, returns a hint to check the Higgsfield dashboard
-    manually.
+    Use during onboarding to discover the real path strings for HF_APP_LIPSYNC,
+    HF_APP_TEXT2VIDEO, HF_APP_IMAGE2VIDEO. Once the dashboard's API examples
+    panel is consulted, set those env vars directly and skip this discovery.
+
+    Returns: JSON string with valid + invalid paths separated.
     """
     if not _credentials_set():
         return "ERROR: HF_KEY (or HF_API_KEY + HF_API_SECRET) env var(s) not set."
 
-    # Resolve combined key in same form the SDK uses
     combined = (os.environ.get("HF_KEY") or "").strip()
     if not combined:
         api_key = (os.environ.get("HF_API_KEY") or "").strip()
@@ -501,48 +543,45 @@ def list_higgsfield_models() -> str:
         if api_key and api_secret:
             combined = f"{api_key}:{api_secret}"
 
-    candidate_paths = [
-        "/api/v1/applications",
-        "/api/v1/models",
-        "/v1/applications",
-        "/v1/models",
-        "/applications",
-        "/models",
-    ]
+    # Higgsfield uses 'Authorization: Key <combined>', NOT Bearer
     headers = {
-        "Authorization": f"Bearer {combined}",
+        "Authorization": f"Key {combined}",
         "Accept": "application/json",
+        "Content-Type": "application/json",
     }
 
-    discovered: list[dict[str, Any]] = []
-    for path in candidate_paths:
-        url = f"{HIGGSFIELD_CLOUD_BASE}{path}"
+    valid: list[str] = []
+    invalid: list[str] = []
+    other: list[dict[str, Any]] = []
+
+    for path in KNOWN_VERIFIED_PATHS + CANDIDATE_PATHS:
+        url = f"{HIGGSFIELD_API_BASE}/{path}"
         try:
-            resp = requests.get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
+            resp = requests.post(url, headers=headers, json={}, timeout=DEFAULT_TIMEOUT)
         except requests.exceptions.RequestException as e:
-            discovered.append({"path": path, "error": f"{type(e).__name__}: {e}"})
+            other.append({"path": path, "error": f"{type(e).__name__}: {e}"})
             continue
-        discovered.append({"path": path, "status_code": resp.status_code})
-        if resp.status_code == 200:
-            try:
-                body = resp.json()
-            except ValueError:
-                body = {"raw": resp.text[:500]}
-            discovered[-1]["body"] = body
-            return _truncate_json({
-                "ok": True,
-                "discovered_via": path,
-                "applications": body,
-            })
+
+        body_lower = resp.text.lower() if resp.text else ""
+        if resp.status_code == 404 and "model not found" in body_lower:
+            invalid.append(path)
+        elif resp.status_code == 200 or (resp.status_code >= 400 and "model not found" not in body_lower):
+            # 200 = somehow accepted (would burn credits — empty body shouldn't, but flag)
+            # 4xx with non-"Model not found" body usually means valid path with bad inputs
+            valid.append(path)
+        else:
+            other.append({"path": path, "status": resp.status_code, "body": resp.text[:120]})
 
     return _truncate_json({
-        "ok": False,
-        "reason": "No documented Cloud API list-applications endpoint responded with 200.",
-        "probed": discovered,
-        "hint": "Check the Higgsfield Cloud dashboard at https://cloud.higgsfield.ai/ — "
-                "application paths are typically shown in the API examples panel for each "
-                "model (Lipsync Studio / Sora 2 / Veo 3.1 / Soul ID). Once known, set "
-                "HF_APP_LIPSYNC, HF_APP_TEXT2VIDEO, HF_APP_IMAGE2VIDEO env vars on Railway.",
+        "ok": True,
+        "verified_paths": valid,
+        "model_not_found": invalid,
+        "other_responses": other,
+        "hint": (
+            "Set HF_APP_LIPSYNC / HF_APP_TEXT2VIDEO / HF_APP_IMAGE2VIDEO env vars on Railway "
+            "to one of the verified_paths. If the path you need isn't listed, check the API "
+            "examples panel in the Higgsfield Cloud dashboard for the exact application string."
+        ),
     })
 
 
