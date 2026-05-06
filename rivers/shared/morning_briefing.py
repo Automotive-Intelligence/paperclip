@@ -128,6 +128,13 @@ def pull_instantly_campaign_summary(api_key: str, campaign_id: str) -> Dict[str,
         "opens_24h": 0,
         "replies_24h": 0,
         "clicks_24h": 0,
+        "lifetime_sent": 0,
+        "lifetime_opens": 0,
+        "lifetime_replies": 0,
+        "lifetime_bounced": 0,
+        "open_rate_pct": None,   # opens / sent * 100
+        "reply_rate_pct": None,  # replies / sent * 100
+        "deliverability_dead": False,  # >50 sent and 0 opens
         "box_box": [],  # leads with replies or clicks
         "dnfs": 0,      # bounced/error status
         "status": "unknown",
@@ -184,23 +191,59 @@ def pull_instantly_campaign_summary(api_key: str, campaign_id: str) -> Dict[str,
             logger.warning(f"[Briefing] leads page failed: {e}")
             break
 
-    # Campaign analytics for 24h metrics
+    # Lifetime analytics (correct v2 endpoint — GET, not POST)
     try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d")
-        r = requests.post(f"{INSTANTLY_BASE}/campaigns/analytics",
+        r = requests.get(
+            f"{INSTANTLY_BASE}/campaigns/analytics",
             headers=headers,
-            json={"campaign_id": campaign_id, "start_date": since},
-            timeout=20)
+            params={"campaign_id": campaign_id},
+            timeout=20,
+        )
         if r.status_code == 200:
             stats = r.json()
             if isinstance(stats, list) and stats:
                 stats = stats[0]
-            summary["sent_24h"] = stats.get("emails_sent_count", 0) or 0
-            summary["opens_24h"] = stats.get("open_count_unique", stats.get("open_count", 0)) or 0
-            summary["replies_24h"] = stats.get("reply_count", 0) or 0
-            summary["clicks_24h"] = stats.get("click_count", 0) or 0
+            summary["lifetime_sent"] = stats.get("emails_sent_count", 0) or 0
+            summary["lifetime_opens"] = stats.get("open_count", 0) or 0
+            summary["lifetime_replies"] = stats.get("reply_count", 0) or 0
+            summary["lifetime_bounced"] = stats.get("bounced_count", 0) or 0
+            if summary["lifetime_sent"] > 0:
+                summary["open_rate_pct"] = round(
+                    100 * summary["lifetime_opens"] / summary["lifetime_sent"], 1
+                )
+                summary["reply_rate_pct"] = round(
+                    100 * summary["lifetime_replies"] / summary["lifetime_sent"], 1
+                )
+            # Deliverability gutter check: enough volume to judge + zero engagement
+            if summary["lifetime_sent"] >= 50 and summary["lifetime_opens"] == 0:
+                summary["deliverability_dead"] = True
+        else:
+            logger.warning(f"[Briefing] analytics GET {r.status_code}: {r.text[:200]}")
     except Exception as e:
-        logger.warning(f"[Briefing] analytics pull failed: {e}")
+        logger.warning(f"[Briefing] lifetime analytics pull failed: {e}")
+
+    # Yesterday's per-day row (real 24h numbers from /analytics/daily)
+    try:
+        r = requests.get(
+            f"{INSTANTLY_BASE}/campaigns/analytics/daily",
+            headers=headers,
+            params={"campaign_id": campaign_id},
+            timeout=20,
+        )
+        if r.status_code == 200:
+            rows = r.json() or []
+            if isinstance(rows, list) and rows:
+                yesterday_str = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d")
+                # Match yesterday's row, fall back to most recent if not found
+                row = next((x for x in rows if str(x.get("date", "")).startswith(yesterday_str)), rows[-1])
+                summary["sent_24h"] = row.get("sent", row.get("emails_sent_count", 0)) or 0
+                summary["opens_24h"] = row.get("opened", row.get("open_count", 0)) or 0
+                summary["replies_24h"] = row.get("replies", row.get("reply_count", 0)) or 0
+                summary["clicks_24h"] = row.get("clicks", row.get("click_count", 0)) or 0
+        else:
+            logger.warning(f"[Briefing] daily analytics GET {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"[Briefing] daily analytics pull failed: {e}")
 
     return summary
 
@@ -251,6 +294,34 @@ def compose_briefing_html(
 
     total_sent_24h = tyler_sent + ryan_sent
     total_replies_24h = tyler_replies + ryan_replies
+
+    # ── Deliverability alert (escalates above the fold when inbox placement is dead) ──
+    deliverability_html = ""
+    dead_campaigns = []
+    if tyler.get("deliverability_dead"):
+        dead_campaigns.append(("Tyler — AI Phone Guy", tyler))
+    if ryan.get("deliverability_dead"):
+        dead_campaigns.append(("Ryan Data — Automotive Intelligence", ryan))
+    if dead_campaigns:
+        rows = "".join(
+            f"<tr><td style='padding:6px 10px;'><b>{name}</b></td>"
+            f"<td style='padding:6px 10px;'>{d.get('lifetime_sent', 0)} sent</td>"
+            f"<td style='padding:6px 10px;color:#c00;'>{d.get('lifetime_opens', 0)} opens "
+            f"({d.get('open_rate_pct', 0)}%)</td>"
+            f"<td style='padding:6px 10px;color:#c00;'>{d.get('lifetime_replies', 0)} replies</td></tr>"
+            for name, d in dead_campaigns
+        )
+        deliverability_html = (
+            f"<div style='background:#fce4e4;border:2px solid #c00;"
+            f"padding:14px;margin:16px 0;border-radius:6px;'>"
+            f"<h2 style='margin:0 0 8px;color:#900;'>🚨 Deliverability Alert — Inbox Placement Dead</h2>"
+            f"<p style='margin:0 0 10px;color:#600;font-size:13px;'>"
+            f"Volume is going out but engagement is zero. Likely causes: spam folder placement, "
+            f"open-tracking pixel blocked, SPF/DKIM/DMARC misconfigured, or sender domain reputation in the gutter."
+            f"</p>"
+            f"<table style='border-collapse:collapse;width:100%;font-size:13px;'>{rows}</table>"
+            f"</div>"
+        )
 
     # ── BOX BOX alerts (prominently displayed) ──
     box_box_html = ""
@@ -321,6 +392,8 @@ color:#333;max-width:720px;margin:0 auto;padding:20px;">
     {total_sent_24h} sent · {total_replies_24h} replies · {tyler_boxes + ryan_boxes} BOX BOX
   </span>
 </div>
+
+{deliverability_html}
 
 {box_box_html}
 
