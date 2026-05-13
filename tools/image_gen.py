@@ -24,7 +24,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import requests
 
@@ -249,6 +249,53 @@ def generate_image(
         "aspect_ratio": aspect_ratio,
         "prompt_used": full_prompt,
     }
+
+
+def generate_image_hybrid(
+    prompt: str,
+    business_key: str = "",
+    platform: str = "default",
+    aspect_ratio: str = "",
+    model: str = "flux",
+) -> Union[Dict[str, Any], str]:
+    """
+    Hybrid router: dispatch image generation to FLUX (default) or Nano Banana.
+
+    - model="flux" (default) -> tools/image_gen.generate_image (Replicate FLUX)
+    - model="nano_banana"    -> tools/kie_ai.generate_nano_banana_image
+
+    FLUX path raises ServiceCallError on failure (unchanged legacy behavior).
+    Nano Banana path returns an error string on failure (matches keyapi /
+    shopify / klaviyo pattern). Callers should branch on isinstance(result, str).
+
+    Args:
+        prompt: Visual description.
+        business_key: Brand key for style prefixing.
+        platform: Target social platform (used to resolve aspect_ratio).
+        aspect_ratio: Override aspect ratio. Empty = platform default.
+        model: "flux" (default) or "nano_banana".
+
+    Returns:
+        Dict {urls, model, aspect_ratio, prompt_used} or error string.
+    """
+    if model == "nano_banana":
+        from tools.kie_ai import generate_nano_banana_image
+        # Resolve aspect ratio from platform if not explicitly set.
+        ar = aspect_ratio or PLATFORM_ASPECT_RATIOS.get(
+            platform.lower(), PLATFORM_ASPECT_RATIOS["default"]
+        )
+        return generate_nano_banana_image(
+            prompt=prompt,
+            aspect_ratio=ar,
+            business_key=business_key,
+        )
+    # Default: FLUX path. Preserve legacy behavior (raises on failure).
+    return generate_image(
+        prompt=prompt,
+        business_key=business_key,
+        platform=platform,
+        aspect_ratio=aspect_ratio,
+    )
 
 
 def generate_image_bytes(

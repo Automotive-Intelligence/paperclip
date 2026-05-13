@@ -51,12 +51,20 @@ def sofia_generate_image(
     business_key: str = "calling_digital",
     platform: str = "instagram",
     aspect_ratio: str = "",
+    model: str = "flux",
 ) -> str:
-    """Generate a social-media image via Replicate FLUX.
+    """Generate a social-media image via Replicate FLUX or Google Nano Banana.
 
     Use this when drafting a static IG / Facebook post, a quote card, or a
     lifestyle product shot. The returned URL can then be attached to a
     Zernio draft or saved into an artifact's metadata.image_url field.
+
+    Hybrid model selection:
+      - model="flux" (default) — Replicate FLUX 1.1 Pro / Schnell. Workhorse
+        for everyday social, quote cards, and graphic-style content.
+      - model="nano_banana" — Google Nano Banana via kie.ai. Use for
+        photoreal product / lifestyle shots (e.g. Paper & Purpose journals,
+        Sofia photoreal IG posts) where FLUX's stylized output is wrong.
 
     Args:
         prompt: Visual description of the image (e.g., 'Hardcover spiral
@@ -69,6 +77,9 @@ def sofia_generate_image(
             for 1:1, 'tiktok' for 9:16.
         aspect_ratio: Override aspect ratio (e.g. '1:1', '9:16', '4:5').
             Empty = use platform default.
+        model: 'flux' (default) or 'nano_banana'. nano_banana requires
+            KIE_AI_API_KEY env var; if unset, returns a clean error string
+            and the FLUX path is unaffected.
 
     Returns: JSON string with `urls`, `model`, `aspect_ratio`, `prompt_used`
         on success; error string on failure.
@@ -76,14 +87,21 @@ def sofia_generate_image(
     prompt = (prompt or "").strip()
     if not prompt:
         return "ERROR: prompt is required."
+    chosen_model = (model or "flux").strip().lower()
+    if chosen_model not in ("flux", "nano_banana"):
+        return f"ERROR: unknown model {model!r}. Use 'flux' or 'nano_banana'."
     try:
-        from tools.image_gen import generate_image
-        result = generate_image(
+        from tools.image_gen import generate_image_hybrid
+        result = generate_image_hybrid(
             prompt=prompt,
             business_key=business_key or "",
             platform=platform or "default",
             aspect_ratio=aspect_ratio or "",
+            model=chosen_model,
         )
+        # Nano Banana path returns error strings directly; pass through.
+        if isinstance(result, str):
+            return result
         return _truncate_json(result)
     except Exception as e:
         logger.exception("sofia_generate_image failed")
