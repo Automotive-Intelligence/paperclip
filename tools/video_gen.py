@@ -287,6 +287,62 @@ def generate_video_from_image(
     )
 
 
+def generate_video_routed(
+    prompt: str,
+    business_key: str = "",
+    platform: str = "default",
+    model: str = "kling",
+    duration: int = 0,
+    aspect_ratio: str = "",
+    start_image_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Route a video-gen request to the right backend.
+
+    Lanes:
+      - "kling" (default): Replicate Kling — cheap, fast B-roll.
+      - "seedance_pro": fal.ai ByteDance Seedance Pro — premium cinematic shots.
+
+    HeyGen lipsync is a separate concern (services/heygen_renderer.py) and is
+    NOT routed through here — that lane is for talking-head, this lane is for
+    text-to-video / image-to-video B-roll.
+
+    Returns the same dict shape as generate_video():
+        {url, model, aspect_ratio, duration, prompt_used}
+    """
+    lane = (model or "kling").strip().lower()
+
+    if lane == "seedance_pro":
+        # Resolve platform defaults the same way Kling does so the LLM doesn't
+        # have to know aspect ratios per platform.
+        platform_settings = PLATFORM_VIDEO_SETTINGS.get(
+            platform.lower(), PLATFORM_VIDEO_SETTINGS["default"]
+        )
+        resolved_aspect = aspect_ratio or platform_settings["aspect_ratio"]
+        resolved_duration = duration or platform_settings["duration"]
+
+        from tools.fal_ai import generate_seedance_pro_video
+        return generate_seedance_pro_video(
+            prompt=prompt,
+            aspect_ratio=resolved_aspect,
+            duration=resolved_duration,
+            start_image_url=start_image_url,
+            business_key=business_key,
+        )
+
+    # Default: Kling (or any Replicate-hosted model name passed through).
+    replicate_model = "" if lane == "kling" else model
+    return generate_video(
+        prompt=prompt,
+        business_key=business_key,
+        platform=platform,
+        model=replicate_model,
+        duration=duration,
+        aspect_ratio=aspect_ratio,
+        start_image_url=start_image_url,
+    )
+
+
 def download_video_bytes(video_url: str) -> bytes:
     """Download generated video and return raw bytes (for Zernio upload)."""
     try:
