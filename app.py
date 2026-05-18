@@ -6749,6 +6749,17 @@ async def handoffs_drain_endpoint(agent_name: str, limit: int = 3):
     return drain_handoffs_for_agent(agent_name, limit=limit)
 
 
+@app.get("/bridge/fallbacks")
+async def bridge_fallbacks_endpoint(limit: int = 20):
+    """Recent bridge routings that fell back to axiom (OpenAI error, invalid
+    JSON, unknown agent picked). These are at risk of silently sitting in
+    the wrong queue — proactive triage target. Empty list means routing
+    is healthy."""
+    from services.cockpit_bridge import get_recent_fallback_routings
+    rows = get_recent_fallback_routings(limit=limit)
+    return {"count": len(rows), "fallbacks": rows}
+
+
 # ── Meta Marketing API (Phase 1, single-tenant prototype) ────────────────────
 
 class CreateCampaignRequest(BaseModel):
