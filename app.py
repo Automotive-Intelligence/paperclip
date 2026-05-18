@@ -3429,6 +3429,29 @@ try:
 except Exception as _bridge_reg_err:
     logging.warning(f"[CockpitBridge] scheduler registration failed: {_bridge_reg_err}")
 
+# Heartbeat: ping an external watcher every 5 minutes so we get alerted
+# when Paperclip silently dies (process crash, OOM, Railway outage,
+# scheduler hung). Configure HEARTBEAT_URL in Railway env vars to enable.
+# See ~/avo-telemetry/paperclip_uptime_setup.md for the setup runbook.
+try:
+    from services.heartbeat import ping_heartbeat as _ping_heartbeat, get_heartbeat_url as _get_heartbeat_url
+
+    if _get_heartbeat_url():
+        scheduler.add_job(
+            _ping_heartbeat,
+            IntervalTrigger(minutes=5),
+            id="heartbeat_external_watcher",
+            name="Heartbeat — external dead-man's-switch ping",
+            replace_existing=True,
+            misfire_grace_time=120,
+            max_instances=1,
+        )
+        logging.info("[Heartbeat] HEARTBEAT_URL set — scheduled 5-min ping job")
+    else:
+        logging.info("[Heartbeat] HEARTBEAT_URL not set — heartbeat ping disabled")
+except Exception as _hb_reg_err:
+    logging.warning(f"[Heartbeat] scheduler registration failed: {_hb_reg_err}")
+
 # Approval Digest: weekly Sunday 6PM CT, send one digest per business_key
 # that has pending_approval artifacts and a configured DIGEST_RECIPIENT_<KEY>.
 try:
@@ -6758,6 +6781,22 @@ async def bridge_fallbacks_endpoint(limit: int = 20):
     from services.cockpit_bridge import get_recent_fallback_routings
     rows = get_recent_fallback_routings(limit=limit)
     return {"count": len(rows), "fallbacks": rows}
+
+
+@app.get("/heartbeat/status")
+async def heartbeat_status_endpoint():
+    """Confirm HEARTBEAT_URL is configured without leaking the URL itself —
+    healthchecks.io URLs contain a UUID that acts as the auth token."""
+    from services.heartbeat import heartbeat_status
+    return heartbeat_status()
+
+
+@app.post("/heartbeat/ping")
+async def heartbeat_ping_endpoint():
+    """Fire a heartbeat ping right now. Useful to verify wiring during
+    setup without waiting for the next scheduled 5-min tick."""
+    from services.heartbeat import ping_heartbeat
+    return ping_heartbeat(extra_query={"reason": "manual"})
 
 
 # ── Meta Marketing API (Phase 1, single-tenant prototype) ────────────────────
