@@ -210,7 +210,17 @@ RIVER_CEO: Dict[str, str] = {
 VALID_AGENTS = {a["name"] for a in AGENT_ROSTER}
 VALID_RIVERS = {a["river"] for a in AGENT_ROSTER}
 
-SKIPPED_TARGETS = {"Build & Tech"}
+# Prefix-match so any target starting with one of these strings is skipped.
+# Historic incident: a flag targeted "Build & Tech — Sofia + Marcus tier-1
+# sprint" was routed via GPT-4o because the previous exact-match rule
+# ({"Build & Tech"}) didn't catch the suffixed form. Build & Tech work
+# stays in Claude Code (this assistant); CrewAI agents do not own it.
+SKIPPED_TARGET_PREFIXES = ("Build & Tech",)
+
+
+def _is_skipped_target(target: str) -> bool:
+    t = (target or "").strip()
+    return any(t.startswith(prefix) for prefix in SKIPPED_TARGET_PREFIXES)
 
 ROUTING_MODEL = os.environ.get("BRIDGE_ROUTING_MODEL", "gpt-4o")
 
@@ -674,13 +684,18 @@ def poll_new_flags() -> Dict[str, int]:
     for flag in all_flags:
         if flag.hash in already:
             continue
-        if flag.target in SKIPPED_TARGETS:
+        if _is_skipped_target(flag.target):
             mark_seen(flag, handoff_id=None)
             skipped += 1
             continue
 
         decision = route_flag_intelligently(flag)
-        logger.info(
+        # Fallback routings are decisions the model could not make confidently
+        # (or made and we couldn't validate). They land on axiom with low
+        # confidence. Log at WARNING so they show up in default log filters
+        # and surface via /bridge/fallbacks for proactive triage.
+        log_fn = logger.warning if decision.source == "fallback" else logger.info
+        log_fn(
             "[Routing] flag target=%s -> agent=%s river=%s priority=%s confidence=%.2f source=%s reasoning=%s",
             flag.target, decision.target_agent, decision.river,
             decision.priority, decision.confidence, decision.source, decision.reasoning,
@@ -839,6 +854,50 @@ def cleanup_for_fresh_start() -> Dict[str, Any]:
 # Status for observability
 # ---------------------------------------------------------------------------
 
+def get_recent_fallback_routings(limit: int = 10) -> List[Dict[str, Any]]:
+    """Recent bridge-created handoffs where the LLM router fell back to
+    axiom (model error, invalid JSON, unknown agent picked, OPENAI_API_KEY
+    missing, etc). These are the flags most at risk of silently sitting in
+    the wrong agent's queue — proactive triage target."""
+    try:
+        rows = fetch_all(
+            "SELECT sf.flag_hash, sf.source_file, sf.target, sf.posted, "
+            "       sf.handoff_id, sf.created_at, ah.payload, ah.status "
+            "FROM cockpit_bridge_seen_flags sf "
+            "LEFT JOIN agent_handoffs ah ON ah.id = sf.handoff_id "
+            "WHERE ah.payload LIKE %s "
+            "ORDER BY sf.created_at DESC LIMIT %s",
+            ('%"source": "fallback"%', limit),
+        )
+    except DatabaseError as e:
+        logger.warning("[CockpitBridge] fallback query failed: %s", e)
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        routing_info: Optional[Dict[str, Any]] = None
+        payload_raw = r[6]
+        if payload_raw:
+            try:
+                payload_dict = (
+                    payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
+                )
+                routing_info = payload_dict.get("_routing")
+            except Exception:
+                routing_info = None
+        out.append({
+            "flag_hash": r[0],
+            "source_file": r[1],
+            "target": r[2],
+            "posted": r[3],
+            "handoff_id": r[4],
+            "created_at": str(r[5]) if r[5] else None,
+            "handoff_status": r[7],
+            "routing": routing_info,
+        })
+    return out
+
+
 def bridge_status() -> Dict[str, Any]:
     cfg = get_bridge_config()
     enabled = cfg is not None and cfg.enabled
@@ -907,6 +966,8 @@ def bridge_status() -> Dict[str, Any]:
     except Exception as e:
         logger.warning("[CockpitBridge] trigger_status failed: %s", e)
 
+    fallbacks = get_recent_fallback_routings(limit=10)
+
     return {
         "enabled": enabled,
         "repo": f"{cfg.owner}/{cfg.repo}" if cfg else None,
@@ -917,8 +978,10 @@ def bridge_status() -> Dict[str, Any]:
             for a in AGENT_ROSTER
         ],
         "river_ceo": RIVER_CEO,
-        "skipped_targets": sorted(SKIPPED_TARGETS),
+        "skipped_target_prefixes": list(SKIPPED_TARGET_PREFIXES),
         "counts": counts,
         "recent": recent,
+        "fallbacks_recent_10": fallbacks,
+        "fallbacks_count": len(fallbacks),
         "triggers": triggers_info,
     }
