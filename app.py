@@ -610,7 +610,9 @@ def _avo_wrap_run(agent_name: str, river: str, run_fn):
     """Universal intelligence wrapper for any agent run function.
 
     Injects memory + directives + handoffs before the run,
-    saves memory + estimates cost after.
+    drains pending cockpit handoffs FIRST so client/cockpit-routed work
+    always goes before the daily self-content batch, then saves memory +
+    estimates cost.
     """
     import time as _time
     # Pre-run: build intelligence context (logged but not injected into CrewAI
@@ -622,6 +624,24 @@ def _avo_wrap_run(agent_name: str, river: str, run_fn):
             logging.info("[AVO] %s pre-run context: %s", agent_name, ctx[:200])
     except Exception:
         pass
+
+    # Drain pending cockpit handoffs FIRST. Without this, cockpit flags land
+    # in agent_handoffs and never execute because run_fn() is hard-coded for
+    # the daily self-content path. One handoff failure does not block the
+    # others or the daily run.
+    try:
+        from services.handoff_consumer import drain_handoffs_for_agent
+        drain_stats = drain_handoffs_for_agent(agent_name)
+        if drain_stats["claimed"] > 0:
+            logging.info(
+                "[AVO] %s drained handoffs: claimed=%d completed=%d failed=%d",
+                agent_name,
+                drain_stats["claimed"],
+                drain_stats["completed"],
+                drain_stats["failed"],
+            )
+    except Exception as e:
+        logging.warning("[AVO] %s handoff drain raised: %s", agent_name, e)
 
     start = _time.time()
     result = run_fn()
@@ -6708,6 +6728,25 @@ async def bridge_cleanup_endpoint():
     Use after a buggy tick to reset state. Idempotent."""
     from services.cockpit_bridge import cleanup_for_fresh_start
     return cleanup_for_fresh_start()
+
+
+@app.get("/handoffs/stale")
+async def handoffs_stale_endpoint(minutes: int = 60):
+    """Handoffs stuck in picked_up past `minutes`. Visibility on agents that
+    claimed work but never completed it. Empty list means the consumer is
+    healthy."""
+    from services.handoff_consumer import get_stale_handoffs
+    rows = get_stale_handoffs(stale_minutes=minutes)
+    return {"threshold_minutes": minutes, "count": len(rows), "stale": rows}
+
+
+@app.post("/handoffs/drain/{agent_name}")
+async def handoffs_drain_endpoint(agent_name: str, limit: int = 3):
+    """Force-drain pending handoffs for one agent right now. Useful for
+    manual recovery and for verifying the consumer wiring without waiting
+    for the next scheduled run."""
+    from services.handoff_consumer import drain_handoffs_for_agent
+    return drain_handoffs_for_agent(agent_name, limit=limit)
 
 
 # ── Meta Marketing API (Phase 1, single-tenant prototype) ────────────────────
