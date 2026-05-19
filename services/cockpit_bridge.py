@@ -172,7 +172,10 @@ AGENT_ROSTER: List[Dict[str, Any]] = [
     {"name": "sofia",       "river": "callingdigital",   "role": "Head of Content and Creative at Calling Digital",     "is_ceo": False},
     {"name": "marcus",      "river": "callingdigital",   "role": "Senior SDR and pipeline builder at Calling Digital",  "is_ceo": False},
     {"name": "carlos",      "river": "callingdigital",   "role": "Head of Client Success at Calling Digital",           "is_ceo": False},
-    {"name": "nova",        "river": "callingdigital",   "role": "AI Implementation Director at Calling Digital",       "is_ceo": False},
+    # nova (CD AI Implementation Director) removed from routing 2026-05-19 to
+    # free the "nova" namespace for Customer Advocate's NOVA buyer agent.
+    # Agent code remains in agents/callingdigital/nova.py and can be re-wired
+    # if CD activates an Implementation Director again.
     {"name": "brenda",      "river": "callingdigital",   "role": "RevOps (Attio workflow architect) at Calling Digital","is_ceo": False},
     # Automotive Intelligence
     {"name": "michael_meta","river": "autointelligence", "role": "CEO of Automotive Intelligence",                      "is_ceo": True},

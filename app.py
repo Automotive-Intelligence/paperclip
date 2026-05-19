@@ -3141,8 +3141,11 @@ def _avo_sched_jennifer():
 def _avo_sched_carlos():
     _avo_wrap_run("carlos", "callingdigital", run_carlos_retention)
 
-def _avo_sched_nova():
-    _avo_wrap_run("nova", "callingdigital", run_nova_intelligence)
+# _avo_sched_nova removed 2026-05-19. CD AI Implementation Director was
+# unwired from production routing to free the "nova" namespace for
+# Customer Advocate's NOVA buyer agent. The agent's CrewAI definition
+# in agents/callingdigital/nova.py and run_nova_intelligence below
+# remain available if CD ever re-activates the role.
 
 def _avo_sched_atlas():
     _avo_wrap_run("atlas", "autointelligence", run_atlas_intel)
@@ -3234,10 +3237,8 @@ scheduler.add_job(_avo_sched_carlos, CronTrigger(hour=9, minute=32, timezone=CST
     id="carlos_daily_retention", name="Carlos Daily Retention",
     replace_existing=True, misfire_grace_time=3600)
 
-# Specialists — 10:00, 10:02, 10:04 [AVO wrapped]
-scheduler.add_job(_avo_sched_nova, CronTrigger(hour=10, minute=0, timezone=CST),
-    id="nova_daily_intelligence", name="Nova Daily Intelligence",
-    replace_existing=True, misfire_grace_time=3600)
+# Specialists — 10:02, 10:04 [AVO wrapped]
+# (10:00 Nova slot removed 2026-05-19 with the CD nova retirement.)
 
 scheduler.add_job(_avo_sched_atlas, CronTrigger(hour=10, minute=2, timezone=CST),
     id="atlas_daily_intel", name="Atlas Daily Intel",
@@ -3533,7 +3534,8 @@ try:
         "chase":        _avo_sched_chase,
         "jennifer":     _avo_sched_jennifer,
         "carlos":       _avo_sched_carlos,
-        "nova":         _avo_sched_nova,
+        # "nova" removed 2026-05-19 — Paperclip CD nova retired from
+        # production routing. Namespace reserved for Customer Advocate.
         "atlas":        _avo_sched_atlas,
         "phoenix":      _avo_sched_phoenix,
         "axiom":        _avo_sched_axiom,
