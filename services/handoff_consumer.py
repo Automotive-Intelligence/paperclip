@@ -199,7 +199,9 @@ _AGENT_IMPORT_MAP: Dict[str, str] = {
     "sofia":        "agents.callingdigital.sofia:sofia",
     "marcus":       "agents.callingdigital.marcus:marcus",
     "carlos":       "agents.callingdigital.carlos:carlos",
-    "nova":         "agents.callingdigital.nova:nova",
+    # "nova" intentionally absent — Paperclip CD nova was removed from
+    # routing 2026-05-19; "nova" namespace now reserved for Customer
+    # Advocate's NOVA buyer agent.
     "brenda":       "agents.callingdigital.brenda:brenda",
     # Automotive Intelligence
     "michael_meta": "agents.autointelligence.michael_meta:michael_meta",

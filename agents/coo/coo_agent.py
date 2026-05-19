@@ -28,7 +28,9 @@ EXPECTED_AGENTS = [
     # Client Success
     "jennifer", "carlos",
     # Specialists
-    "nova", "atlas", "phoenix",
+    # "nova" removed 2026-05-19 (CD AI Implementation Director retired
+    # from routing; namespace reserved for Customer Advocate NOVA).
+    "atlas", "phoenix",
     # RevOps (interval-based, run multiple times per day)
     "randy", "brenda", "darrell",
     # Agent Empire (daily only — wade_ae and debra are weekly Monday)
@@ -48,7 +50,7 @@ AGENT_BUSINESS_MAP = {
     "alex": "aiphoneguy", "tyler": "aiphoneguy", "zoe": "aiphoneguy", "jennifer": "aiphoneguy",
     "randy": "aiphoneguy",
     "dek": "callingdigital", "marcus": "callingdigital", "sofia": "callingdigital",
-    "carlos": "callingdigital", "nova": "callingdigital", "brenda": "callingdigital",
+    "carlos": "callingdigital", "brenda": "callingdigital",
     "michael_meta": "autointelligence", "ryan_data": "autointelligence",
     "chase": "autointelligence", "atlas": "autointelligence", "phoenix": "autointelligence",
     "darrell": "autointelligence",
