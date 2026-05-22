@@ -5536,6 +5536,219 @@ async def instantly_webhook(payload: dict, request: Request):
     }
 
 
+# ── Marketing pipeline (generation upstream, Zernio distribution) ────────────
+
+@app.post("/webhook/marketing-content")
+async def marketing_content_webhook(payload: dict, request: Request):
+    """Intake for marketing content from Zoe / Sofia / Chase.
+
+    Routes the post by platform and queues it into the approval queue. It
+    does NOT publish — the Phase 1 human approval gate sits between intake
+    and Zernio. After Michael approves the artifact, POST
+    /admin/marketing/publish hands it to Zernio.
+
+    Auth: shared secret in X-Marketing-Secret (env MARKETING_WEBHOOK_SECRET).
+    Idempotent: a deterministic dedupe_key is derived per content item.
+    """
+    secret = os.getenv("MARKETING_WEBHOOK_SECRET", "").strip()
+    sent = (request.headers.get("X-Marketing-Secret") or "").strip()
+    if secret and sent != secret:
+        logging.warning("[marketing_content_webhook] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+
+    business_key = (payload.get("business_key") or "").strip()
+    subject = (payload.get("subject") or "").strip()
+    content = (payload.get("content") or "").strip()
+    agent = (payload.get("agent") or "marketing_agent").strip()
+    intent = (payload.get("intent") or "inform").strip()
+    scheduled_for = (payload.get("scheduled_for") or "").strip()
+    media_urls = payload.get("media_urls") or []
+    overrides = payload.get("per_platform_overrides") or {}
+
+    if not (business_key and subject and content):
+        return JSONResponse(status_code=422, content={
+            "status": "invalid", "error": "business_key, subject, content required"})
+
+    # Route by platform — keep only Zernio-supported platforms.
+    from services.distribution.zernio_client import ZERNIO_PLATFORMS
+    platforms, dropped = [], []
+    for p in (payload.get("platforms") or []):
+        key = str(p).strip().lower()
+        if key in ZERNIO_PLATFORMS:
+            if key not in platforms:
+                platforms.append(key)
+        elif key:
+            dropped.append(key)
+    if not platforms:
+        return JSONResponse(status_code=422, content={
+            "status": "invalid", "error": "no Zernio-supported platforms",
+            "dropped_platforms": dropped})
+
+    try:
+        from services.artifact import create_artifact
+        from services.approval_queue import queue_artifact
+        from tools.marketing_tools import _dedupe_key
+
+        dedupe_key = _dedupe_key(business_key, content, platforms, scheduled_for)
+        metadata = {
+            "platform": ", ".join(platforms),
+            "distribution": "zernio",
+            "dedupe_key": dedupe_key,
+            "media_urls": list(media_urls),
+            "per_platform_overrides": overrides if isinstance(overrides, dict) else {},
+            "scheduled_for": scheduled_for,
+            "source": "marketing-content-webhook",
+        }
+        artifact = create_artifact(
+            agent_id=agent, business_key=business_key,
+            artifact_type="social_post", audience="public", intent=intent,
+            content=content, subject=subject, channel_candidates=platforms,
+            confidence=0.85, risk_level="medium", metadata=metadata,
+        )
+        artifact_id = queue_artifact(artifact)
+    except Exception as e:
+        logging.error("[marketing_content_webhook] queue failed: %s", e)
+        return JSONResponse(status_code=500, content={
+            "status": "queue_failed", "error": str(e)})
+
+    return {
+        "status": "queued_for_approval",
+        "artifact_id": artifact_id,
+        "platforms": platforms,
+        "dropped_platforms": dropped,
+        "dedupe_key": dedupe_key,
+        "note": "Queued for review. Publishes to Zernio only after approval.",
+    }
+
+
+@app.post("/webhooks/zernio")
+async def zernio_events_webhook(payload: dict, request: Request):
+    """Inbound from Zernio: post.published / post.failed events. We use
+    Zernio's webhooks instead of polling for post status.
+
+    Auth: shared secret in X-Zernio-Secret (env ZERNIO_WEBHOOK_SECRET).
+    """
+    secret = os.getenv("ZERNIO_WEBHOOK_SECRET", "").strip()
+    sent = (request.headers.get("X-Zernio-Secret") or "").strip()
+    if secret and sent != secret:
+        logging.warning("[zernio_events_webhook] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+
+    event = (payload.get("event") or payload.get("type") or "").strip().lower()
+    data = payload.get("data") or payload
+    post_id = str(data.get("id") or data.get("postId") or "")
+
+    if "publish" in event:
+        logging.info("[zernio] post published: %s", post_id)
+        new_status = "published"
+    elif "fail" in event:
+        logging.warning("[zernio] post FAILED: %s — %s", post_id, data.get("error", ""))
+        new_status = "failed"
+    else:
+        return {"status": "ignored", "event": event}
+
+    # Reflect the real outcome in the dedupe ledger (no polling needed).
+    try:
+        from services.database import execute_query
+        execute_query(
+            "UPDATE marketing_post_dedupe SET status = %s WHERE zernio_post_id = %s",
+            (new_status, post_id),
+        )
+    except Exception as e:
+        logging.warning("[zernio_events_webhook] ledger update failed: %s", e)
+
+    return {"status": "received", "event": event, "post_id": post_id}
+
+
+@app.post("/admin/marketing/publish")
+async def marketing_publish(payload: dict, request: Request):
+    """Publish an APPROVED marketing artifact to Zernio.
+
+    This is the final post call. It requires the approval flag: the
+    artifact must be in 'approved' status. Agents cannot reach this — it is
+    the post-review step. Idempotency is enforced by the dedupe_key on the
+    normalized Post, so a retry never double-posts.
+
+    Auth: shared secret in X-Marketing-Secret (env MARKETING_WEBHOOK_SECRET).
+    Body: {"artifact_id": "..."}
+    """
+    secret = os.getenv("MARKETING_WEBHOOK_SECRET", "").strip()
+    sent = (request.headers.get("X-Marketing-Secret") or "").strip()
+    if secret and sent != secret:
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+
+    artifact_id = (payload.get("artifact_id") or "").strip()
+    if not artifact_id:
+        return JSONResponse(status_code=422, content={
+            "status": "invalid", "error": "artifact_id required"})
+
+    try:
+        from services.approval_queue import get_artifact_record
+        record = get_artifact_record(artifact_id)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "status": "lookup_failed", "error": str(e)})
+    if not record:
+        return JSONResponse(status_code=404, content={"status": "not_found"})
+
+    # THE APPROVAL FLAG — nothing posts unless the artifact was approved.
+    art_status = (record.get("status") or "").lower()
+    if art_status != "approved":
+        return JSONResponse(status_code=403, content={
+            "status": "not_approved", "artifact_status": art_status,
+            "error": "artifact must be approved before it can publish"})
+
+    metadata = record.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+
+    try:
+        from services.distribution import get_zernio_client, Post, PlatformTarget
+        client = get_zernio_client()
+        if not client.ready():
+            return JSONResponse(status_code=503, content={
+                "status": "config_missing", "error": "ZERNIO_API_KEY not set"})
+
+        # Resolve platform -> connected accountId from Zernio.
+        acct_by_platform: dict = {}
+        for a in client.list_accounts():
+            plat = str(a.get("platform") or "").strip().lower()
+            if plat and plat not in acct_by_platform:
+                acct_by_platform[plat] = str(a.get("id") or a.get("accountId") or "")
+
+        overrides = metadata.get("per_platform_overrides") or {}
+        targets = []
+        for p in [x.strip().lower() for x in str(metadata.get("platform", "")).split(",") if x.strip()]:
+            acct = acct_by_platform.get(p)
+            if acct:
+                targets.append(PlatformTarget(
+                    platform=p, account_id=acct, override_content=overrides.get(p)))
+        if not targets:
+            return JSONResponse(status_code=422, content={
+                "status": "no_connected_accounts",
+                "error": "no Zernio accounts connected for this post's platforms"})
+
+        scheduled_for = (metadata.get("scheduled_for") or "").strip() or None
+        post = Post(
+            content=record.get("content") or "",
+            targets=targets,
+            dedupe_key=metadata.get("dedupe_key") or artifact_id,
+            media_urls=metadata.get("media_urls") or [],
+            scheduled_for=scheduled_for,
+            subject=record.get("subject") or "",
+        )
+        result = client.create_post(post, publish_now=not bool(scheduled_for))
+    except Exception as e:
+        logging.error("[marketing_publish] failed: %s", e)
+        return JSONResponse(status_code=502, content={
+            "status": "publish_failed", "error": str(e)})
+
+    return {"status": "published", "artifact_id": artifact_id, "zernio": result}
+
+
 # ── Dashboard API Endpoints ──────────────────────────────────────────────────
 
 @app.get("/api/agents")
