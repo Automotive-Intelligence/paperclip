@@ -61,3 +61,4 @@ data/ownerphones/
 data/backups/
 .vite/
 
+scripts/backups/pp_product_*.json
