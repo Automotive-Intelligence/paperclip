@@ -62,3 +62,4 @@ data/backups/
 .vite/
 
 scripts/backups/pp_product_*.json
+scripts/outputs/pp_welcome_templates_*.json
