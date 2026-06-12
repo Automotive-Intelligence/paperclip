@@ -3363,6 +3363,20 @@ scheduler.add_job(_run_morning_briefing, CronTrigger(hour=8, minute=0, timezone=
     id="morning_briefing_daily_8am", name="Morning Briefing (Email + SMS) — Daily 8am CST",
     replace_existing=True, misfire_grace_time=3600)
 
+# Infrastructure (CTO) — daily 7:30am CDT sweep: domain SSL, agent run anomalies,
+# error patterns. Writes findings to avo-telemetry/infrastructure_state.md.
+def _run_infrastructure_sweep():
+    try:
+        from services.infrastructure_sweep import cto_daily_sweep
+        summary = cto_daily_sweep()
+        logging.info(f"[Paperclip] CTO daily sweep: {summary}")
+    except Exception as e:
+        logging.error(f"[Paperclip] CTO daily sweep failed: {e}")
+
+scheduler.add_job(_run_infrastructure_sweep, CronTrigger(hour=7, minute=30, timezone=CST),
+    id="cto_daily_sweep", name="Infrastructure (CTO) Daily Sweep — 7:30am CST",
+    replace_existing=True, misfire_grace_time=1800)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",

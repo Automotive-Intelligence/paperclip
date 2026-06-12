@@ -1,0 +1,432 @@
+"""services/infrastructure_sweep.py — CTO / Infrastructure daily sweep.
+
+Daily 7:30 AM CDT sweep of the org-tech surface. Findings get written into
+the Infrastructure persona's telemetry file (`infrastructure_state.md` in
+avo-telemetry) so other personas + the morning briefing can read them.
+
+v1 checks (each returns a list of findings):
+  1. Domain SSL certificate expiry — catches "expired cert" outages before
+     they happen
+  2. Agent run anomalies — runs/24h vs 7d median; flags silent failures
+     (drop to 0) and runaway loops (spike to 2x+)
+  3. Recent error patterns — last 24h agent_logs.content containing
+     error/exception/failed; surfaces silent platform issues
+
+Each finding has a severity (info/warn/critical). Overall sweep status:
+  - green: zero warn/critical findings
+  - yellow: any warn findings
+  - red:    any critical findings
+
+The "Active items" section of infrastructure_state.md is auto-managed by
+this sweep; all other sections (Waiting on, Recently closed, Flags, Scope
+reference, Standing duties) are preserved verbatim.
+
+Reuses cockpit_bridge's GitHub client (same GITHUB_TOKEN_TELEMETRY + repo).
+"""
+
+import logging
+import os
+import re
+import socket
+import ssl
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from statistics import median
+from typing import Dict, List, Optional, Tuple
+
+from services.cockpit_bridge import (
+    BridgeConfig,
+    get_bridge_config,
+    _get_file,
+    _put_file,
+)
+from services.database import fetch_all
+
+logger = logging.getLogger(__name__)
+
+
+# ── Config ──────────────────────────────────────────────────────────────────
+
+# v1 — hardcoded domain inventory. v2 reads from a config table / env var.
+MONITORED_DOMAINS = [
+    "theaiphoneguy.ai",
+    "automotiveintelligence.io",
+    "calling.digital",
+    "bookd.cx",
+    "buildagentempire.com",
+]
+
+SSL_EXPIRY_WARN_DAYS = 30
+SSL_EXPIRY_CRITICAL_DAYS = 7
+
+# Anomaly detection thresholds for agent run counts
+AGENT_RUN_SPIKE_RATIO = 3.0       # runs_24h / median_7d > this  → flag
+AGENT_RUN_DROP_MIN_BASELINE = 4   # only flag drops on agents with >= this median
+AGENT_RUN_DROP_THRESHOLD = 0.25   # runs_24h / median_7d < this  → flag
+
+ERROR_KEYWORDS = ("error", "exception", "failed", "traceback", "404", "500", "401", "403")
+ERROR_FINDING_THRESHOLD = 3       # need this many error log lines to count as a finding
+
+STATE_FILE = "infrastructure_state.md"
+
+
+@dataclass
+class Finding:
+    check: str             # which check produced this ("domain_ssl", "agent_runs", "errors")
+    severity: str          # "info" | "warn" | "critical"
+    title: str             # one-line headline
+    detail: str = ""       # optional multi-line context
+
+    def to_md_line(self) -> str:
+        icon = {"info": "ℹ️", "warn": "⚠️", "critical": "🚨"}.get(self.severity, "·")
+        line = f"- {icon} **[{self.check}]** {self.title}"
+        if self.detail:
+            line += f"\n  {self.detail.strip().replace(chr(10), chr(10) + '  ')}"
+        return line
+
+
+@dataclass
+class SweepResult:
+    findings: List[Finding] = field(default_factory=list)
+    started_at: str = ""
+    finished_at: str = ""
+
+    @property
+    def status(self) -> str:
+        sev = {f.severity for f in self.findings}
+        if "critical" in sev:
+            return "red"
+        if "warn" in sev:
+            return "yellow"
+        return "green"
+
+    @property
+    def status_icon(self) -> str:
+        return {"red": "🔴", "yellow": "🟡", "green": "🟢"}[self.status]
+
+
+# ── Check 1: domain SSL expiry ──────────────────────────────────────────────
+
+def _ssl_cert_expiry(hostname: str, port: int = 443, timeout: int = 6) -> Optional[datetime]:
+    """Return the SSL cert's `notAfter` as a tz-aware datetime, or None on failure.
+
+    For expiry-watching we only need the cert's notAfter field — we don't need
+    to validate the trust chain. Falls back to a no-verify connection when the
+    default context can't validate (e.g. missing CA bundle in some envs); the
+    cert content itself is still authoritative for the expiry date.
+    """
+    def _read(ctx_factory) -> Optional[Dict]:
+        try:
+            ctx = ctx_factory()
+            with socket.create_connection((hostname, port), timeout=timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    return ssock.getpeercert()
+        except ssl.SSLCertVerificationError:
+            return None
+        except Exception as e:
+            logger.warning("[infra_sweep] SSL connect %s failed: %s", hostname, e)
+            return None
+
+    cert = _read(ssl.create_default_context)
+    if cert is None:
+        # Fall back: bypass verification (we only care about notAfter)
+        def _unverified_ctx() -> ssl.SSLContext:
+            c = ssl.create_default_context()
+            c.check_hostname = False
+            c.verify_mode = ssl.CERT_NONE
+            return c
+        # CERT_NONE doesn't populate getpeercert() — need binary form
+        try:
+            with socket.create_connection((hostname, port), timeout=timeout) as sock:
+                with _unverified_ctx().wrap_socket(sock, server_hostname=hostname) as ssock:
+                    der = ssock.getpeercert(binary_form=True)
+            if not der:
+                return None
+            # Decode via the standard library — no external deps
+            import datetime as _dt
+            try:
+                from cryptography import x509
+                from cryptography.hazmat.backends import default_backend
+                cert_obj = x509.load_der_x509_certificate(der, default_backend())
+                return cert_obj.not_valid_after.replace(tzinfo=timezone.utc)
+            except ImportError:
+                # cryptography not installed — give up; production has it
+                logger.warning("[infra_sweep] cryptography not available for %s fallback", hostname)
+                return None
+        except Exception as e:
+            logger.warning("[infra_sweep] SSL fallback %s failed: %s", hostname, e)
+            return None
+
+    not_after = cert.get("notAfter") if cert else None
+    if not not_after:
+        return None
+    return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+
+
+def check_domain_ssl() -> List[Finding]:
+    findings: List[Finding] = []
+    now = datetime.now(timezone.utc)
+    for host in MONITORED_DOMAINS:
+        expiry = _ssl_cert_expiry(host)
+        if expiry is None:
+            findings.append(Finding(
+                check="domain_ssl",
+                severity="warn",
+                title=f"{host} — could not read SSL certificate",
+                detail="Possible: DNS not resolving, port 443 closed, handshake error.",
+            ))
+            continue
+        days_left = (expiry - now).days
+        if days_left <= SSL_EXPIRY_CRITICAL_DAYS:
+            findings.append(Finding(
+                check="domain_ssl",
+                severity="critical",
+                title=f"{host} SSL cert expires in {days_left}d ({expiry.date()})",
+                detail="Renewal needed NOW — outage risk imminent.",
+            ))
+        elif days_left <= SSL_EXPIRY_WARN_DAYS:
+            findings.append(Finding(
+                check="domain_ssl",
+                severity="warn",
+                title=f"{host} SSL cert expires in {days_left}d ({expiry.date()})",
+                detail=f"Schedule renewal within {SSL_EXPIRY_WARN_DAYS - days_left}d.",
+            ))
+    return findings
+
+
+# ── Check 2: agent run anomalies ────────────────────────────────────────────
+
+def check_agent_run_anomalies() -> List[Finding]:
+    findings: List[Finding] = []
+    try:
+        rows = fetch_all(
+            """
+            WITH today AS (
+                SELECT agent_name, COUNT(*) AS runs_24h
+                FROM agent_logs
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY agent_name
+            ),
+            past7 AS (
+                SELECT agent_name,
+                       date_trunc('day', created_at) AS day,
+                       COUNT(*) AS runs
+                FROM agent_logs
+                WHERE created_at >= NOW() - INTERVAL '8 days'
+                  AND created_at <  NOW() - INTERVAL '24 hours'
+                GROUP BY agent_name, date_trunc('day', created_at)
+            ),
+            baseline AS (
+                SELECT agent_name, percentile_cont(0.5) WITHIN GROUP (ORDER BY runs) AS median_7d
+                FROM past7 GROUP BY agent_name
+            )
+            SELECT COALESCE(t.agent_name, b.agent_name) AS agent_name,
+                   COALESCE(t.runs_24h, 0) AS runs_24h,
+                   COALESCE(b.median_7d, 0)::float AS median_7d
+            FROM today t
+            FULL OUTER JOIN baseline b USING (agent_name)
+            """
+        )
+    except Exception as e:
+        logger.warning("[infra_sweep] agent_run query failed: %s", e)
+        return [Finding(
+            check="agent_runs",
+            severity="warn",
+            title="agent_logs query failed",
+            detail=str(e)[:200],
+        )]
+
+    for agent_name, runs_24h, median_7d in rows:
+        if not agent_name:
+            continue
+        if median_7d and median_7d >= AGENT_RUN_DROP_MIN_BASELINE:
+            ratio = runs_24h / median_7d if median_7d > 0 else 0
+            if ratio < AGENT_RUN_DROP_THRESHOLD:
+                findings.append(Finding(
+                    check="agent_runs",
+                    severity="warn" if runs_24h > 0 else "critical",
+                    title=f"{agent_name}: {runs_24h} runs / 24h (7d median {median_7d:.0f}) — silent failure?",
+                    detail=f"ratio {ratio:.2f} vs threshold {AGENT_RUN_DROP_THRESHOLD}",
+                ))
+        if median_7d > 0:
+            ratio = runs_24h / median_7d if median_7d > 0 else 0
+            if ratio >= AGENT_RUN_SPIKE_RATIO:
+                findings.append(Finding(
+                    check="agent_runs",
+                    severity="warn",
+                    title=f"{agent_name}: {runs_24h} runs / 24h (7d median {median_7d:.0f}) — runaway?",
+                    detail=f"ratio {ratio:.2f}x baseline — possible loop / cost burn",
+                ))
+    return findings
+
+
+# ── Check 3: recent error patterns in agent_logs ────────────────────────────
+
+def check_recent_errors() -> List[Finding]:
+    findings: List[Finding] = []
+    try:
+        like_clause = " OR ".join("LOWER(content) LIKE %s" for _ in ERROR_KEYWORDS)
+        params: Tuple[str, ...] = tuple(f"%{kw}%" for kw in ERROR_KEYWORDS)
+        rows = fetch_all(
+            f"""
+            SELECT agent_name, COUNT(*) AS hits
+            FROM agent_logs
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+              AND ({like_clause})
+            GROUP BY agent_name
+            HAVING COUNT(*) >= %s
+            ORDER BY hits DESC
+            """,
+            params + (ERROR_FINDING_THRESHOLD,),
+        )
+    except Exception as e:
+        logger.warning("[infra_sweep] error_pattern query failed: %s", e)
+        return [Finding(
+            check="errors",
+            severity="warn",
+            title="error pattern query failed",
+            detail=str(e)[:200],
+        )]
+
+    for agent_name, hits in rows:
+        sev = "critical" if hits >= 20 else "warn"
+        findings.append(Finding(
+            check="errors",
+            severity=sev,
+            title=f"{agent_name}: {hits} error-pattern hits in last 24h",
+            detail=f"keywords matched: any of {', '.join(ERROR_KEYWORDS)}",
+        ))
+    return findings
+
+
+# ── Markdown composer + state-file update ───────────────────────────────────
+
+ACTIVE_SECTION_RE = re.compile(
+    r"(## Active items\s*\n)(.*?)(?=\n## )",
+    re.DOTALL,
+)
+
+
+def compose_active_section(result: SweepResult) -> str:
+    """Build the markdown body of the 'Active items' section."""
+    head = f"## Active items\n\n**Status:** {result.status_icon} {result.status}  · Last sweep: {result.finished_at} · {len(result.findings)} findings\n\n"
+    if not result.findings:
+        return head + "(no findings — all checks clean)\n"
+    by_sev = {"critical": [], "warn": [], "info": []}
+    for f in result.findings:
+        by_sev.setdefault(f.severity, []).append(f)
+    lines: List[str] = []
+    for sev_label, label in [("critical", "🚨 Critical"), ("warn", "⚠️ Warn"), ("info", "ℹ️ Info")]:
+        if by_sev.get(sev_label):
+            lines.append(f"\n### {label}\n")
+            lines.extend(f.to_md_line() for f in by_sev[sev_label])
+    return head + "\n".join(lines) + "\n"
+
+
+def update_state_file(result: SweepResult) -> bool:
+    """Replace just the 'Active items' section in infrastructure_state.md.
+
+    Other sections (Waiting on, Recently closed, Flags, Scope reference,
+    Standing duties) are preserved verbatim.
+    """
+    cfg = get_bridge_config()
+    if not cfg:
+        logger.warning("[infra_sweep] GITHUB_TOKEN_TELEMETRY / TELEMETRY_REPO not set — skipping push")
+        return False
+
+    file_result = _get_file(cfg, STATE_FILE)
+    if not file_result:
+        logger.warning("[infra_sweep] %s not found in telemetry repo — was infrastructure persona scaffolded?", STATE_FILE)
+        return False
+    content, sha = file_result
+
+    new_section = compose_active_section(result)
+    # Replace ## Active items ... up to next ## section, leaving the rest intact.
+    if ACTIVE_SECTION_RE.search(content):
+        new_content = ACTIVE_SECTION_RE.sub(new_section + "\n", content, count=1)
+    else:
+        logger.warning("[infra_sweep] could not find '## Active items' section — falling back to no-op")
+        return False
+
+    # Update "Last updated" header in-place
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    new_content = re.sub(
+        r"^\*\*Last updated:\*\*.*$",
+        f"**Last updated:** {today}",
+        new_content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    new_content = re.sub(
+        r"^\*\*Status:\*\*.*$",
+        f"**Status:** {result.status}",
+        new_content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+    ok = _put_file(
+        cfg,
+        STATE_FILE,
+        new_content,
+        sha,
+        message=f"chore(infrastructure): cto_daily_sweep — {result.status} {len(result.findings)} findings",
+    )
+    if ok:
+        logger.info("[infra_sweep] pushed update to %s (%d findings, status=%s)", STATE_FILE, len(result.findings), result.status)
+    return ok
+
+
+# ── Public entry points ─────────────────────────────────────────────────────
+
+def run_sweep(*, push: bool = True) -> SweepResult:
+    """Run all checks, optionally push results to telemetry. Returns the SweepResult."""
+    started = datetime.now(timezone.utc)
+    result = SweepResult(started_at=started.isoformat(timespec="seconds"))
+    try:
+        result.findings.extend(check_domain_ssl())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_domain_ssl errored: %s", e)
+    try:
+        result.findings.extend(check_agent_run_anomalies())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_agent_run_anomalies errored: %s", e)
+    try:
+        result.findings.extend(check_recent_errors())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_recent_errors errored: %s", e)
+    result.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    if push:
+        try:
+            update_state_file(result)
+        except Exception as e:
+            logger.exception("[infra_sweep] update_state_file errored: %s", e)
+    return result
+
+
+def cto_daily_sweep() -> Dict[str, object]:
+    """APScheduler entry point. Wraps run_sweep, returns a summary dict."""
+    result = run_sweep(push=True)
+    return {
+        "status": result.status,
+        "findings": len(result.findings),
+        "by_severity": {
+            sev: sum(1 for f in result.findings if f.severity == sev)
+            for sev in ("critical", "warn", "info")
+        },
+        "started_at": result.started_at,
+        "finished_at": result.finished_at,
+    }
+
+
+# ── Smoke test ──────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    print("\n### INFRASTRUCTURE SWEEP (smoke test, no push) ###\n")
+    r = run_sweep(push=False)
+    print(f"Status: {r.status_icon} {r.status}")
+    print(f"Findings: {len(r.findings)}")
+    print(f"Range: {r.started_at} -> {r.finished_at}\n")
+    print(compose_active_section(r))
