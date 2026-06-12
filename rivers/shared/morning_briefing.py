@@ -273,6 +273,98 @@ def _agent_section(title: str, agents: List[str], activity: Dict[str, Dict]) -> 
     )
 
 
+def _cto_html(infra: Dict[str, Any]) -> str:
+    """Render the Infrastructure (CTO) row for the morning brief."""
+    status = infra.get("status", "unknown")
+    icon = infra.get("icon", "⚪")
+    count = infra.get("findings_count", 0)
+    preview = infra.get("findings_preview", [])
+
+    color = {"green": "#28a745", "yellow": "#f0ad4e", "red": "#dc3545"}.get(status, "#999")
+    bg = {"green": "#e9f7ef", "yellow": "#fff8e1", "red": "#fce4e4"}.get(status, "#f5f5f5")
+
+    if status == "unknown":
+        headline = "🛠 Infrastructure: status unavailable (sweep may not have run yet)"
+        body = ""
+    elif count == 0:
+        headline = f"🛠 Infrastructure: {icon} {status} — 0 findings, all clean"
+        body = ""
+    else:
+        headline = f"🛠 Infrastructure: {icon} {status} — {count} finding{'s' if count != 1 else ''}"
+        rows = "".join(f"<li style='margin:2px 0;'>{p}</li>" for p in preview[:5])
+        body = f"<ul style='margin:6px 0 0 0;padding-left:24px;font-size:12px;color:#555;'>{rows}</ul>"
+
+    return (
+        f"<div style='background:{bg};border-left:4px solid {color};"
+        f"padding:10px 14px;margin:14px 0;border-radius:4px;'>"
+        f"<div style='font-size:14px;color:#333;'><b>{headline}</b></div>"
+        f"{body}"
+        f"</div>"
+    )
+
+
+def fetch_infrastructure_state() -> Dict[str, Any]:
+    """Read infrastructure_state.md from avo-telemetry, parse status + findings.
+
+    Returns a dict shaped:
+      {status: "green"|"yellow"|"red"|"unknown",
+       icon: "🟢"|"🟡"|"🔴"|"⚪",
+       findings_count: int,
+       findings_preview: [str, ...]  # top 3-5 finding titles, severity-ordered}
+
+    Falls back to neutral 'unknown' state if the file can't be read.
+    """
+    out: Dict[str, Any] = {
+        "status": "unknown",
+        "icon": "⚪",
+        "findings_count": 0,
+        "findings_preview": [],
+    }
+    try:
+        from services.cockpit_bridge import get_bridge_config, _get_file
+        cfg = get_bridge_config()
+        if not cfg:
+            return out
+        result = _get_file(cfg, "infrastructure_state.md")
+        if not result:
+            return out
+        content, _ = result
+    except Exception as e:
+        logger.warning(f"[Briefing] infra state fetch failed: {e}")
+        return out
+
+    import re as _re
+    # Parse Status — matches both "🟡 yellow" (post-sweep) and bare "yellow" (baseline)
+    icon_for = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+    for line in content.splitlines()[:30]:
+        if "**Status:**" not in line and "Status:" not in line:
+            continue
+        m = _re.search(r"(🟢|🟡|🔴)?\s*(green|yellow|red)\b", line, _re.IGNORECASE)
+        if m:
+            status_word = m.group(2).lower()
+            out["status"] = status_word
+            out["icon"] = m.group(1) or icon_for.get(status_word, "⚪")
+            break
+    # Parse "## Active items" headline finding count, e.g. "· 7 findings"
+    fc = _re.search(r"·\s*(\d+)\s+findings?", content)
+    if fc:
+        out["findings_count"] = int(fc.group(1))
+
+    # Pull top finding titles from the bullet lines under ### Critical / ### Warn sections
+    preview: list = []
+    for sev_marker in ("🚨", "⚠️", "ℹ️"):
+        # Each finding line: "- {icon} **[check]** Title\n  detail"
+        for m in _re.finditer(rf"^- {sev_marker}\s+\*\*\[[^\]]+\]\*\*\s+(.+)$", content, _re.MULTILINE):
+            title = m.group(1).strip()
+            preview.append(f"{sev_marker} {title}")
+            if len(preview) >= 5:
+                break
+        if len(preview) >= 5:
+            break
+    out["findings_preview"] = preview
+    return out
+
+
 def compose_briefing_html(
     activity: Dict[str, Dict],
     tyler: Dict[str, Any],
@@ -280,6 +372,7 @@ def compose_briefing_html(
 ) -> str:
     """Compose a structured HTML briefing."""
     today = datetime.now().strftime("%A, %B %d %Y")
+    infra = fetch_infrastructure_state()
 
     # ── Header metrics ──
     tyler_total = tyler.get("total_leads", 0)
@@ -394,6 +487,8 @@ color:#333;max-width:720px;margin:0 auto;padding:20px;">
 </div>
 
 {deliverability_html}
+
+{_cto_html(infra)}
 
 {box_box_html}
 
