@@ -93,6 +93,12 @@ VERCEL_SNAPSHOT_FILE = "infrastructure_vercel_inventory.json"
 VERCEL_STALE_DAYS = 60        # info-severity flag — review for retirement
 VERCEL_DORMANT_DAYS = 180     # warn-severity flag — almost certainly dead weight
 
+# Critical-alert escalation channel — Resend email fires immediately on red status.
+# Distinct from the daily morning brief (which surfaces yellow + green inline).
+ALERT_RECIPIENT = os.getenv("BRIEFING_RECIPIENT", "michael@automotiveintelligence.io")
+ALERT_FROM = os.getenv("BRIEFING_FROM", "Infrastructure Alerts <briefing@mail.automotiveintelligence.io>")
+RESEND_URL = "https://api.resend.com/emails"
+
 # Env vars that come from the runtime/platform and aren't worth tracking as
 # "the org's wired secrets." Filtered out of drift snapshots.
 PLATFORM_ENV_PREFIXES = (
@@ -752,9 +758,67 @@ def run_sweep(*, push: bool = True) -> SweepResult:
     return result
 
 
+def _send_critical_alert(result: SweepResult) -> bool:
+    """Fire an immediate Resend email when sweep status is red.
+
+    Distinct from the daily 8am brief — this fires AT SWEEP TIME (7:30am) the
+    moment a critical finding lands, so the driver knows before the brief reads.
+
+    No-op when status is green or yellow (those route through the daily brief).
+    No-op when RESEND_API_KEY isn't set.
+    """
+    if result.status != "red":
+        return False
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not api_key:
+        logger.warning("[infra_sweep] critical alert skipped — RESEND_API_KEY not set")
+        return False
+    critical = [f for f in result.findings if f.severity == "critical"]
+    if not critical:
+        return False
+
+    rows = "".join(
+        f"<li style='margin:8px 0;'><b>[{f.check}]</b> {f.title}"
+        f"{('<br><span style=color:#555;font-size:12px>' + f.detail.replace(chr(10), ' ') + '</span>') if f.detail else ''}"
+        f"</li>"
+        for f in critical
+    )
+    html = (
+        f"<!DOCTYPE html><html><body style='font-family:-apple-system,Helvetica,Arial,sans-serif;"
+        f"max-width:640px;margin:0 auto;padding:20px;color:#333;'>"
+        f"<div style='background:#fce4e4;border:2px solid #c00;padding:16px;border-radius:6px;'>"
+        f"<h1 style='margin:0 0 10px;color:#900;font-size:20px;'>🚨 Infrastructure Critical — {len(critical)} finding(s)</h1>"
+        f"<div style='color:#666;font-size:12px;margin-bottom:8px;'>Sweep ran {result.finished_at}</div>"
+        f"<ul style='margin:0;padding-left:22px;font-size:14px;'>{rows}</ul>"
+        f"</div>"
+        f"<div style='margin-top:20px;color:#888;font-size:12px;'>"
+        f"This alert fires only on RED status. Yellow + green findings appear in the daily 8am brief.<br>"
+        f"Full state: avo-telemetry/infrastructure_state.md"
+        f"</div></body></html>"
+    )
+    subject = f"🚨 Infrastructure CRITICAL — {len(critical)} finding(s)"
+
+    try:
+        r = requests.post(
+            RESEND_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"from": ALERT_FROM, "to": [ALERT_RECIPIENT], "subject": subject, "html": html},
+            timeout=20,
+        )
+        if r.status_code in (200, 201):
+            logger.info("[infra_sweep] critical alert email sent to %s", ALERT_RECIPIENT)
+            return True
+        logger.error("[infra_sweep] critical alert send failed %s: %s", r.status_code, r.text[:200])
+        return False
+    except Exception as e:
+        logger.error("[infra_sweep] critical alert send errored: %s", e)
+        return False
+
+
 def cto_daily_sweep() -> Dict[str, object]:
     """APScheduler entry point. Wraps run_sweep, returns a summary dict."""
     result = run_sweep(push=True)
+    alert_sent = _send_critical_alert(result)
     return {
         "status": result.status,
         "findings": len(result.findings),
@@ -762,6 +826,7 @@ def cto_daily_sweep() -> Dict[str, object]:
             sev: sum(1 for f in result.findings if f.severity == sev)
             for sev in ("critical", "warn", "info")
         },
+        "alert_sent": alert_sent,
         "started_at": result.started_at,
         "finished_at": result.finished_at,
     }
