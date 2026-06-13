@@ -86,6 +86,16 @@ ERROR_KEYWORDS = ("error", "exception", "failed", "traceback", "404", "500", "40
 ERROR_FINDING_THRESHOLD = 3       # need this many error log lines to count as a finding
 
 STATE_FILE = "infrastructure_state.md"
+ENV_SNAPSHOT_FILE = "infrastructure_env_snapshot.json"
+
+# Env vars that come from the runtime/platform and aren't worth tracking as
+# "the org's wired secrets." Filtered out of drift snapshots.
+PLATFORM_ENV_PREFIXES = (
+    "RAILWAY_", "NIXPACKS_", "PIP_", "PYTHON", "PATH", "PWD", "HOME",
+    "LANG", "LC_", "TERM", "SHELL", "USER", "HOSTNAME", "OLDPWD",
+    "PORT", "VIRTUAL_ENV", "_", "SHLVL", "DEBIAN_", "GPG_", "SSH_",
+)
+PLATFORM_ENV_EXACT = {"PORT", "PWD", "HOME", "USER", "HOSTNAME", "PATH", "LANG"}
 
 
 @dataclass
@@ -280,6 +290,129 @@ def check_agent_run_anomalies() -> List[Finding]:
 
 # ── Check 3: recent error patterns in agent_logs ────────────────────────────
 
+def _current_org_env_var_names() -> List[str]:
+    """Return sorted env-var NAMES (never values) excluding platform-injected ones.
+
+    Hard rule: this function NEVER returns or logs values. The drift detector
+    operates on names only — secrets must not enter the snapshot, logs, or
+    the avo-telemetry repo.
+    """
+    names: List[str] = []
+    for name in os.environ.keys():
+        if name in PLATFORM_ENV_EXACT:
+            continue
+        if any(name.startswith(p) for p in PLATFORM_ENV_PREFIXES):
+            continue
+        names.append(name)
+    return sorted(names)
+
+
+def check_env_var_drift() -> List[Finding]:
+    """Compare current env-var NAME set to the prior snapshot in avo-telemetry.
+
+    Flags:
+      - added:   vars present now that weren't before (could be new wiring OR
+                 leaked secret name; warn so a human reviews)
+      - removed: vars gone that were there before (could be intentional retirement
+                 OR accidental config wipe; warn either way — Build & Tech should
+                 confirm intent in the cleanup queue when an expected removal lands)
+
+    First run with no prior snapshot is a no-op (establishes baseline). Snapshot
+    is pushed back to avo-telemetry on every successful diff so the baseline
+    moves forward.
+    """
+    import json as _json
+    from services.cockpit_bridge import get_bridge_config, _get_file, _put_file
+    findings: List[Finding] = []
+    current = _current_org_env_var_names()
+
+    cfg = get_bridge_config()
+    if not cfg:
+        logger.warning("[infra_sweep] env drift: bridge config missing — skip")
+        return [Finding(
+            check="env_drift",
+            severity="warn",
+            title="env-var drift check skipped — telemetry GitHub access not configured",
+            detail="GITHUB_TOKEN_TELEMETRY / TELEMETRY_REPO not set",
+        )]
+
+    file_result = _get_file(cfg, ENV_SNAPSHOT_FILE)
+    prior: Optional[Dict] = None
+    sha: Optional[str] = None
+    if file_result:
+        content, sha = file_result
+        try:
+            prior = _json.loads(content)
+        except Exception as e:
+            logger.warning("[infra_sweep] prior env snapshot parse failed: %s", e)
+            prior = None
+
+    if not prior or not isinstance(prior.get("names"), list):
+        # First run — establish baseline silently, no findings
+        baseline = _json.dumps(
+            {
+                "snapshot_taken_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "count": len(current),
+                "names": current,
+            },
+            indent=2,
+        ) + "\n"
+        if sha is not None:
+            _put_file(cfg, ENV_SNAPSHOT_FILE, baseline, sha,
+                message="chore(infrastructure): env snapshot baseline (first run)")
+        else:
+            # Create the file (no SHA when it doesn't exist yet)
+            _put_file(cfg, ENV_SNAPSHOT_FILE, baseline, "",
+                message="chore(infrastructure): env snapshot baseline (created)")
+        return [Finding(
+            check="env_drift",
+            severity="info",
+            title=f"env-var baseline established: {len(current)} tracked names",
+            detail="First run — no drift to report. Future sweeps will diff against this snapshot.",
+        )]
+
+    prior_set = set(prior["names"])
+    current_set = set(current)
+    added = sorted(current_set - prior_set)
+    removed = sorted(prior_set - current_set)
+
+    if added:
+        findings.append(Finding(
+            check="env_drift",
+            severity="warn",
+            title=f"env-var drift: {len(added)} added since last sweep",
+            detail="Added: " + ", ".join(added[:15]) + (" …" if len(added) > 15 else ""),
+        ))
+    if removed:
+        findings.append(Finding(
+            check="env_drift",
+            severity="warn",
+            title=f"env-var drift: {len(removed)} removed since last sweep",
+            detail="Removed: " + ", ".join(removed[:15]) + (" …" if len(removed) > 15 else ""),
+        ))
+
+    # Update snapshot only if it changed — keep telemetry commit history clean
+    if added or removed:
+        updated = _json.dumps(
+            {
+                "snapshot_taken_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "count": len(current),
+                "names": current,
+                "prior_count": len(prior_set),
+                "added_since_prior": added,
+                "removed_since_prior": removed,
+            },
+            indent=2,
+        ) + "\n"
+        try:
+            _put_file(cfg, ENV_SNAPSHOT_FILE, updated, sha or "",
+                message=f"chore(infrastructure): env snapshot update — +{len(added)} -{len(removed)}")
+        except Exception as e:
+            logger.warning("[infra_sweep] env snapshot push failed: %s", e)
+
+    return findings
+
+
 def check_app_health() -> List[Finding]:
     """HTTP liveness check for the critical app surfaces.
 
@@ -458,6 +591,10 @@ def run_sweep(*, push: bool = True) -> SweepResult:
         result.findings.extend(check_app_health())
     except Exception as e:
         logger.exception("[infra_sweep] check_app_health errored: %s", e)
+    try:
+        result.findings.extend(check_env_var_drift())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_env_var_drift errored: %s", e)
     result.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if push:
