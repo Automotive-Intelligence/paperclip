@@ -54,7 +54,25 @@ MONITORED_DOMAINS = [
     "calling.digital",
     "bookd.cx",
     "buildagentempire.com",
+    "worshipdigital.co",            # WD root (CD rebrand, live 2026-06-11)
+    "crm.worshipdigital.co",        # Twenty workspace — WD client SoT (Attio replacement)
+    "bookd.twenty.com",             # Twenty workspace — Book'd client SoT
+    "portal.worshipdigital.co",     # Chatwoot WD client portal (pre-deploy — graceful unreachable until live)
 ]
+
+# Critical app surfaces that need HTTP-level liveness (not just SSL).
+# Twenty workspaces serve a UI at root; we just need a 2xx/3xx to know the install is up.
+# Chatwoot is here pre-deploy — until it's live, the check just reports "unreachable" as a non-flagging info.
+MONITORED_HEALTH_URLS = [
+    ("crm.worshipdigital.co",    "https://crm.worshipdigital.co/",    True),   # required=True → fail loud if down
+    ("bookd.twenty.com",         "https://bookd.twenty.com/",         True),
+    ("portal.worshipdigital.co", "https://portal.worshipdigital.co/", False),  # required=False → silent until deployed
+]
+
+# Browser UA spoof — Twenty's Cloudflare blocks default urllib/requests UA with 403.
+# Same gotcha documented in reference_crms memory.
+HEALTH_CHECK_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+HEALTH_CHECK_TIMEOUT = 8
 
 SSL_EXPIRY_WARN_DAYS = 30
 SSL_EXPIRY_CRITICAL_DAYS = 7
@@ -262,6 +280,47 @@ def check_agent_run_anomalies() -> List[Finding]:
 
 # ── Check 3: recent error patterns in agent_logs ────────────────────────────
 
+def check_app_health() -> List[Finding]:
+    """HTTP liveness check for the critical app surfaces.
+
+    Each entry is (label, url, required). When required=True a non-2xx/3xx or
+    transport error becomes a critical finding. When required=False (pre-deploy
+    placeholders like Chatwoot before launch), unreachable is silent.
+
+    Browser User-Agent spoof is required for Twenty workspaces — default Python
+    UA gets 403'd by Cloudflare (documented in reference_crms memory).
+    """
+    import requests as _requests
+    findings: List[Finding] = []
+    for label, url, required in MONITORED_HEALTH_URLS:
+        try:
+            r = _requests.get(
+                url,
+                timeout=HEALTH_CHECK_TIMEOUT,
+                headers={"User-Agent": HEALTH_CHECK_UA},
+                allow_redirects=True,
+            )
+            if 200 <= r.status_code < 400:
+                continue  # healthy, no finding
+            sev = "critical" if required else "info"
+            findings.append(Finding(
+                check="app_health",
+                severity=sev,
+                title=f"{label} returned HTTP {r.status_code}",
+                detail=f"URL: {url} — {'required surface' if required else 'optional/pre-deploy'}",
+            ))
+        except _requests.RequestException as e:
+            if not required:
+                continue  # pre-deploy, silent
+            findings.append(Finding(
+                check="app_health",
+                severity="critical",
+                title=f"{label} unreachable",
+                detail=f"URL: {url} — {type(e).__name__}: {str(e)[:120]}",
+            ))
+    return findings
+
+
 def check_recent_errors() -> List[Finding]:
     findings: List[Finding] = []
     try:
@@ -395,6 +454,10 @@ def run_sweep(*, push: bool = True) -> SweepResult:
         result.findings.extend(check_recent_errors())
     except Exception as e:
         logger.exception("[infra_sweep] check_recent_errors errored: %s", e)
+    try:
+        result.findings.extend(check_app_health())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_app_health errored: %s", e)
     result.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if push:
