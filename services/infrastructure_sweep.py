@@ -87,6 +87,11 @@ ERROR_FINDING_THRESHOLD = 3       # need this many error log lines to count as a
 
 STATE_FILE = "infrastructure_state.md"
 ENV_SNAPSHOT_FILE = "infrastructure_env_snapshot.json"
+VERCEL_SNAPSHOT_FILE = "infrastructure_vercel_inventory.json"
+
+# Zombie thresholds — projects with no deploy this old are candidate dead weight
+VERCEL_STALE_DAYS = 60        # info-severity flag — review for retirement
+VERCEL_DORMANT_DAYS = 180     # warn-severity flag — almost certainly dead weight
 
 # Env vars that come from the runtime/platform and aren't worth tracking as
 # "the org's wired secrets." Filtered out of drift snapshots.
@@ -289,6 +294,144 @@ def check_agent_run_anomalies() -> List[Finding]:
 
 
 # ── Check 3: recent error patterns in agent_logs ────────────────────────────
+
+def check_vercel_inventory() -> List[Finding]:
+    """List Vercel projects + last-deploy age, flag candidate zombies.
+
+    Surfaces:
+      - Project inventory (count, names, last deploy date per project)
+      - Stale projects (no deploy >60d) — info-severity
+      - Dormant projects (no deploy >180d) — warn-severity, candidate kill
+      - Erroring projects (READY != latest deploy state) — warn
+
+    Snapshot pushed to avo-telemetry/infrastructure_vercel_inventory.json.
+
+    Graceful skip when VERCEL_API_TOKEN not set; emits one info-severity
+    finding pointing at the configuration ask.
+    """
+    import json as _json
+    import requests as _requests
+
+    token = (os.environ.get("VERCEL_API_TOKEN") or os.environ.get("VERCEL_TOKEN") or "").strip()
+    team_id = (os.environ.get("VERCEL_TEAM_ID") or "").strip()
+
+    if not token:
+        return [Finding(
+            check="vercel_inventory",
+            severity="info",
+            title="Vercel inventory check skipped — VERCEL_API_TOKEN not configured",
+            detail="Set VERCEL_API_TOKEN on Railway (Vercel → Account Settings → Tokens) to enable zombie-project surfacing. Optional: VERCEL_TEAM_ID if using a team account.",
+        )]
+
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"limit": 100}
+    if team_id:
+        params["teamId"] = team_id
+
+    try:
+        r = _requests.get("https://api.vercel.com/v9/projects",
+                          headers=headers, params=params, timeout=15)
+        if r.status_code != 200:
+            return [Finding(
+                check="vercel_inventory",
+                severity="warn",
+                title=f"Vercel API returned HTTP {r.status_code}",
+                detail=f"body: {r.text[:200]} — token may be expired or scoped wrong",
+            )]
+        projects = (r.json() or {}).get("projects", [])
+    except Exception as e:
+        logger.warning("[infra_sweep] Vercel inventory fetch failed: %s", e)
+        return [Finding(
+            check="vercel_inventory",
+            severity="warn",
+            title="Vercel inventory fetch errored",
+            detail=str(e)[:200],
+        )]
+
+    findings: List[Finding] = []
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    stale = []
+    dormant = []
+    erroring = []
+    inventory: List[Dict[str, Any]] = []
+
+    for p in projects:
+        name = p.get("name")
+        latest = (p.get("latestDeployments") or [{}])[0]
+        ts = latest.get("createdAt") or p.get("createdAt") or 0
+        days_old = int((now_ms - int(ts)) / (1000 * 60 * 60 * 24)) if ts else None
+        state = latest.get("readyState") or latest.get("state")
+        framework = p.get("framework")
+        prod_domain = next(
+            (d.get("name") for d in (p.get("targets", {}).get("production", {}).get("alias", []) or []) if d.get("name")),
+            None,
+        )
+
+        inventory.append({
+            "name": name,
+            "framework": framework,
+            "last_deploy_days_ago": days_old,
+            "last_state": state,
+            "production_alias": prod_domain,
+        })
+
+        if state and state not in ("READY", "BUILDING", "QUEUED", "INITIALIZING"):
+            erroring.append(f"{name} ({state})")
+        if days_old is not None:
+            if days_old >= VERCEL_DORMANT_DAYS:
+                dormant.append(f"{name} ({days_old}d)")
+            elif days_old >= VERCEL_STALE_DAYS:
+                stale.append(f"{name} ({days_old}d)")
+
+    findings.append(Finding(
+        check="vercel_inventory",
+        severity="info",
+        title=f"Vercel projects under management: {len(projects)}",
+        detail="Inventory snapshot pushed to avo-telemetry/infrastructure_vercel_inventory.json",
+    ))
+    if dormant:
+        findings.append(Finding(
+            check="vercel_inventory",
+            severity="warn",
+            title=f"{len(dormant)} dormant Vercel project(s) — no deploy >{VERCEL_DORMANT_DAYS}d",
+            detail="Candidate kills: " + ", ".join(dormant[:10]) + (" …" if len(dormant) > 10 else ""),
+        ))
+    if stale:
+        findings.append(Finding(
+            check="vercel_inventory",
+            severity="info",
+            title=f"{len(stale)} stale Vercel project(s) — no deploy {VERCEL_STALE_DAYS}-{VERCEL_DORMANT_DAYS}d",
+            detail="Review for retirement: " + ", ".join(stale[:10]) + (" …" if len(stale) > 10 else ""),
+        ))
+    if erroring:
+        findings.append(Finding(
+            check="vercel_inventory",
+            severity="warn",
+            title=f"{len(erroring)} Vercel project(s) with last deploy in non-ready state",
+            detail=", ".join(erroring[:10]) + (" …" if len(erroring) > 10 else ""),
+        ))
+
+    # Push inventory snapshot to telemetry
+    try:
+        from services.cockpit_bridge import get_bridge_config, _get_file, _put_file
+        cfg = get_bridge_config()
+        if cfg:
+            snapshot = _json.dumps({
+                "snapshot_taken_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "project_count": len(projects),
+                "stale_count": len(stale),
+                "dormant_count": len(dormant),
+                "projects": inventory,
+            }, indent=2) + "\n"
+            existing = _get_file(cfg, VERCEL_SNAPSHOT_FILE)
+            sha = existing[1] if existing else ""
+            _put_file(cfg, VERCEL_SNAPSHOT_FILE, snapshot, sha,
+                message=f"chore(infrastructure): vercel inventory snapshot — {len(projects)} projects, {len(dormant)} dormant")
+    except Exception as e:
+        logger.warning("[infra_sweep] Vercel snapshot push failed: %s", e)
+
+    return findings
+
 
 def _current_org_env_var_names() -> List[str]:
     """Return sorted env-var NAMES (never values) excluding platform-injected ones.
@@ -595,6 +738,10 @@ def run_sweep(*, push: bool = True) -> SweepResult:
         result.findings.extend(check_env_var_drift())
     except Exception as e:
         logger.exception("[infra_sweep] check_env_var_drift errored: %s", e)
+    try:
+        result.findings.extend(check_vercel_inventory())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_vercel_inventory errored: %s", e)
     result.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if push:
