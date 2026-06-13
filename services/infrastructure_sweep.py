@@ -368,10 +368,20 @@ def check_vercel_inventory() -> List[Finding]:
         days_old = int((now_ms - int(ts)) / (1000 * 60 * 60 * 24)) if ts else None
         state = latest.get("readyState") or latest.get("state")
         framework = p.get("framework")
-        prod_domain = next(
-            (d.get("name") for d in (p.get("targets", {}).get("production", {}).get("alias", []) or []) if d.get("name")),
-            None,
-        )
+        # Vercel returns `alias` as a list of strings (domain names), not objects.
+        # Defend against both shapes in case the API evolves.
+        raw_aliases = (p.get("targets", {}) or {}).get("production", {}) or {}
+        raw_aliases = raw_aliases.get("alias") or []
+        if not isinstance(raw_aliases, list):
+            raw_aliases = []
+        prod_domain = None
+        for a in raw_aliases:
+            if isinstance(a, str) and a:
+                prod_domain = a
+                break
+            if isinstance(a, dict) and a.get("name"):
+                prod_domain = a["name"]
+                break
 
         inventory.append({
             "name": name,
