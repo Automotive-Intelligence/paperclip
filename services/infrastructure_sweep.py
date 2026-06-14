@@ -101,12 +101,40 @@ RESEND_URL = "https://api.resend.com/emails"
 
 # Env vars that come from the runtime/platform and aren't worth tracking as
 # "the org's wired secrets." Filtered out of drift snapshots.
+#
+# Lesson learned 2026-06-13: the first baseline was created via `railway run`
+# from Michael's Mac and captured CLAUDE_CODE_*, COMMAND_MODE, NIX_*, LD_*,
+# CPATH etc. that exist on his shell but not in Railway's container. Next sweep
+# from Railway reported these as "removed" — massive false-positive drift.
+# Adding ALL platform/shell prefixes here so any future host-vs-container
+# mismatch doesn't leak into findings.
 PLATFORM_ENV_PREFIXES = (
-    "RAILWAY_", "NIXPACKS_", "PIP_", "PYTHON", "PATH", "PWD", "HOME",
-    "LANG", "LC_", "TERM", "SHELL", "USER", "HOSTNAME", "OLDPWD",
-    "PORT", "VIRTUAL_ENV", "_", "SHLVL", "DEBIAN_", "GPG_", "SSH_",
+    # Railway / Nixpacks build platform
+    "RAILWAY_", "NIXPACKS_", "NIX_", "NIXPKGS_",
+    # Python toolchain
+    "PIP_", "PYTHON", "VIRTUAL_ENV",
+    # Shell / OS basics
+    "PATH", "PWD", "HOME", "LANG", "LC_", "TERM", "SHELL", "USER",
+    "HOSTNAME", "OLDPWD", "PORT", "SHLVL", "DEBIAN_", "GPG_", "SSH_",
+    # Compiler / linker paths (Nix-injected on Railway containers)
+    "LD_", "LIBRARY_PATH", "CPATH",
+    # Git internals (Nix may set GIT_SSL_CAINFO; user GIT_TOKEN etc. would
+    # still surface because they're full-name matches outside this prefix)
+    "GIT_SSL_",
+    # Azure Application Insights (auto-injected on some hosts)
+    "APPLICATION_INSIGHTS_", "APPLICATIONINSIGHTS_",
+    # Claude Code session vars (only present when sweep is invoked via
+    # `railway run` from a developer's local Claude Code session)
+    "CLAUDE_", "CLAUDECODE",
+    # Misc tool installers
+    "COMPOSIO_",
+    # Trailing single underscore — common shell-set var
+    "_",
 )
-PLATFORM_ENV_EXACT = {"PORT", "PWD", "HOME", "USER", "HOSTNAME", "PATH", "LANG"}
+PLATFORM_ENV_EXACT = {
+    "PORT", "PWD", "HOME", "USER", "HOSTNAME", "PATH", "LANG",
+    "ENV", "COMMAND_MODE", "OLDPWD", "TERM",
+}
 
 
 @dataclass
