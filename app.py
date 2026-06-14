@@ -3632,6 +3632,9 @@ RUN_NOW_SCOPES = {
     "briefing": [
         ("morning_briefing", lambda: __import__("rivers.shared.morning_briefing", fromlist=["morning_briefing_run"]).morning_briefing_run()),
     ],
+    "infra": [
+        ("cto_daily_sweep", lambda: __import__("services.infrastructure_sweep", fromlist=["cto_daily_sweep"]).cto_daily_sweep()),
+    ],
     "retention": [
         ("jennifer_retention", run_jennifer_retention),
         ("carlos_retention", run_carlos_retention),
