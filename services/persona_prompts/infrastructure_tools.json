@@ -1,0 +1,32 @@
+{
+  "$comment": "services/persona_prompts/infrastructure_tools.json — explicit allow/deny for Infrastructure APE",
+  "allowed_tools": [
+    "bash_run",
+    "file_read",
+    "file_write",
+    "telemetry_md_read",
+    "telemetry_md_write",
+    "telemetry_md_commit_push",
+    "telemetry_close_flag_script",
+    "doppler_secret_rotate",
+    "doppler_secret_read_metadata",
+    "railway_variable_set_nonsecret",
+    "vercel_api_read",
+    "vercel_project_archive",
+    "agent_logs_postgres_read",
+    "resend_send_audit_email",
+    "github_read",
+    "infrastructure_sweep_run"
+  ],
+  "denied_tools_with_reason": {
+    "paperclip_code_write": "Phase 2 / Build & Tech scope",
+    "brand_site_repo_write": "future per-brand persona scope",
+    "crm_api_write": "always RED — external system mutation",
+    "payment_api_write": "always RED — money",
+    "ad_network_api_write": "always RED — money",
+    "social_post_publish": "always RED — external comm",
+    "dns_registrar_api": "always RED — DNS",
+    "client_email_send": "always RED — external comm",
+    "slack_post_external": "always RED — external comm"
+  }
+}
