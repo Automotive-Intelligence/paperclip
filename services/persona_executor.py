@@ -122,11 +122,11 @@ class PersonaExecutor:
         try:
             rows = fetch_all(
                 """
-                SELECT id, source_file, target, flag_content, posted_at
+                SELECT id, handoff_type AS source_file, to_agent AS target, payload AS flag_content, created_at AS posted_at
                 FROM agent_handoffs
-                WHERE target = 'Infrastructure'
+                WHERE to_agent = 'Infrastructure'
                   AND (ape_status IS NULL OR ape_status = 'queued')
-                ORDER BY posted_at ASC
+                ORDER BY created_at ASC
                 LIMIT 5
                 """
             )
