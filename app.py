@@ -3377,6 +3377,20 @@ scheduler.add_job(_run_infrastructure_sweep, CronTrigger(hour=7, minute=30, time
     id="cto_daily_sweep", name="Infrastructure (CTO) Daily Sweep — 7:30am CST",
     replace_existing=True, misfire_grace_time=1800)
 
+# Persona Executor (APE) — polls agent_handoffs every 60s for Infrastructure
+# flags that need autonomous execution. Phase 1: Infrastructure only.
+def _run_ape_tick():
+    try:
+        from services.persona_executor import ape_tick
+        result = ape_tick()
+        logging.info(f"[Paperclip] APE tick: {result}")
+    except Exception as e:
+        logging.error(f"[Paperclip] APE tick failed: {e}")
+
+scheduler.add_job(_run_ape_tick, IntervalTrigger(seconds=60, timezone=CST),
+    id="ape_persona_executor_tick", name="APE Persona Executor — Every 60s",
+    replace_existing=True, misfire_grace_time=120)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
@@ -3634,6 +3648,9 @@ RUN_NOW_SCOPES = {
     ],
     "infra": [
         ("cto_daily_sweep", lambda: __import__("services.infrastructure_sweep", fromlist=["cto_daily_sweep"]).cto_daily_sweep()),
+    ],
+    "ape_test": [
+        ("ape_tick", lambda: __import__("services.persona_executor", fromlist=["ape_tick"]).ape_tick()),
     ],
     "retention": [
         ("jennifer_retention", run_jennifer_retention),
