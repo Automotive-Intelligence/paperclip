@@ -184,6 +184,82 @@ class PersonaExecutor:
 
         return AuditEnvelope.from_session_output(text, str(flag["id"]))
 
+    def review_and_revise(
+        self,
+        flag: Dict[str, Any],
+        initial_envelope: AuditEnvelope,
+        max_cycles: int = 3,
+    ) -> tuple[AuditEnvelope, list]:
+        """Run adversarial review loop. Returns (final_envelope, verdicts_list).
+
+        Cycles up to max_cycles. On REVISE, re-prompts executor with reviewer's
+        specific_revision_request. On HALT or APPROVE, returns immediately.
+        """
+        from services.adversarial_reviewer import AdversarialReviewer, persist_reviewer_transcript
+
+        reviewer = AdversarialReviewer()
+        verdicts = []
+        envelope = initial_envelope
+
+        for cycle in range(1, max_cycles + 1):
+            verdict = reviewer.review(flag["flag_content"], asdict(envelope))
+            verdicts.append(verdict)
+            persist_reviewer_transcript(flag["id"], envelope.ship_id, cycle, verdict)
+
+            if verdict.verdict == "APPROVE":
+                return envelope, verdicts
+            if verdict.verdict == "HALT":
+                envelope.halt_requested = True
+                envelope.halt_reason = (
+                    f"Reviewer HALT (cycle {cycle}): {verdict.halt_reason or verdict.reasoning[:200]}"
+                )
+                return envelope, verdicts
+            # REVISE — re-execute with reviewer concerns prepended
+            if cycle < max_cycles:
+                envelope = self._reexecute_with_revisions(flag, envelope, verdict)
+
+        # Ran out of cycles without APPROVE — halt
+        envelope.halt_requested = True
+        envelope.halt_reason = (
+            f"Reviewer requested revisions {max_cycles} times without APPROVE"
+        )
+        return envelope, verdicts
+
+    def _reexecute_with_revisions(
+        self, flag: Dict[str, Any], prior_envelope: AuditEnvelope, verdict
+    ) -> AuditEnvelope:
+        """Re-spawn executor session with reviewer's revision request."""
+        system_prompt = load_persona_prompt(flag["target"])
+        user_msg = (
+            f"You proposed a ship that the adversarial reviewer asked you to revise.\n\n"
+            f"--- ORIGINAL FLAG ---\n{flag['flag_content']}\n--- END FLAG ---\n\n"
+            f"--- YOUR PRIOR ENVELOPE ---\n{json.dumps(asdict(prior_envelope), indent=2)}\n"
+            f"--- END ENVELOPE ---\n\n"
+            f"--- REVIEWER CONCERNS ---\n"
+            + "\n".join(f"- {c}" for c in verdict.concerns)
+            + f"\n\nReviewer specifically requests: {verdict.specific_revision_request}\n"
+            f"--- END CONCERNS ---\n\n"
+            f"Re-execute with the reviewer's concerns addressed. Emit a fresh JSON audit envelope."
+        )
+        try:
+            response = self.client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=MAX_TOKENS,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            text = response.content[0].text if response.content else ""
+        except Exception as e:
+            logger.exception("[ape] revision session failed: %s", e)
+            return AuditEnvelope(
+                ship_id=prior_envelope.ship_id,
+                flag_id=prior_envelope.flag_id,
+                action_summary="Revision session errored",
+                halt_requested=True,
+                halt_reason=str(e)[:200],
+            )
+        return AuditEnvelope.from_session_output(text, prior_envelope.flag_id)
+
     def record_outcome(self, flag_id: int, envelope: AuditEnvelope) -> None:
         """Persist envelope + outcome to agent_handoffs row."""
         try:
@@ -235,6 +311,7 @@ class PersonaExecutor:
                 logger.info(f"[ape] persona {persona} paused — skipping")
                 continue
             envelope = self.execute_flag(flag)
+            envelope, _verdicts = self.review_and_revise(flag, envelope)
             self.record_outcome(flag["id"], envelope)
             processed += 1
             if envelope.halt_requested:
