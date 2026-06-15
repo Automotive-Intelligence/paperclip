@@ -477,6 +477,35 @@ def check_vercel_inventory() -> List[Finding]:
     return findings
 
 
+def check_autonomous_ship_health() -> List[Finding]:
+    """Flag ships whose 24h post-snapshot showed >25% metric regression."""
+    findings: List[Finding] = []
+    try:
+        rows = fetch_all(
+            """
+            SELECT ship_id, persona, metric_name, pre_value, post_value, delta_pct
+            FROM autonomous_ship_telemetry
+            WHERE flagged = TRUE
+              AND post_taken_at >= NOW() - INTERVAL '36 hours'
+            ORDER BY post_taken_at DESC
+            LIMIT 20
+            """
+        )
+    except Exception as e:
+        logger.warning("[infra_sweep] autonomous_ship_health query failed: %s", e)
+        return []
+
+    for ship_id, persona, metric_name, pre_value, post_value, delta_pct in rows:
+        sev = "critical" if delta_pct <= -50 else "warn"
+        findings.append(Finding(
+            check="autonomous_ship_health",
+            severity=sev,
+            title=f"Ship {ship_id[:8]} ({persona}) — {metric_name} dropped {delta_pct:.1f}% post-ship",
+            detail=f"pre={pre_value:.1f}, post={post_value:.1f}",
+        ))
+    return findings
+
+
 def _current_org_env_var_names() -> List[str]:
     """Return sorted env-var NAMES (never values) excluding platform-injected ones.
 
@@ -786,6 +815,10 @@ def run_sweep(*, push: bool = True) -> SweepResult:
         result.findings.extend(check_vercel_inventory())
     except Exception as e:
         logger.exception("[infra_sweep] check_vercel_inventory errored: %s", e)
+    try:
+        result.findings.extend(check_autonomous_ship_health())
+    except Exception as e:
+        logger.exception("[infra_sweep] check_autonomous_ship_health errored: %s", e)
     result.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if push:
