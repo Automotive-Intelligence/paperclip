@@ -297,6 +297,14 @@ class PersonaExecutor:
         except Exception as e:
             logger.warning(f"[ape] record_outcome failed: {e}")
 
+        # Capture pre-ship metrics for 24h regression correlation
+        if not envelope.halt_requested:
+            try:
+                from services.ape_ship_telemetry import record_pre_snapshot
+                record_pre_snapshot(flag_id, envelope.ship_id, "Infrastructure")
+            except Exception as e:
+                logger.warning(f"[ape] pre-snapshot record failed: {e}")
+
     def _dispatch_notifications(
         self, persona: str, envelope: AuditEnvelope, reviewer_note: Optional[str] = None
     ) -> None:
