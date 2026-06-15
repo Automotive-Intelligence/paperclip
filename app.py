@@ -3405,6 +3405,21 @@ scheduler.add_job(_run_ape_daily_digest, CronTrigger(hour=18, minute=0, timezone
     id="ape_daily_digest_6pm", name="APE Daily Digest — 6 PM CDT",
     replace_existing=True, misfire_grace_time=3600)
 
+# APE Post-Snapshot Sweep — runs every 30 min to catch ships that crossed
+# their 24h post window and need delta computation.
+def _run_ape_post_snapshot():
+    try:
+        from services.ape_ship_telemetry import record_post_snapshots_and_flag
+        n = record_post_snapshots_and_flag()
+        if n:
+            logging.info(f"[Paperclip] APE post-snapshot flagged {n} regressions")
+    except Exception as e:
+        logging.error(f"[Paperclip] APE post-snapshot failed: {e}")
+
+scheduler.add_job(_run_ape_post_snapshot, IntervalTrigger(minutes=30, timezone=CST),
+    id="ape_post_snapshot_sweep", name="APE Post-Snapshot Sweep — Every 30min",
+    replace_existing=True, misfire_grace_time=600)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
