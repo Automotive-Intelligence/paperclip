@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dotenv import load_dotenv
 import html as html_module
 
-from fastapi import FastAPI, Form, HTTPException, Header, Request
+from fastapi import FastAPI, Form, HTTPException, Header, Request, Body
 from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
@@ -4829,6 +4829,31 @@ async def run_now(
             "results": results,
         }
     )
+
+
+@app.post("/ape/webhook/resend")
+async def ape_resend_webhook(
+    payload: Dict[str, Any] = Body(...),
+):
+    """Resend inbound webhook handler.
+
+    Resend posts an event payload when a reply hits the configured
+    inbound mailbox. We extract the body + headers and pass through
+    the reply parser.
+
+    No auth on this endpoint (Resend can't pass a Bearer token easily);
+    we rely on Resend's signing (X-Resend-Signature) — TODO in v2.
+    Phase 1 acceptable risk: replies come from Michael's verified email
+    and the action vocabulary is constrained.
+    """
+    from services.ape_reply_parser import handle_inbound
+
+    # Resend event shape: {"type":"email.received","data":{"text":"...","headers":{...}}}
+    data = (payload or {}).get("data") or {}
+    body = data.get("text") or data.get("html") or ""
+    headers = data.get("headers") or {}
+    result = handle_inbound(body, headers)
+    return result
 
 
 @app.post("/admin/test-creative-pipeline")
