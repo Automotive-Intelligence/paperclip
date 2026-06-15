@@ -297,6 +297,21 @@ class PersonaExecutor:
         except Exception as e:
             logger.warning(f"[ape] record_outcome failed: {e}")
 
+    def _dispatch_notifications(
+        self, persona: str, envelope: AuditEnvelope, reviewer_note: Optional[str] = None
+    ) -> None:
+        """Fire email per impact tier — high-impact immediate, routine to digest queue."""
+        if envelope.halt_requested:
+            # Halted ships do not produce ship emails. They post a "couldn't execute"
+            # flag back to Infrastructure (handled separately).
+            return
+        from services.ape_audit_email import send_high_impact_ship_email, queue_routine_ship
+        env_dict = asdict(envelope)
+        if envelope.impact_tier == "HIGH-IMPACT":
+            send_high_impact_ship_email(persona, env_dict, reviewer_note)
+        else:
+            queue_routine_ship(persona, env_dict)
+
     def tick(self) -> Dict[str, int]:
         """APScheduler entry point. Process up to 5 pending flags."""
         processed = 0
@@ -311,8 +326,10 @@ class PersonaExecutor:
                 logger.info(f"[ape] persona {persona} paused — skipping")
                 continue
             envelope = self.execute_flag(flag)
-            envelope, _verdicts = self.review_and_revise(flag, envelope)
+            envelope, verdicts = self.review_and_revise(flag, envelope)
             self.record_outcome(flag["id"], envelope)
+            reviewer_note = verdicts[-1].verdict if verdicts else None
+            self._dispatch_notifications(flag["target"], envelope, reviewer_note)
             processed += 1
             if envelope.halt_requested:
                 halted += 1
