@@ -3391,6 +3391,20 @@ scheduler.add_job(_run_ape_tick, IntervalTrigger(seconds=60, timezone=CST),
     id="ape_persona_executor_tick", name="APE Persona Executor — Every 60s",
     replace_existing=True, misfire_grace_time=120)
 
+# APE Daily Routine Digest — 6 PM CDT, per-persona consolidated email.
+def _run_ape_daily_digest():
+    try:
+        from services.ape_audit_email import send_daily_digest
+        # Phase 1: Infrastructure only. Phase 2+ adds more personas to the list.
+        for persona in ("Infrastructure",):
+            send_daily_digest(persona)
+    except Exception as e:
+        logging.error(f"[Paperclip] APE daily digest failed: {e}")
+
+scheduler.add_job(_run_ape_daily_digest, CronTrigger(hour=18, minute=0, timezone=CST),
+    id="ape_daily_digest_6pm", name="APE Daily Digest — 6 PM CDT",
+    replace_existing=True, misfire_grace_time=3600)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
