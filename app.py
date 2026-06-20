@@ -53,6 +53,7 @@ from services.approval_queue import (
 )
 from services.dispatch import dispatch_artifact
 from services.delivery_receipt import get_receipts
+from services.smartlead_webhook_handler import handle_webhook as _smartlead_wd_handle_webhook
 from services.social_pipeline import run_zernio_social_pipeline, prepare_social_piece_with_creative_director
 
 try:
@@ -7686,3 +7687,14 @@ async def public_reject_submit_endpoint(artifact_id: str, t: str, reason: str = 
         '<p>Got it. The team will revise and send a new version in next week\'s digest.</p>'
         '<p class="muted">You can close this tab.</p>',
     )
+
+
+# ===== Smartlead WD webhook receiver =====
+# Smartlead → POST events to /webhooks/smartlead/wd/{secret} → handler
+# suppresses matching contact in Twenty WD (lead_unsubscribed) or logs replies.
+# Auth: URL-path secret (Smartlead doesn't support HMAC); secret matches
+# SMARTLEAD_WD_WEBHOOK_PATH_SECRET in Doppler. Handler fails closed if missing.
+# See services/smartlead_webhook_handler.py.
+@app.post("/webhooks/smartlead/wd/{secret}")
+async def smartlead_wd_webhook(secret: str, request: Request):
+    return await _smartlead_wd_handle_webhook(request, secret)
