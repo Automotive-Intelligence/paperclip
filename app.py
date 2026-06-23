@@ -54,6 +54,7 @@ from services.approval_queue import (
 from services.dispatch import dispatch_artifact
 from services.delivery_receipt import get_receipts
 from services.smartlead_webhook_handler import handle_webhook as _smartlead_wd_handle_webhook
+from services.postal_oauth import start_oauth as _postal_oauth_start, handle_callback as _postal_oauth_callback
 from services.social_pipeline import run_zernio_social_pipeline, prepare_social_piece_with_creative_director
 
 try:
@@ -7687,6 +7688,30 @@ async def public_reject_submit_endpoint(artifact_id: str, t: str, reason: str = 
         '<p>Got it. The team will revise and send a new version in next week\'s digest.</p>'
         '<p class="muted">You can close this tab.</p>',
     )
+
+
+# ===== Postal Agent OAuth (Phase 1) =====
+# Per-account Google OAuth flow for the Postal Agent. See
+# ~/cd-ops/plans/paperclip_postal_agent_2026-06-22.md for full design.
+#
+# Usage:
+#   1. Open /oauth/google/start?account=<label>  (labels: avi, wd, salesdroid,
+#      aipg, agentempire, bookd)
+#   2. Google consent screen → user authorizes the Paperclip OAuth app
+#   3. Google redirects to /oauth/google/callback → tokens stored encrypted
+#      in postal_tokens table
+@app.get("/oauth/google/start")
+async def postal_oauth_start_endpoint(account: str = ""):
+    return _postal_oauth_start(account)
+
+
+@app.get("/oauth/google/callback")
+async def postal_oauth_callback_endpoint(
+    code: str = "",
+    state: str = "",
+    error: str = "",
+):
+    return _postal_oauth_callback(code or None, state or None, error or None)
 
 
 # ===== Smartlead WD webhook receiver =====
