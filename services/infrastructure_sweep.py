@@ -78,12 +78,29 @@ SSL_EXPIRY_WARN_DAYS = 30
 SSL_EXPIRY_CRITICAL_DAYS = 7
 
 # Anomaly detection thresholds for agent run counts
-AGENT_RUN_SPIKE_RATIO = 3.0       # runs_24h / median_7d > this  → flag
+AGENT_RUN_SPIKE_RATIO = 3.0       # runs_24h / median_7d > this  → flag (if absolute floor also crossed)
+AGENT_RUN_SPIKE_MIN_RUNS = 15     # absolute runs_24h floor — below this, ratio doesn't matter
+                                  # (prevents flagging 4 runs as "3x baseline of 1" which is normal cadence)
 AGENT_RUN_DROP_MIN_BASELINE = 4   # only flag drops on agents with >= this median
 AGENT_RUN_DROP_THRESHOLD = 0.25   # runs_24h / median_7d < this  → flag
 
-ERROR_KEYWORDS = ("error", "exception", "failed", "traceback", "404", "500", "401", "403")
 ERROR_FINDING_THRESHOLD = 3       # need this many error log lines to count as a finding
+# Real-error regex (Postgres POSIX). Replaces the legacy substring match that
+# false-positived on JSON counter-field names like `"emails_failed": 0` in
+# successful run logs. Match patterns: HTTP failure codes with whitespace
+# context, real Python tracebacks, explicit log levels, exception types.
+# All keywords use word boundaries (\m \M) so `failed` inside `emails_failed`
+# does NOT match. Numeric HTTP codes require a leading HTTP/non-word token.
+ERROR_REGEX = (
+    r"(\mTraceback \(most recent call last\)|"
+    r"\mException(Group)?:|\mERROR\s|\[error\]|level=error|"
+    r"\mPermissionDenied\M|\mNotFound\M|"
+    r"HTTP\s*(401|403|404|408|409|429|500|502|503|504)\M|"
+    r"status_code['\":= ]+(401|403|404|408|409|429|500|502|503|504)\M)"
+)
+# Legacy keywords kept ONLY for the human-readable Finding detail (so the
+# message still describes the surface it watches). NOT used in the SQL match.
+ERROR_KEYWORDS_DESC = ("HTTP 4xx/5xx", "Traceback", "Exception:", "ERROR log lines", "PermissionDenied", "NotFound")
 
 STATE_FILE = "infrastructure_state.md"
 ENV_SNAPSHOT_FILE = "infrastructure_env_snapshot.json"
@@ -317,12 +334,15 @@ def check_agent_run_anomalies() -> List[Finding]:
                 ))
         if median_7d > 0:
             ratio = runs_24h / median_7d if median_7d > 0 else 0
-            if ratio >= AGENT_RUN_SPIKE_RATIO:
+            # Require BOTH the ratio AND an absolute floor — prevents
+            # flagging "4 runs vs median 1 = 4x baseline" as runaway, which
+            # is just a normal cadence change, not a loop / cost burn.
+            if ratio >= AGENT_RUN_SPIKE_RATIO and runs_24h >= AGENT_RUN_SPIKE_MIN_RUNS:
                 findings.append(Finding(
                     check="agent_runs",
                     severity="warn",
                     title=f"{agent_name}: {runs_24h} runs / 24h (7d median {median_7d:.0f}) — runaway?",
-                    detail=f"ratio {ratio:.2f}x baseline — possible loop / cost burn",
+                    detail=f"ratio {ratio:.2f}x baseline + absolute >={AGENT_RUN_SPIKE_MIN_RUNS} — possible loop / cost burn",
                 ))
     return findings
 
@@ -671,21 +691,32 @@ def check_app_health() -> List[Finding]:
 
 
 def check_recent_errors() -> List[Finding]:
+    """Find agents whose logs contain REAL errors in the last 24h.
+
+    Uses a tight POSIX regex (ERROR_REGEX) that matches HTTP failure codes,
+    tracebacks, and explicit error markers — NOT substring hits on words like
+    'failed' that appear inside JSON counter-field names of successful runs.
+
+    Lesson learned 2026-06-17: the prior implementation used LIKE '%failed%'
+    which false-positived on every structured log line containing
+    "emails_failed": 0 (the literal field name in a successful run envelope).
+    Result: 5+ days of yellow morning briefs that surfaced "tyler 15 errors"
+    when tyler had ZERO actual errors. New regex requires word boundaries +
+    error context to fire.
+    """
     findings: List[Finding] = []
     try:
-        like_clause = " OR ".join("LOWER(content) LIKE %s" for _ in ERROR_KEYWORDS)
-        params: Tuple[str, ...] = tuple(f"%{kw}%" for kw in ERROR_KEYWORDS)
         rows = fetch_all(
-            f"""
+            """
             SELECT agent_name, COUNT(*) AS hits
             FROM agent_logs
             WHERE created_at >= NOW() - INTERVAL '24 hours'
-              AND ({like_clause})
+              AND content ~ %s
             GROUP BY agent_name
             HAVING COUNT(*) >= %s
             ORDER BY hits DESC
             """,
-            params + (ERROR_FINDING_THRESHOLD,),
+            (ERROR_REGEX, ERROR_FINDING_THRESHOLD),
         )
     except Exception as e:
         logger.warning("[infra_sweep] error_pattern query failed: %s", e)
@@ -701,8 +732,8 @@ def check_recent_errors() -> List[Finding]:
         findings.append(Finding(
             check="errors",
             severity=sev,
-            title=f"{agent_name}: {hits} error-pattern hits in last 24h",
-            detail=f"keywords matched: any of {', '.join(ERROR_KEYWORDS)}",
+            title=f"{agent_name}: {hits} real-error hits in last 24h",
+            detail=f"surfaces: {', '.join(ERROR_KEYWORDS_DESC)}",
         ))
     return findings
 
