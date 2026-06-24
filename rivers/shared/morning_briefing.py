@@ -23,7 +23,19 @@ logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-BRIEFING_RECIPIENT = os.getenv("BRIEFING_RECIPIENT", "michael@automotiveintelligence.io")
+# Recipients — comma-separated BRIEFING_RECIPIENTS env override.
+# Default adds salesdroid (CRO sweep inbox) alongside the primary AvI inbox.
+BRIEFING_RECIPIENTS = [
+    r.strip() for r in os.getenv(
+        "BRIEFING_RECIPIENTS",
+        "michael@automotiveintelligence.io,salesdroid@gmail.com",
+    ).split(",") if r.strip()
+]
+# Backward-compat: BRIEFING_RECIPIENT (singular) overrides if set.
+_legacy_single = os.getenv("BRIEFING_RECIPIENT", "").strip()
+if _legacy_single:
+    BRIEFING_RECIPIENTS = [_legacy_single]
+BRIEFING_RECIPIENT = BRIEFING_RECIPIENTS[0]  # legacy callers
 BRIEFING_SMS_TO = os.getenv("MICHAEL_PHONE", "")
 BRIEFING_FROM = os.getenv(
     "BRIEFING_FROM",
@@ -248,6 +260,36 @@ def pull_instantly_campaign_summary(api_key: str, campaign_id: str) -> Dict[str,
     return summary
 
 
+def pull_revenue_pipeline_summary() -> Dict[str, Any]:
+    """CRO revenue layer — cross-brand pipeline state for the morning brief.
+
+    v1 stub. Returns an unwired baseline until per-brand Twenty workspaces
+    are integrated. When wired, this function pulls from each brand's Twenty
+    CRM (env pattern: TWENTY_API_KEY_<BRAND>, TWENTY_BASE_URL_<BRAND>) and
+    aggregates deal stages + activity timestamps.
+
+    Returns:
+      pipeline_value:     sum of active deal values across brands
+      deals_active:       all non-closed deals
+      deals_stalled_7d:   active deals with no activity > 7 days
+      replies_pending_4h: replies awaiting response > 4 hours
+      bookings_24h:       meetings booked in last 24h
+      closed_24h:         deals moved to won in last 24h
+      by_brand:           per-brand dict (WD, AvI, AIPG, Book'd)
+      wired:              False until Twenty integration lands
+    """
+    return {
+        "pipeline_value": 0,
+        "deals_active": 0,
+        "deals_stalled_7d": 0,
+        "replies_pending_4h": 0,
+        "bookings_24h": 0,
+        "closed_24h": 0,
+        "by_brand": {},
+        "wired": False,
+    }
+
+
 # ── HTML Composer ───────────────────────────────────────────────────────────
 
 def _agent_section(title: str, agents: List[str], activity: Dict[str, Dict]) -> str:
@@ -365,14 +407,82 @@ def fetch_infrastructure_state() -> Dict[str, Any]:
     return out
 
 
+def _revenue_section_html(rev: Dict[str, Any]) -> str:
+    """Render the CRO revenue pipeline section."""
+    if not rev.get("wired"):
+        return (
+            "<h2 style='margin-top:24px;'>🏆 Revenue (CRO)</h2>"
+            "<div style='background:#f5f5f5;padding:14px;margin:10px 0;"
+            "border-left:4px solid #999;border-radius:4px;color:#666;font-size:13px;'>"
+            "Twenty pipeline integration pending. Once wired, this section shows: "
+            "pipeline value, active deals by brand, stalled deals (>7d), replies "
+            "pending (>4h), bookings + closes in last 24h."
+            "</div>"
+        )
+
+    headline = (
+        f"<b>Pipeline:</b> ${rev['pipeline_value']:,} · "
+        f"{rev['deals_active']} active · "
+        f"{rev['bookings_24h']} bookings 24h · "
+        f"{rev['closed_24h']} closed 24h"
+    )
+
+    alerts = []
+    if rev["replies_pending_4h"] > 0:
+        alerts.append(
+            f"<li style='color:#c00;'>{rev['replies_pending_4h']} replies pending > 4 hours, triage now</li>"
+        )
+    if rev["deals_stalled_7d"] > 0:
+        alerts.append(
+            f"<li style='color:#c00;'>{rev['deals_stalled_7d']} deals stalled > 7 days, re-engage or close out</li>"
+        )
+    alerts_html = (
+        f"<ul style='margin:8px 0 0;padding-left:20px;font-size:13px;'>{''.join(alerts)}</ul>"
+        if alerts else ""
+    )
+
+    by_brand = rev.get("by_brand", {})
+    brand_rows = []
+    for brand in ["WD", "AvI", "AIPG", "Book'd"]:
+        b = by_brand.get(brand, {})
+        brand_rows.append(
+            f"<tr><td style='padding:6px 10px;'><b>{brand}</b></td>"
+            f"<td style='padding:6px 10px;'>${b.get('pipeline_value', 0):,}</td>"
+            f"<td style='padding:6px 10px;'>{b.get('deals_active', 0)} active</td>"
+            f"<td style='padding:6px 10px;'>{b.get('bookings_24h', 0)} bookings</td>"
+            f"<td style='padding:6px 10px;'>{b.get('closed_24h', 0)} closed</td></tr>"
+        )
+    brand_table = (
+        f"<table style='border-collapse:collapse;width:100%;font-size:13px;margin-top:10px;'>"
+        f"<tr style='background:#f5f5f5;'>"
+        f"<th style='padding:6px 10px;text-align:left;'>Brand</th>"
+        f"<th style='padding:6px 10px;text-align:left;'>Pipeline</th>"
+        f"<th style='padding:6px 10px;text-align:left;'>Active</th>"
+        f"<th style='padding:6px 10px;text-align:left;'>24h Bookings</th>"
+        f"<th style='padding:6px 10px;text-align:left;'>24h Closed</th></tr>"
+        f"{''.join(brand_rows)}</table>"
+    )
+
+    return (
+        f"<h2 style='margin-top:24px;'>🏆 Revenue (CRO)</h2>"
+        f"<div style='background:#e9f7ef;padding:14px;border-left:4px solid #28a745;"
+        f"border-radius:4px;font-size:14px;'>{headline}{alerts_html}</div>"
+        f"{brand_table}"
+    )
+
+
 def compose_briefing_html(
     activity: Dict[str, Dict],
     tyler: Dict[str, Any],
     ryan: Dict[str, Any],
+    revenue: Dict[str, Any] = None,
 ) -> str:
     """Compose a structured HTML briefing."""
     today = datetime.now().strftime("%A, %B %d %Y")
     infra = fetch_infrastructure_state()
+    if revenue is None:
+        revenue = pull_revenue_pipeline_summary()
+    revenue_html = _revenue_section_html(revenue)
 
     # ── Header metrics ──
     tyler_total = tyler.get("total_leads", 0)
@@ -492,6 +602,8 @@ color:#333;max-width:720px;margin:0 auto;padding:20px;">
 
 {box_box_html}
 
+{revenue_html}
+
 {campaign_html}
 
 <h2 style="margin-top:24px;">🤖 Agent Activity (last 24h)</h2>
@@ -503,6 +615,7 @@ Green ✓ = ran. Red ⚠ = silent (didn't run in last 24h — may need investiga
 <hr style="margin:30px 0;border:none;border-top:1px solid #ddd;">
 <div style="color:#888;font-size:12px;">
 Generated automatically by Paperclip morning briefing. Runs every day at 8am CDT.<br>
+Revenue section (CRO) added 2026-06-24. Twenty pipeline pull wires in next.<br>
 To change recipient, timing, or content: edit rivers/shared/morning_briefing.py<br>
 </div>
 </body></html>"""
@@ -523,14 +636,14 @@ def send_briefing_email(html_body: str, subject: str) -> bool:
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "from": BRIEFING_FROM,
-                "to": [BRIEFING_RECIPIENT],
+                "to": BRIEFING_RECIPIENTS,
                 "subject": subject,
                 "html": html_body,
             },
             timeout=20,
         )
         if r.status_code in (200, 201):
-            logger.info(f"[Briefing] Email sent to {BRIEFING_RECIPIENT}")
+            logger.info(f"[Briefing] Email sent to {', '.join(BRIEFING_RECIPIENTS)}")
             return True
         logger.error(f"[Briefing] Resend error {r.status_code}: {r.text[:200]}")
         return False
@@ -594,14 +707,20 @@ def morning_briefing_run() -> dict:
         os.getenv("INSTANTLY_CAMPAIGN_RYAN_DATA", "").strip(),
     )
 
+    # Pull CRO revenue layer (stub until Twenty workspaces wire in)
+    revenue = pull_revenue_pipeline_summary()
+
     # Compose briefing
-    html = compose_briefing_html(activity, tyler, ryan)
+    html = compose_briefing_html(activity, tyler, ryan, revenue)
 
     # Compose subject
     total_sent = tyler.get("sent_24h", 0) + ryan.get("sent_24h", 0)
     total_replies = tyler.get("replies_24h", 0) + ryan.get("replies_24h", 0)
     total_boxes = len(tyler.get("box_box", [])) + len(ryan.get("box_box", []))
-    subject = f"☀️ Morning Briefing — {total_sent} sent, {total_replies} replies, {total_boxes} BOX BOX"
+    rev_suffix = ""
+    if revenue.get("wired"):
+        rev_suffix = f", {revenue.get('bookings_24h', 0)} bookings, {revenue.get('closed_24h', 0)} closed"
+    subject = f"☀️ Morning Briefing — {total_sent} sent, {total_replies} replies, {total_boxes} BOX BOX{rev_suffix}"
 
     # SMS headline
     sms_headline = (
@@ -621,6 +740,9 @@ def morning_briefing_run() -> dict:
         "box_box_count": total_boxes,
         "agents_active_24h": len(activity),
         "agents_catalog_size": len(AGENT_CATALOG),
+        "revenue_wired": revenue.get("wired", False),
+        "revenue_bookings_24h": revenue.get("bookings_24h", 0),
+        "revenue_closed_24h": revenue.get("closed_24h", 0),
     }
     logger.info(f"[Briefing] Complete: {result}")
     return result
