@@ -99,8 +99,15 @@ def _build_flow(state: str | None = None) -> Flow:
         },
         scopes=SCOPES,
         state=state,
+        # Disable PKCE — newer google-auth-oauthlib auto-enables it, but PKCE
+        # requires the same code_verifier on both auth + token exchange. Since
+        # we rebuild Flow on the callback (no shared memory across requests),
+        # PKCE would fail with "Missing code verifier." We're a confidential
+        # Web client with a real client_secret, so classic OAuth is fine.
+        autogenerate_code_verifier=False,
     )
     flow.redirect_uri = redirect_uri
+    flow.code_verifier = None
     return flow
 
 
