@@ -86,7 +86,9 @@ AGENT_CATALOG = {
 
     # Executive
     "axiom": ("Executive", "CEO"),
-    "coo_agent": ("Executive", "COO"),
+    # coo_agent retired from dashboard 2026-06-24 — CRO chat absorbs the
+    # agent-accountability function. Underlying scheduled job + cockpit
+    # consumer still wired in app.py; B&T migration to follow.
 }
 
 
