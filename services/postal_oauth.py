@@ -240,20 +240,26 @@ def handle_callback(code: str | None, state: str | None, error: str | None) -> H
 
 
 def _resolve_authorized_email(creds: Any) -> str | None:
-    """Hit Google's userinfo endpoint to get the email tied to the granted credentials."""
+    """Resolve the authorized email via Gmail's users.getProfile endpoint.
+
+    We use Gmail's getProfile rather than Google's /oauth2/v3/userinfo because
+    userinfo requires the `openid` + `email` scopes which we don't request.
+    getProfile works with our existing `gmail.readonly` scope and returns
+    the same emailAddress.
+    """
     import json
     import urllib.request
 
     req = urllib.request.Request(
-        "https://www.googleapis.com/oauth2/v3/userinfo",
+        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
         headers={"Authorization": f"Bearer {creds.token}"},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
-            return data.get("email")
+            return data.get("emailAddress")
     except Exception:
-        logger.exception("postal oauth: userinfo lookup failed")
+        logger.exception("postal oauth: Gmail getProfile failed")
         return None
 
 
