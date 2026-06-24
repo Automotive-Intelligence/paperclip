@@ -69,7 +69,10 @@ def encrypt_token(plaintext: str) -> bytes:
     return _fernet().encrypt(plaintext.encode())
 
 
-def decrypt_token(ciphertext: bytes) -> str:
+def decrypt_token(ciphertext) -> str:
+    # psycopg2 returns bytea columns as memoryview — widen to bytes for Fernet.
+    if isinstance(ciphertext, memoryview):
+        ciphertext = bytes(ciphertext)
     try:
         return _fernet().decrypt(ciphertext).decode()
     except InvalidToken as e:
