@@ -28,11 +28,61 @@ keys so the consumer contract stays identical to the HubSpot writer.
 
 import logging
 import os
+import re
 from typing import Dict, List, Optional, Tuple
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_phone_e164(raw: str) -> Optional[str]:
+    """Best-effort US-default E.164 normalizer.
+
+    Twenty's REST validator (`INVALID_PHONE_NUMBER`) rejects loose US formats
+    like `212-555-0100` or `(888) 248-0307`. Send E.164 or omit.
+
+    Returns the +E.164 string, or None if the input can't be normalized
+    (caller should omit the phones field entirely on None).
+    """
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return None
+    if raw.lstrip().startswith("+"):
+        return f"+{digits}" if 8 <= len(digits) <= 15 else None
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return None
+
+
+def _twenty_error_detail(resp: requests.Response) -> str:
+    """Pull Twenty's JSON `messages` / `error` into the exception text.
+
+    `raise_for_status()` alone only surfaces the URL — Twenty's body holds the
+    real reason (e.g. `INVALID_PHONE_NUMBER`, `Invalid UUID value ''`).
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return resp.text[:300]
+    msgs = body.get("messages") or []
+    if isinstance(msgs, list) and msgs:
+        return f"{body.get('code') or body.get('error') or 'error'}: {'; '.join(str(m) for m in msgs)}"
+    return body.get("message") or body.get("error") or str(body)[:300]
+
+
+def _raise_with_body(resp: requests.Response, endpoint: str) -> None:
+    """Like raise_for_status() but the message includes Twenty's body."""
+    if resp.ok:
+        return
+    raise requests.HTTPError(
+        f"{resp.status_code} {endpoint} — {_twenty_error_detail(resp)}",
+        response=resp,
+    )
 
 
 # ── Per-workspace config ────────────────────────────────────────────────────
@@ -188,7 +238,7 @@ def _create_company(prospect: dict, base_url: str, api_key: str) -> str:
         json=payload,
         timeout=_REQUEST_TIMEOUT,
     )
-    r.raise_for_status()
+    _raise_with_body(r, "POST /rest/companies")
     company = (r.json().get("data") or {}).get("createCompany") or {}
     return company.get("id", "")
 
@@ -207,10 +257,10 @@ def _create_person(
     email = (prospect.get("email") or "").strip()
     if email:
         payload["emails"] = {"primaryEmail": email, "additionalEmails": []}
-    phone = (prospect.get("phone") or "").strip()
-    if phone:
+    phone_e164 = _normalize_phone_e164((prospect.get("phone") or "").strip())
+    if phone_e164:
         payload["phones"] = {
-            "primaryPhoneNumber": phone,
+            "primaryPhoneNumber": phone_e164,
             "primaryPhoneCountryCode": "",
             "primaryPhoneCallingCode": "",
             "additionalPhones": [],
@@ -218,8 +268,8 @@ def _create_person(
     job_title = (prospect.get("job_title") or prospect.get("title") or "").strip()
     if job_title:
         payload["jobTitle"] = job_title
-    if company_id:
-        payload["companyId"] = company_id
+    if company_id and isinstance(company_id, str) and company_id.strip():
+        payload["companyId"] = company_id.strip()
 
     r = requests.post(
         f"{base_url}/rest/people",
@@ -227,7 +277,7 @@ def _create_person(
         json=payload,
         timeout=_REQUEST_TIMEOUT,
     )
-    r.raise_for_status()
+    _raise_with_body(r, "POST /rest/people")
     person = (r.json().get("data") or {}).get("createPerson") or {}
     return person.get("id", "")
 
@@ -249,10 +299,10 @@ def _create_opportunity(
     """
     name = prospect.get("business_name", "") or prospect.get("contact", "") or "Opportunity"
     payload: Dict = {"name": f"{name} ({source_agent})"}
-    if person_id:
-        payload["pointOfContactId"] = person_id
-    if company_id:
-        payload["companyId"] = company_id
+    if person_id and isinstance(person_id, str) and person_id.strip():
+        payload["pointOfContactId"] = person_id.strip()
+    if company_id and isinstance(company_id, str) and company_id.strip():
+        payload["companyId"] = company_id.strip()
     try:
         r = requests.post(
             f"{base_url}/rest/opportunities",
@@ -260,7 +310,7 @@ def _create_opportunity(
             json=payload,
             timeout=_REQUEST_TIMEOUT,
         )
-        r.raise_for_status()
+        _raise_with_body(r, "POST /rest/opportunities")
         opp = (r.json().get("data") or {}).get("createOpportunity") or {}
         return opp.get("id")
     except Exception as e:
