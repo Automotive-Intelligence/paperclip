@@ -180,7 +180,12 @@ def resolve_seat(target_raw: str, seats: list[Seat] | None = None) -> Seat | Non
                     return seat
         return None
 
-    return _match(target_raw) or _match(_strip_priority_suffix(target_raw))
+    return (
+        _match(target_raw)
+        or _match(_strip_priority_suffix(target_raw))
+        or _match(_strip_parenthetical(target_raw))
+        or _match(_strip_parenthetical(_strip_priority_suffix(target_raw)))
+    )
 
 
 # ── Parser ──────────────────────────────────────────────────────────────────
@@ -198,19 +203,30 @@ _BLOCK_END_RE = re.compile(r"^(🏁\s*FLAG\s*FOR:|##\s|###\s)", re.MULTILINE)
 
 
 def _strip_priority_suffix(target: str) -> str:
-    """Remove " — 🚨 PRIORITY N (...)" and "(brand-name)" style suffixes so the
-    bare seat name remains for alias lookup.
+    """Remove " — 🚨 PRIORITY N (...)" suffix so the bare seat name remains.
 
     Examples:
       "Build & Tech — 🚨 PRIORITY 2 (systemic unblock)" → "Build & Tech"
       "Internal Marketing (IM-WD)" → unchanged (this IS a registered alias)
-      "Pit Wall" → unchanged
     """
-    # Em-dash, en-dash, or " - " separator before any annotation.
     for sep in (" — ", " – ", " - "):
         if sep in target:
             return target.split(sep, 1)[0].strip()
     return target.strip()
+
+
+def _strip_parenthetical(target: str) -> str:
+    """Remove a trailing " (sub-scope)" so the bare seat name remains.
+
+    Used as a fallback when the parenthetical is NOT a registered alias.
+    "Internal Marketing (IM-WD)" matches an alias directly — never strips.
+    "Build & Tech (Attio cleanup)" has no such alias — falls back to
+    "Build & Tech".
+    """
+    s = target.strip()
+    if s.endswith(")") and "(" in s:
+        return s[: s.rindex("(")].strip()
+    return s
 
 
 def _flags_section(content: str) -> tuple[str, int]:
