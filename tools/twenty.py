@@ -206,6 +206,52 @@ def _search_company_by_name(name: str, base_url: str, api_key: str) -> Optional[
         return None
 
 
+def _domain_host(raw: str) -> str:
+    """Reduce a URL/domain string to its bare host: lowercase, no scheme,
+    no www., no path, no trailing slash. Returns '' if empty/unparseable.
+
+    Used for company-dedup search via Twenty's `domainName.primaryLinkUrl[ilike]:%host%`,
+    which is required because Twenty's unique constraint lives on the raw URL —
+    so `https://nycjeep.com/` and `http://www.nycjeep.com` collide as duplicates
+    but a name[eq] search won't find either if the stored record is named
+    differently from the new prospect.
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        return ""
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    s = s.split("/", 1)[0]
+    if s.startswith("www."):
+        s = s[4:]
+    return s
+
+
+def _search_company_by_domain(domain_raw: str, base_url: str, api_key: str) -> Optional[str]:
+    """Return existing Twenty company id whose primaryLinkUrl contains this
+    host, or None. Tolerates scheme + www + path variance via host-only ilike.
+    """
+    host = _domain_host(domain_raw)
+    if not host:
+        return None
+    try:
+        r = requests.get(
+            f"{base_url}/rest/companies",
+            headers=_headers(api_key),
+            params={
+                "filter": f"domainName.primaryLinkUrl[ilike]:%{host}%",
+                "limit": 1,
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        companies = (r.json().get("data") or {}).get("companies") or []
+        return companies[0].get("id") if companies else None
+    except Exception as e:
+        logger.warning("[Twenty] company domain-search failed for %s: %s", host, e)
+        return None
+
+
 # ── Create helpers ──────────────────────────────────────────────────────────
 
 
@@ -221,7 +267,15 @@ def _split_name(prospect: dict) -> Tuple[str, str]:
 
 
 def _create_company(prospect: dict, base_url: str, api_key: str) -> str:
-    """Create a Twenty company record and return its id."""
+    """Create a Twenty company record and return its id.
+
+    On 400 'A duplicate entry was detected' (Twenty enforces uniqueness on
+    `domainName.primaryLinkUrl`), fall back to a host-ilike domain search and
+    return the existing record's id. This handles the race where the prospect
+    has a different business_name than the stored record but the same domain
+    (e.g. stored as "CDRF of Manhattan & Jeep of Manhattan" with nycjeep.com,
+    prospect arrives as "Jeep of Manhattan" with nycjeep.com).
+    """
     payload = {
         "name": prospect.get("business_name", "") or "",
     }
@@ -238,6 +292,18 @@ def _create_company(prospect: dict, base_url: str, api_key: str) -> str:
         json=payload,
         timeout=_REQUEST_TIMEOUT,
     )
+    if r.status_code == 400 and "duplicate entry" in r.text.lower():
+        existing = _search_company_by_domain(domain, base_url, api_key)
+        if existing:
+            logger.info(
+                "[Twenty] company duplicate on domain %r — reusing existing id=%s",
+                _domain_host(domain), existing,
+            )
+            return existing
+        logger.warning(
+            "[Twenty] duplicate-entry on create for %r but domain-search came up empty (domain=%r)",
+            payload.get("name"), domain,
+        )
     _raise_with_body(r, "POST /rest/companies")
     company = (r.json().get("data") or {}).get("createCompany") or {}
     return company.get("id", "")
@@ -364,7 +430,12 @@ def push_prospects_to_twenty(
                 # then person linked to it. Mirrors Attio writer's pattern.
                 company_id: Optional[str] = None
                 if business_name:
-                    existing_company = _search_company_by_name(business_name, base_url, api_key)
+                    existing_company = (
+                        _search_company_by_name(business_name, base_url, api_key)
+                        or _search_company_by_domain(
+                            (p.get("website") or p.get("domain") or ""), base_url, api_key
+                        )
+                    )
                     company_id = existing_company or _create_company(p, base_url, api_key)
                 person_id = _create_person(p, base_url, api_key, company_id=company_id)
                 opp_id = _create_opportunity(
@@ -388,7 +459,12 @@ def push_prospects_to_twenty(
                 continue
 
             # No email — company-only path
-            existing_company_id = _search_company_by_name(business_name, base_url, api_key)
+            existing_company_id = (
+                _search_company_by_name(business_name, base_url, api_key)
+                or _search_company_by_domain(
+                    (p.get("website") or p.get("domain") or ""), base_url, api_key
+                )
+            )
             if existing_company_id:
                 results.append({
                     "business_name": business_name,
