@@ -16,6 +16,7 @@
 
 import os
 import glob
+import hmac
 import logging
 import sys
 import datetime
@@ -54,6 +55,10 @@ from services.approval_queue import (
 from services.dispatch import dispatch_artifact
 from services.delivery_receipt import get_receipts
 from services.smartlead_webhook_handler import handle_webhook as _smartlead_wd_handle_webhook
+from services.flag_router import (
+    handle_github_push as _flag_router_handle_push,
+    verify_github_signature as _flag_router_verify_sig,
+)
 from services.postal_oauth import start_oauth as _postal_oauth_start, handle_callback as _postal_oauth_callback
 from services.social_pipeline import run_zernio_social_pipeline, prepare_social_piece_with_creative_director
 
@@ -7723,3 +7728,78 @@ async def postal_oauth_callback_endpoint(
 @app.post("/webhooks/smartlead/wd/{secret}")
 async def smartlead_wd_webhook(secret: str, request: Request):
     return await _smartlead_wd_handle_webhook(request, secret)
+
+
+# ===== avo-telemetry GitHub flag-router webhook =====
+# Trigger: salesdroid/avo-telemetry pushes a commit to main → GitHub fires this.
+# Auth: URL-path secret (must match TELEMETRY_GITHUB_WEBHOOK_PATH_SECRET) AND
+# HMAC-SHA256 over the raw body (X-Hub-Signature-256 using TELEMETRY_GITHUB_WEBHOOK_HMAC_SECRET).
+# Both must validate or we return 401 — defense in depth against a leaked URL.
+# Handler: services/flag_router.handle_github_push → parses 🏁 FLAG FOR: blocks
+# from any modified .md, resolves target via seats.yaml, posts to Slack.
+# Idempotent via routed_flags(source_file, posted_ts, target_raw) UNIQUE.
+@app.post("/webhooks/github/avo-telemetry/{secret}")
+async def avo_telemetry_github_webhook(
+    secret: str,
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+    x_github_event: Optional[str] = Header(None, alias="X-Github-Event"),
+):
+    expected_path_secret = (os.environ.get("TELEMETRY_GITHUB_WEBHOOK_PATH_SECRET") or "").strip()
+    if not expected_path_secret or not hmac.compare_digest(secret, expected_path_secret):
+        raise HTTPException(status_code=401, detail="bad path secret")
+
+    body = await request.body()
+    hmac_secret = (os.environ.get("TELEMETRY_GITHUB_WEBHOOK_HMAC_SECRET") or "").strip()
+    if not _flag_router_verify_sig(hmac_secret, body, x_hub_signature_256 or ""):
+        raise HTTPException(status_code=401, detail="bad HMAC signature")
+
+    # GitHub sends `ping` once on registration — ACK and exit.
+    if x_github_event == "ping":
+        return {"status": "pong"}
+    if x_github_event != "push":
+        return {"status": "ignored", "event": x_github_event}
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON payload")
+
+    # Only route pushes that landed on the default branch (main).
+    if payload.get("ref") and payload["ref"] != "refs/heads/main":
+        return {"status": "skip", "reason": f"non-main ref {payload['ref']}"}
+
+    summary = await asyncio.to_thread(_flag_router_handle_push, payload)
+    logging.info("[flag_router] webhook summary: %s", summary)
+    return summary
+
+
+@app.post("/admin/flag-route-now")
+async def admin_flag_route_now(
+    files: Optional[str] = None,
+    sha: str = "main",
+    authorization: Optional[str] = Header(None),
+):
+    """Manually trigger the flag router without going through GitHub.
+
+    Useful for acceptance testing, backfilling missed pushes, or debugging
+    parser/resolver changes. Comma-separated `files` (default: all .md in repo
+    root, fetched live). `sha` is the avo-telemetry ref to read from.
+
+    Example:
+      curl -X POST 'https://.../admin/flag-route-now?files=cmo_state.md' \
+           -H 'Authorization: Bearer <key>'
+    """
+    validate_key(authorization)
+    from services.flag_router import route_files
+    if files:
+        touched = [f.strip() for f in files.split(",") if f.strip()]
+    else:
+        # Default to the 9 owned files we track today (cheap; ~9 GET requests).
+        touched = [
+            "revenue_state.md", "client_situations.md", "content_pipeline.md",
+            "brand_rules.md", "sales_pipeline.md", "client_campaigns.md",
+            "cmo_state.md", "infrastructure_state.md", "strategic_calls.md",
+        ]
+    summary = await asyncio.to_thread(route_files, touched, sha)
+    return summary
