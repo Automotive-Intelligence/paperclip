@@ -92,6 +92,9 @@ class RuntimeSettings:
     ghl_location_id_present: bool
     hubspot_api_key_present: bool
     attio_api_key_present: bool
+    twenty_wd_ready: bool
+    twenty_avi_ready: bool
+    twenty_bookd_ready: bool
 
     @property
     def postgres_enabled(self) -> bool:
@@ -113,7 +116,18 @@ class RuntimeSettings:
     def attio_ready(self) -> bool:
         return self.attio_api_key_present
 
-    def crm_provider_ready(self, provider: str) -> bool:
+    def twenty_ready_for_business(self, business_key: str) -> bool:
+        """Twenty is multi-tenant by workspace — readiness is per-business."""
+        bk = (business_key or "").strip().lower()
+        if bk == "callingdigital":
+            return self.twenty_wd_ready
+        if bk == "autointelligence":
+            return self.twenty_avi_ready
+        if bk == "bookd":
+            return self.twenty_bookd_ready
+        return False
+
+    def crm_provider_ready(self, provider: str, business_key: Optional[str] = None) -> bool:
         p = (provider or "").strip().lower()
         if p == "ghl":
             return self.ghl_ready
@@ -121,6 +135,11 @@ class RuntimeSettings:
             return self.hubspot_ready
         if p == "attio":
             return self.attio_ready
+        if p == "twenty":
+            # Per-business when business_key is provided; otherwise "any workspace wired"
+            if business_key:
+                return self.twenty_ready_for_business(business_key)
+            return self.twenty_wd_ready or self.twenty_avi_ready or self.twenty_bookd_ready
         return False
 
     def resolve_crm_provider(self, business_key: str, agent_id: Optional[str] = None) -> str:
@@ -159,7 +178,7 @@ class RuntimeSettings:
         if not self.ghl_ready:
             warnings.append("GHL not fully configured: sales push to CRM is disabled.")
         for business, provider in self.business_crm_map.items():
-            if not self.crm_provider_ready(provider):
+            if not self.crm_provider_ready(provider, business_key=business):
                 warnings.append(
                     f"CRM provider '{provider}' is mapped to '{business}' but missing credentials."
                 )
@@ -177,7 +196,7 @@ class RuntimeSettings:
             fatals.append("STRICT_STARTUP is enabled but LLM credentials are missing.")
         if self.strict_startup:
             for business, provider in self.business_crm_map.items():
-                if not self.crm_provider_ready(provider):
+                if not self.crm_provider_ready(provider, business_key=business):
                     fatals.append(
                         f"STRICT_STARTUP is enabled but CRM provider '{provider}' for '{business}' is not configured."
                     )
@@ -209,4 +228,10 @@ def get_settings() -> RuntimeSettings:
         ghl_location_id_present=bool((os.getenv("GHL_LOCATION_ID") or "").strip()),
         hubspot_api_key_present=bool((os.getenv("HUBSPOT_API_KEY") or os.getenv("HUBSPOT_ACCESS_TOKEN") or "").strip()),
         attio_api_key_present=bool((os.getenv("ATTIO_API_KEY") or "").strip()),
+        twenty_wd_ready=bool((os.getenv("TWENTY_WD_API_KEY") or "").strip()),
+        twenty_avi_ready=bool(
+            (os.getenv("TWENTY_AVI_API_KEY") or "").strip()
+            and (os.getenv("TWENTY_AVI_API_URL") or "").strip()
+        ),
+        twenty_bookd_ready=bool((os.getenv("TWENTY_BOOKD_API_KEY") or "").strip()),
     )
