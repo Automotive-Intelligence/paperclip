@@ -106,9 +106,17 @@ STATE_FILE = "infrastructure_state.md"
 ENV_SNAPSHOT_FILE = "infrastructure_env_snapshot.json"
 VERCEL_SNAPSHOT_FILE = "infrastructure_vercel_inventory.json"
 
-# Zombie thresholds — projects with no deploy this old are candidate dead weight
-VERCEL_STALE_DAYS = 60        # info-severity flag — review for retirement
-VERCEL_DORMANT_DAYS = 180     # warn-severity flag — almost certainly dead weight
+# Zombie thresholds — projects with no deploy this old are candidate dead weight.
+# Raised 2026-06-24 after avo-cockpit (64d) and buildagentempire (60d) — both
+# active production sites — kept tripping the info flag every morning. A 2-month
+# gap on a stable site is normal cadence, not zombie. Real dead-weight surfaces
+# at 4-6mo with zero traffic deltas.
+VERCEL_STALE_DAYS = 120       # info-severity flag — review for retirement
+VERCEL_DORMANT_DAYS = 240     # warn-severity flag — almost certainly dead weight
+# Owned production projects that should NEVER trip the stale flag, regardless of
+# deploy age. Add a project name here when "no recent deploy" is the
+# normal-and-OK state for it (e.g. stable utility sites that just work).
+VERCEL_STALE_EXEMPT = frozenset()
 
 # Critical-alert escalation channel — Resend email fires immediately on red status.
 # Distinct from the daily morning brief (which surfaces yellow + green inline).
@@ -441,7 +449,7 @@ def check_vercel_inventory() -> List[Finding]:
 
         if state and state not in ("READY", "BUILDING", "QUEUED", "INITIALIZING"):
             erroring.append(f"{name} ({state})")
-        if days_old is not None:
+        if days_old is not None and name not in VERCEL_STALE_EXEMPT:
             if days_old >= VERCEL_DORMANT_DAYS:
                 dormant.append(f"{name} ({days_old}d)")
             elif days_old >= VERCEL_STALE_DAYS:
