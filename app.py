@@ -3175,6 +3175,15 @@ scheduler.add_job(run_coo_command, CronTrigger(hour=7, minute=45, timezone=CST),
     id="coo_command_daily", name="COO Command Daily Ops",
     replace_existing=True, misfire_grace_time=3600)
 
+# Flag-router daily digest — 7:50 CDT, before the 8:00 CEO briefings so any
+# >24h flag rolls into the morning. Posts to #pit-wall, summarizing every
+# open flag grouped by seat + any unrouted targets that need a seats.yaml
+# alias added. See services/flag_router.run_daily_digest.
+from services.flag_router import run_daily_digest as _flag_router_digest
+scheduler.add_job(_flag_router_digest, CronTrigger(hour=7, minute=50, timezone=CST),
+    id="flag_router_daily_digest", name="Flag Router Daily Unresolved Digest",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -7778,6 +7787,7 @@ async def avo_telemetry_github_webhook(
 async def admin_flag_route_now(
     files: Optional[str] = None,
     sha: str = "main",
+    seed_only: bool = False,
     authorization: Optional[str] = Header(None),
 ):
     """Manually trigger the flag router without going through GitHub.
@@ -7786,8 +7796,12 @@ async def admin_flag_route_now(
     parser/resolver changes. Comma-separated `files` (default: all .md in repo
     root, fetched live). `sha` is the avo-telemetry ref to read from.
 
+    `seed_only=true`: backfill mode — record dedupe rows but skip Slack
+    posting. Run this once at first deploy so 27 historical flags don't all
+    blast Slack at once; after that, only genuinely new flags get routed.
+
     Example:
-      curl -X POST 'https://.../admin/flag-route-now?files=cmo_state.md' \
+      curl -X POST 'https://.../admin/flag-route-now?seed_only=true' \
            -H 'Authorization: Bearer <key>'
     """
     validate_key(authorization)
@@ -7801,5 +7815,5 @@ async def admin_flag_route_now(
             "brand_rules.md", "sales_pipeline.md", "client_campaigns.md",
             "cmo_state.md", "infrastructure_state.md", "strategic_calls.md",
         ]
-    summary = await asyncio.to_thread(route_files, touched, sha)
+    summary = await asyncio.to_thread(route_files, touched, sha, seed_only)
     return summary

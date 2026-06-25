@@ -49,13 +49,36 @@ from services.database import execute_query, fetch_all
 
 logger = logging.getLogger(__name__)
 
-_SEATS_URL = (
-    "https://raw.githubusercontent.com/salesdroid/avo-telemetry/main/seats.yaml"
-)
-_TELEMETRY_RAW_BASE = (
-    "https://raw.githubusercontent.com/salesdroid/avo-telemetry/{sha}/{path}"
-)
+_TELEMETRY_REPO = "salesdroid/avo-telemetry"
+_GH_CONTENTS_URL = "https://api.github.com/repos/{repo}/contents/{path}?ref={ref}"
 _REQUEST_TIMEOUT = 15
+
+
+def _gh_headers() -> dict[str, str]:
+    """GitHub API headers using GITHUB_TOKEN_TELEMETRY (avo-telemetry is private)."""
+    token = (os.environ.get("GITHUB_TOKEN_TELEMETRY") or "").strip()
+    h = {
+        "Accept": "application/vnd.github.raw",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "paperclip-flag-router",
+    }
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _fetch_telemetry_path(path: str, ref: str = "main") -> str:
+    """Read a file from the (private) avo-telemetry repo via GitHub API.
+
+    Returns "" on 404. Raises on transport errors so the caller can decide
+    whether to ignore (digest) or surface (webhook).
+    """
+    url = _GH_CONTENTS_URL.format(repo=_TELEMETRY_REPO, path=path, ref=ref)
+    r = requests.get(url, headers=_gh_headers(), timeout=_REQUEST_TIMEOUT)
+    if r.status_code == 404:
+        return ""
+    r.raise_for_status()
+    return r.text
 
 
 # ── Data shapes ─────────────────────────────────────────────────────────────
@@ -94,7 +117,8 @@ _seats_etag: str | None = None
 
 
 def load_seats(force_refresh: bool = False) -> list[Seat]:
-    """Fetch seats.yaml from avo-telemetry's main branch.
+    """Fetch seats.yaml from avo-telemetry's main branch (private repo, uses
+    GITHUB_TOKEN_TELEMETRY).
 
     Cached in-process; pass force_refresh=True after a registry edit. The
     cache holds across events but resets on every restart, so a Railway
@@ -104,9 +128,8 @@ def load_seats(force_refresh: bool = False) -> list[Seat]:
     if _seats_cache is not None and not force_refresh:
         return _seats_cache
     try:
-        r = requests.get(_SEATS_URL, timeout=_REQUEST_TIMEOUT)
-        r.raise_for_status()
-        data = yaml.safe_load(r.text) or {}
+        text = _fetch_telemetry_path("seats.yaml")
+        data = yaml.safe_load(text) or {}
     except Exception as e:
         logger.error("[flag_router] seats.yaml fetch failed: %s", e)
         return _seats_cache or []
@@ -265,14 +288,11 @@ def parse_flags(content: str, source_file: str, source_sha: str) -> list[FlagBlo
 
 
 def fetch_telemetry_file(path: str, sha: str) -> str:
-    """Pull a single markdown file from avo-telemetry at a given SHA."""
-    url = _TELEMETRY_RAW_BASE.format(sha=sha, path=path)
-    r = requests.get(url, timeout=_REQUEST_TIMEOUT)
-    if r.status_code == 404:
-        # File was deleted in this push — nothing to parse.
-        return ""
-    r.raise_for_status()
-    return r.text
+    """Pull a single markdown file from avo-telemetry at a given SHA.
+
+    Returns "" if the file was deleted in this push (404).
+    """
+    return _fetch_telemetry_path(path, ref=sha)
 
 
 # ── Slack notifier ──────────────────────────────────────────────────────────
@@ -422,19 +442,29 @@ def record_routing(
 # ── Orchestrator ────────────────────────────────────────────────────────────
 
 
-def route_files(files_modified: Iterable[str], head_sha: str) -> dict:
+def route_files(
+    files_modified: Iterable[str],
+    head_sha: str,
+    seed_only: bool = False,
+) -> dict:
     """Walk every modified .md file at `head_sha`, parse new flags, route them.
 
     Returns a summary dict suitable for webhook ACK + log line:
-        {"files_scanned": N, "flags_seen": N, "newly_routed": N,
+        {"files_scanned": N, "flags_seen": N, "newly_routed": N, "seeded": N,
          "unresolved": [{"target_raw": "...", "source_file": "..."}, ...],
          "slack_misses": [...], "errors": [...]}
+
+    `seed_only=True`: record routing rows in routed_flags but DON'T post to
+    Slack. Used once at first deploy to backfill historical flags into the
+    dedupe table — so live routes only fire on genuinely new flags after
+    cutover, not 27 historical ones in one burst.
     """
     seats = load_seats()
     summary = {
         "files_scanned": 0,
         "flags_seen": 0,
         "newly_routed": 0,
+        "seeded": 0,
         "unresolved": [],
         "slack_misses": [],
         "errors": [],
@@ -464,6 +494,17 @@ def route_files(files_modified: Iterable[str], head_sha: str) -> dict:
                 record_routing(flag, resolved_seat=None, slack_ok=False, inbox_ok=False)
                 continue
 
+            if seed_only:
+                # Backfill mode — record but don't post.
+                record_routing(
+                    flag,
+                    resolved_seat=seat.canonical_name,
+                    slack_ok=False,
+                    inbox_ok=False,
+                )
+                summary["seeded"] += 1
+                continue
+
             slack_ok = post_to_slack(seat, flag)
             inbox_ok = False  # Phase 4 wires inbox file append; v1 is Slack-first.
 
@@ -481,6 +522,185 @@ def route_files(files_modified: Iterable[str], head_sha: str) -> dict:
             summary["newly_routed"] += 1
 
     return summary
+
+
+# ── Daily unresolved-flag digest ────────────────────────────────────────────
+
+
+_DIGEST_TRACKED_FILES = [
+    "revenue_state.md", "client_situations.md", "content_pipeline.md",
+    "brand_rules.md", "sales_pipeline.md", "client_campaigns.md",
+    "cmo_state.md", "infrastructure_state.md", "strategic_calls.md",
+]
+_DIGEST_AGE_THRESHOLD_HOURS = 24
+
+
+def _parse_iso(ts: str):
+    """Parse the variety of timestamp formats flags use (ISO with/without TZ).
+    Returns None if unparseable."""
+    import datetime as _dt
+    if not ts:
+        return None
+    s = ts.strip().rstrip("Z").replace("Z", "")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    elif s.endswith("Z"):
+        s = s.replace("Z", "+00:00")
+    try:
+        return _dt.datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def compute_digest(now=None) -> dict:
+    """Scan the 9 owned files for open flags older than 24h, grouped by seat.
+
+    Returns:
+        {
+          "as_of": "<ISO>",
+          "by_seat": {
+            "Build & Tech": [FlagBlock, ...],
+            ...
+          },
+          "unresolved_targets": [{"target_raw", "source_file", "age_hours"}],
+          "total_open": N,
+          "total_aged": N,
+        }
+    """
+    import datetime as _dt
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    seats = load_seats()
+    by_seat: dict[str, list[FlagBlock]] = {}
+    unresolved_targets: list[dict] = []
+    total_open = 0
+    total_aged = 0
+
+    for path in _DIGEST_TRACKED_FILES:
+        try:
+            content = fetch_telemetry_file(path, "main")
+        except Exception as e:
+            logger.warning("[digest] fetch failed for %s: %s", path, e)
+            continue
+        if not content:
+            continue
+        for flag in parse_flags(content, source_file=path, source_sha="main"):
+            total_open += 1
+            posted = _parse_iso(flag.posted_ts)
+            if posted:
+                age = now - posted.astimezone(_dt.timezone.utc) if posted.tzinfo else now.replace(tzinfo=None) - posted
+                age_hours = age.total_seconds() / 3600.0
+            else:
+                age_hours = None
+            if age_hours is None or age_hours < _DIGEST_AGE_THRESHOLD_HOURS:
+                continue
+            total_aged += 1
+            seat = resolve_seat(flag.target_raw, seats)
+            if seat is None:
+                unresolved_targets.append({
+                    "target_raw": flag.target_raw,
+                    "source_file": flag.source_file,
+                    "age_hours": round(age_hours, 1),
+                })
+                continue
+            by_seat.setdefault(seat.canonical_name, []).append(flag)
+
+    return {
+        "as_of": now.isoformat(),
+        "by_seat": by_seat,
+        "unresolved_targets": unresolved_targets,
+        "total_open": total_open,
+        "total_aged": total_aged,
+    }
+
+
+def post_digest_to_slack(digest: dict) -> bool:
+    """Render compute_digest() result as a Slack Block-Kit message in #pit-wall.
+
+    Compact — listing every open >24h flag grouped by seat, plus any unrouted
+    targets that need a new seats.yaml alias. Skip the post if there's nothing
+    to surface (no flags older than threshold + no unrouted).
+    """
+    by_seat: dict = digest.get("by_seat", {})
+    unresolved: list = digest.get("unresolved_targets", [])
+    if not by_seat and not unresolved:
+        logger.info("[digest] nothing to surface — skipping")
+        return True
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"Open flags > 24h ({digest.get('total_aged', 0)})"},
+        },
+    ]
+    for seat_name, flags in sorted(by_seat.items()):
+        lines = [f"*{seat_name}* ({len(flags)})"]
+        for f in flags[:8]:  # cap per seat to keep digest readable
+            file_url = (
+                f"https://github.com/salesdroid/avo-telemetry/blob/main/"
+                f"{f.source_file}#L{f.line_no}"
+            )
+            head = f.what[:80] + ("…" if len(f.what) > 80 else "") if f.what else "(see file)"
+            lines.append(f"• <{file_url}|{f.source_file}:{f.line_no}> — {head}")
+        if len(flags) > 8:
+            lines.append(f"… + {len(flags)-8} more")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    if unresolved:
+        lines = ["*Unrouted targets* (need seats.yaml alias)"]
+        for u in unresolved[:10]:
+            lines.append(f"• `{u['target_raw']}` in {u['source_file']} (age {u['age_hours']}h)")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    blocks.append(
+        {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"Digest computed {digest['as_of']}"},
+        ]}
+    )
+
+    token = _slack_token()
+    if not token:
+        logger.error("[digest] SLACK_BOT_TOKEN missing — digest skipped")
+        return False
+    try:
+        r = requests.post(
+            _SLACK_API,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "channel": "pit-wall",
+                "text": f"Open flags > 24h: {digest.get('total_aged', 0)}",
+                "blocks": blocks,
+                "unfurl_links": False,
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        ok = bool(r.ok and body.get("ok"))
+        if not ok:
+            logger.error("[digest] Slack post failed: http=%s body=%s", r.status_code, body)
+        return ok
+    except Exception as e:
+        logger.error("[digest] Slack post raised: %s", e)
+        return False
+
+
+def run_daily_digest():
+    """APScheduler entry point — compute + post the digest. Catches all errors
+    so a digest crash doesn't kill the scheduler."""
+    try:
+        digest = compute_digest()
+        post_digest_to_slack(digest)
+        logger.info(
+            "[digest] daily run: open=%d aged=%d seats=%d unrouted=%d",
+            digest.get("total_open", 0),
+            digest.get("total_aged", 0),
+            len(digest.get("by_seat", {})),
+            len(digest.get("unresolved_targets", [])),
+        )
+    except Exception as e:
+        logger.error("[digest] run failed: %s", e, exc_info=True)
 
 
 # ── GitHub HMAC verification ────────────────────────────────────────────────
