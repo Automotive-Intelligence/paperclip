@@ -7838,8 +7838,8 @@ async def admin_roi_report(
     fine even without the join.
     """
     validate_key(authorization)
-    from services.database import fetch_all
-    rows = fetch_all(
+    from services.database import fetch_all, execute_query
+    execute_query(
         """
         CREATE TABLE IF NOT EXISTS agent_revenue (
             id              SERIAL PRIMARY KEY,
