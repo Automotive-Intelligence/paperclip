@@ -7819,6 +7819,157 @@ async def admin_flag_route_now(
     return summary
 
 
+@app.get("/admin/roi-report")
+async def admin_roi_report(
+    days: int = 30,
+    authorization: Optional[str] = Header(None),
+):
+    """Per-agent ROI: LLM spend vs revenue attributed to that agent.
+
+    R1 scaffold. Spend side is wired (reads agent_run_costs). Revenue side
+    reads from agent_revenue — a new table where conversions land per agent
+    per business per dollar (manual entry today, automated wire-up via Twenty
+    / GHL webhooks in a future PR). Endpoint returns the join with NULL
+    revenue for unwired agents so it's obvious which agents need conversion
+    plumbing next.
+
+    Sort key is spend desc. The agents that cost the most are the ones whose
+    revenue side needs wiring first; cheap agents that already convert are
+    fine even without the join.
+    """
+    validate_key(authorization)
+    from services.database import fetch_all
+    rows = fetch_all(
+        """
+        CREATE TABLE IF NOT EXISTS agent_revenue (
+            id              SERIAL PRIMARY KEY,
+            agent_name      TEXT NOT NULL,
+            river           TEXT NOT NULL DEFAULT '',
+            business_key    TEXT NOT NULL DEFAULT '',
+            deal_amount_usd REAL NOT NULL,
+            deal_currency   TEXT NOT NULL DEFAULT 'USD',
+            note            TEXT,
+            attributed_at   DATE NOT NULL,
+            recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    rows = fetch_all(
+        """
+        WITH spend AS (
+            SELECT agent_name,
+                   river,
+                   COUNT(*)                  AS runs,
+                   SUM(input_tokens)         AS in_tok,
+                   SUM(output_tokens)        AS out_tok,
+                   ROUND(SUM(cost_usd)::numeric, 4) AS spend_usd
+            FROM agent_run_costs
+            WHERE created_at >= NOW() - (%s::int * INTERVAL '1 day')
+            GROUP BY agent_name, river
+        ),
+        revenue AS (
+            SELECT agent_name,
+                   river,
+                   COUNT(*)                       AS deals,
+                   ROUND(SUM(deal_amount_usd)::numeric, 2) AS revenue_usd
+            FROM agent_revenue
+            WHERE attributed_at >= CURRENT_DATE - %s::int
+            GROUP BY agent_name, river
+        )
+        SELECT s.agent_name,
+               s.river,
+               s.runs,
+               s.in_tok,
+               s.out_tok,
+               s.spend_usd,
+               COALESCE(r.deals, 0)         AS deals,
+               COALESCE(r.revenue_usd, 0)   AS revenue_usd,
+               CASE WHEN s.spend_usd > 0
+                    THEN ROUND((COALESCE(r.revenue_usd, 0) / s.spend_usd)::numeric, 1)
+                    ELSE NULL END           AS roi_x
+        FROM spend s
+        LEFT JOIN revenue r
+          ON r.agent_name = s.agent_name AND r.river = s.river
+        ORDER BY s.spend_usd DESC NULLS LAST
+        """,
+        (days, days),
+    )
+    by_agent = [
+        {
+            "agent_name":  r[0],
+            "river":       r[1],
+            "runs":        int(r[2] or 0),
+            "in_tok":      int(r[3] or 0),
+            "out_tok":     int(r[4] or 0),
+            "spend_usd":   float(r[5] or 0),
+            "deals":       int(r[6] or 0),
+            "revenue_usd": float(r[7] or 0),
+            "roi_x":       float(r[8]) if r[8] is not None else None,
+        }
+        for r in rows
+    ]
+    totals = {
+        "agents":      len(by_agent),
+        "runs":        sum(x["runs"]        for x in by_agent),
+        "spend_usd":   round(sum(x["spend_usd"]   for x in by_agent), 4),
+        "deals":       sum(x["deals"]       for x in by_agent),
+        "revenue_usd": round(sum(x["revenue_usd"] for x in by_agent), 2),
+        "roi_x":       (round(sum(x["revenue_usd"] for x in by_agent)
+                              / sum(x["spend_usd"] for x in by_agent), 1)
+                        if sum(x["spend_usd"] for x in by_agent) > 0 else None),
+    }
+    unwired = [x["agent_name"] for x in by_agent if x["revenue_usd"] == 0]
+    return {
+        "window_days": days,
+        "totals":      totals,
+        "by_agent":    by_agent,
+        "agents_needing_revenue_wiring": unwired,
+    }
+
+
+@app.post("/admin/agent-revenue/record")
+async def admin_agent_revenue_record(
+    agent_name: str,
+    deal_amount_usd: float,
+    attributed_at: str,   # YYYY-MM-DD
+    river: str = "",
+    business_key: str = "",
+    note: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Manually record a deal-closed against an agent for ROI tracking.
+
+    Use this until automated webhook wiring lands. Example:
+      curl -X POST '.../admin/agent-revenue/record?agent_name=tyler&deal_amount_usd=482&attributed_at=2026-06-26&river=aiphoneguy'
+    """
+    validate_key(authorization)
+    from services.database import execute_query
+    execute_query(
+        """
+        CREATE TABLE IF NOT EXISTS agent_revenue (
+            id              SERIAL PRIMARY KEY,
+            agent_name      TEXT NOT NULL,
+            river           TEXT NOT NULL DEFAULT '',
+            business_key    TEXT NOT NULL DEFAULT '',
+            deal_amount_usd REAL NOT NULL,
+            deal_currency   TEXT NOT NULL DEFAULT 'USD',
+            note            TEXT,
+            attributed_at   DATE NOT NULL,
+            recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    execute_query(
+        """
+        INSERT INTO agent_revenue
+            (agent_name, river, business_key, deal_amount_usd, note, attributed_at)
+        VALUES (%s, %s, %s, %s, %s, %s::date)
+        """,
+        (agent_name, river, business_key, deal_amount_usd, note, attributed_at),
+    )
+    return {"status": "recorded", "agent_name": agent_name, "deal_amount_usd": deal_amount_usd}
+
+
 @app.post("/admin/flag-respond-now")
 async def admin_flag_respond_now(
     seat: str,

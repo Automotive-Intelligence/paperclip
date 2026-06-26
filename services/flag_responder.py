@@ -197,16 +197,36 @@ def _tokens_today(seat: str) -> int:
 # ── LLM call ───────────────────────────────────────────────────────────────
 
 
-def _llm_call(prompt: str, max_tokens: int = 2000) -> tuple[str, int, int]:
-    """Call OpenRouter Gemini Flash. Returns (text, t_in, t_out).
+# Models the flag-responder refuses to call. The responder fires on every
+# routed flag, so an expensive model here = a runaway cost vector. Block
+# the obvious price tiers; the env var must be set to something cheap.
+# (OpenRouter can serve Anthropic + premium OpenAI — without this guard a
+# typo in FLAG_RESPONDER_MODEL would silently 30x our cost per draft.)
+_DENYLIST_PREFIXES = (
+    "anthropic/", "claude-",      # Claude — that's what Claude Max is for
+    "openai/gpt-4", "openai/o1",  # premium OpenAI tiers
+    "openai/o3",
+)
 
-    Skips the CrewAI wrapper — we don't need an agent loop here, just text
-    completion. Raises on transport/quota errors; caller records llm_error.
+
+def _llm_call(prompt: str, max_tokens: int = 2000) -> tuple[str, int, int]:
+    """Call OpenRouter with the configured cheap model. Returns (text, t_in, t_out).
+
+    Refuses anything in _DENYLIST_PREFIXES so a misconfigured env var can't
+    silently route every flag draft through Claude / GPT-4 / o1 / o3. Raises
+    RuntimeError on a denied model; caller records llm_error and skips.
     """
     api_key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY missing for flag responder")
-    model = os.getenv("FLAG_RESPONDER_MODEL", "google/gemini-2.5-flash")
+    model = os.getenv("FLAG_RESPONDER_MODEL", "google/gemini-2.5-flash").strip()
+    model_lower = model.lower()
+    if any(model_lower.startswith(p) for p in _DENYLIST_PREFIXES):
+        raise RuntimeError(
+            f"flag_responder refuses model {model!r} — premium tier denied "
+            "(see _DENYLIST_PREFIXES). Set FLAG_RESPONDER_MODEL to a cheap model "
+            "(google/gemini-2.5-flash, deepseek/deepseek-chat, etc.)."
+        )
     r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={
