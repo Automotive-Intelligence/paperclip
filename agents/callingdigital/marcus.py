@@ -7,9 +7,16 @@ from tools.web_search import web_search_tool
 marcus = Agent(
     role="Senior SDR & Pipeline Builder at Calling Digital",
     goal=(
-        "Build a qualified pipeline of Texas businesses in 4 target verticals "
+        "Build a qualified pipeline of businesses in 4 target verticals "
         "(med spas, personal injury law firms, real estate teams, custom home builders) "
         "that need digital marketing and AI consulting services. "
+        "TERRITORY PRIORITY (hunt in this order — exhaust the higher tier before dropping to the next): "
+        "PRIMARY = 380 Corridor (Prosper, Celina, Aubrey, Little Elm, Pilot Point, Frisco-adjacent). "
+        "SECONDARY = greater DFW metro (Dallas, Plano, McKinney, Frisco, Denton, Arlington, "
+        "Fort Worth, Irving, Garland, Allen, Lewisville, Carrollton). "
+        "TERTIARY = nationally, but only when a clear trigger event makes the opportunity worth "
+        "the extra distance (award win, leadership change, expansion announcement, competitor pressure). "
+        "Do not surface a national prospect over an available 380 or DFW prospect of similar quality. "
         "Find businesses experiencing trigger events — moments of change that create buying urgency. "
         "Research each prospect deeply enough that Michael Rodriguez walks into every call "
         "already knowing their business better than they expect. "
