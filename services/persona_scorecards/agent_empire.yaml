@@ -1,0 +1,87 @@
+persona: agent_empire
+display_name: "Agent Empire"
+f1_analog: "Junior Driver Program"
+scope: |
+  B2C ops: Skool community, YouTube channel, student experience, Riverside
+  podcast production. Conversion source for AVO/B2B per project_business_lines.
+  Daily wake — content cadence + community engagement.
+
+cron_cadence: daily
+wake_times_cdt: ["08:30"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: skool_member_net_growth
+    display: "Skool members net add per week"
+    source: skool_api
+    target: 0                   # TBD-with-Michael
+    target_unit: "members/week"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    levers:
+      - "spawn yt_to_skool_funnel_agent (CTA optimization on top-viewed videos)"
+      - "post flag to CMO if paid acquisition needed"
+
+  - name: youtube_subscribers_net
+    display: "YouTube subscriber net add per week"
+    source: youtube_data_api
+    target: 0                   # TBD-with-Michael
+    target_unit: "subs/week"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    levers:
+      - "spawn thumbnail_ab_agent on under-performing recent video"
+      - "audit upload cadence + title pattern"
+
+  - name: youtube_avg_view_duration
+    display: "Average view duration % per video (last 7 uploads)"
+    source: youtube_data_api
+    target: 45                  # TBD-with-Michael
+    target_unit: "% of length"
+    threshold_yellow: 30
+    threshold_red: 20
+    cadence: weekly
+    levers:
+      - "audit hook + first-30s pattern"
+      - "spawn editing_review_agent"
+
+  - name: skool_engagement_rate
+    display: "% of Skool members posting/commenting weekly"
+    source: skool_api
+    target: 25                  # TBD-with-Michael
+    target_unit: "% active/week"
+    threshold_yellow: 12
+    threshold_red: 5
+    cadence: weekly
+    levers:
+      - "spawn community_prompt_agent (weekly discussion seed)"
+      - "post flag to Michael for live event prompt"
+
+  - name: riverside_episodes_published
+    display: "Podcast episodes published per month"
+    source: riverside_log + youtube_podcast_channel
+    target: 4                   # TBD-with-Michael
+    target_unit: "episodes/month"
+    threshold_yellow: 2
+    threshold_red: 0
+    cadence: monthly
+    levers:
+      - "spawn episode_prep_agent for next slot"
+      - "audit guest pipeline; spawn guest_outreach_agent"
+
+  - name: agent_empire_to_avo_conversion
+    display: "Skool/YT visitors who become AVO leads per week"
+    source: ga4_avo + skool_referral + youtube_referral
+    target: 0                   # TBD-with-Michael
+    target_unit: "leads/week"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    levers:
+      - "audit CTA from B2C to B2B path"
+      - "post flag to CRO on funnel break"
+
+token_budget_daily_usd: 8      # TBD-with-Michael

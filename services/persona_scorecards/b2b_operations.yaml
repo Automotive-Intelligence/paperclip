@@ -1,0 +1,88 @@
+persona: b2b_operations
+display_name: "B2B Operations"
+f1_analog: "Track Operations"
+scope: |
+  Post-sale delivery for CD/WD, AIPG, AvI clients. AVO workflows, Miriam (P&P)
+  ops handoff, Garrett (Worden Welding) GA, churn watch, client health.
+  Per project_b2b_operations_scope.
+
+cron_cadence: daily
+wake_times_cdt: ["09:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: client_churn_rate
+    display: "Active-client net change per month (churn signal)"
+    source: stripe + twenty_client_status
+    target: 0                   # net loss = bad; net add = good
+    target_unit: "clients/month"
+    threshold_yellow: -1
+    threshold_red: -3
+    cadence: monthly
+    levers:
+      - "spawn at_risk_outreach_agent on early signal (engagement drop)"
+      - "post flag to CRO + CMG on imminent churn"
+      - "escalate to Michael for retention call"
+
+  - name: client_health_score
+    display: "Composite per-client health (engagement + payment + sentiment)"
+    source: client_health_aggregator
+    target: 85                  # TBD-with-Michael
+    target_unit: "score / 100 avg"
+    threshold_yellow: 70
+    threshold_red: 55
+    cadence: weekly
+    per_client_aggregated: true
+    levers:
+      - "spawn check_in_agent on dip"
+      - "audit recent delivery quality"
+
+  - name: ga4_property_health
+    display: "GA4 properties reporting cleanly (Worden, P&P, others)"
+    source: ga4_property_audit
+    target: 100                 # %
+    target_unit: "%"
+    threshold_yellow: 95
+    threshold_red: 85
+    cadence: weekly
+    levers:
+      - "spawn ga4_diagnostic_agent (per project_cd_ops_tooling)"
+
+  - name: avo_workflow_uptime
+    display: "AVO workflow uptime (client-facing automations)"
+    source: avo_workflow_logs
+    target: 99.5                # %
+    target_unit: "%"
+    threshold_yellow: 98
+    threshold_red: 95
+    cadence: daily
+    levers:
+      - "spawn workflow_diagnostic_agent on failure"
+      - "post flag to B&T on persistent break"
+
+  - name: payment_collection_on_time
+    display: "% of invoices paid within net-30"
+    source: stripe + manual_invoice_log
+    target: 95                  # TBD-with-Michael
+    target_unit: "%"
+    threshold_yellow: 85
+    threshold_red: 70
+    cadence: weekly
+    levers:
+      - "spawn payment_followup_agent on late invoice"
+      - "escalate to Michael on > 60-day late"
+
+  - name: delivery_sla_compliance
+    display: "% of deliverables hitting agreed-on cadence (per client)"
+    source: delivery_log
+    target: 95                  # TBD-with-Michael
+    target_unit: "%"
+    threshold_yellow: 85
+    threshold_red: 70
+    cadence: weekly
+    levers:
+      - "audit team capacity vs commitment"
+      - "post flag to CMO/CRO if over-committed"
+
+token_budget_daily_usd: 6      # TBD-with-Michael

@@ -353,17 +353,17 @@ def _flag_to_slack_blocks(flag: FlagBlock, seat: Seat) -> list[dict]:
     ]
 
 
-def post_to_slack(seat: Seat, flag: FlagBlock) -> bool:
+def post_to_slack(seat: Seat, flag: FlagBlock) -> tuple[bool, str | None, str | None]:
     """Post a flag notification into the seat's Slack channel via the AVO bot.
 
-    Returns True on success. False on any failure (missing token, bad channel,
-    API rate limit) — caller is expected to fall back to the inbox-file path
-    and log loudly.
+    Returns (ok, channel_id, parent_ts). channel_id + parent_ts are used by
+    the flag_responder to post a threaded draft reply. Either is None on
+    failure — caller logs + skips the responder enqueue.
     """
     token = _slack_token()
     if not token:
         logger.error("[flag_router] SLACK_BOT_TOKEN missing — Slack push skipped")
-        return False
+        return False, None, None
     try:
         r = requests.post(
             _SLACK_API,
@@ -381,15 +381,15 @@ def post_to_slack(seat: Seat, flag: FlagBlock) -> bool:
         )
         body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.ok and body.get("ok"):
-            return True
+            return True, body.get("channel"), body.get("ts")
         logger.error(
             "[flag_router] Slack post failed (channel=%s): http=%s body=%s",
             seat.slack_channel, r.status_code, body,
         )
-        return False
+        return False, None, None
     except Exception as e:
         logger.error("[flag_router] Slack post raised: %s", e)
-        return False
+        return False, None, None
 
 
 # ── Dedupe (Postgres via services.database) ────────────────────────────────
@@ -458,6 +458,33 @@ def record_routing(
 # ── Orchestrator ────────────────────────────────────────────────────────────
 
 
+def _spawn_responder(seat: Seat, flag: FlagBlock, channel_id: str, thread_ts: str) -> None:
+    """Run the flag_responder in a daemon thread. Never raises into the caller."""
+    import threading
+
+    def _run():
+        try:
+            from services.flag_responder import respond_to_flag
+            resp = respond_to_flag(
+                seat, flag,
+                slack_channel_id=channel_id,
+                slack_thread_ts=thread_ts,
+            )
+            logger.info(
+                "[flag_router] responder finished: %s/%s status=%s verdict=%s",
+                seat.canonical_name, flag.source_file,
+                resp.get("status"), resp.get("judge_verdict"),
+            )
+        except Exception as e:
+            logger.error(
+                "[flag_router] responder thread failed for %s: %s",
+                seat.canonical_name, e, exc_info=True,
+            )
+
+    t = threading.Thread(target=_run, daemon=True, name=f"flag-responder-{seat.canonical_name}")
+    t.start()
+
+
 def route_files(
     files_modified: Iterable[str],
     head_sha: str,
@@ -521,7 +548,7 @@ def route_files(
                 summary["seeded"] += 1
                 continue
 
-            slack_ok = post_to_slack(seat, flag)
+            slack_ok, slack_channel_id, slack_parent_ts = post_to_slack(seat, flag)
             inbox_ok = False  # Phase 4 wires inbox file append; v1 is Slack-first.
 
             if not slack_ok:
@@ -536,6 +563,14 @@ def route_files(
                 inbox_ok=inbox_ok,
             )
             summary["newly_routed"] += 1
+
+            # Fire the flag responder in a background thread so the GitHub
+            # webhook returns quickly (10s timeout) while the LLM call
+            # (5-15s) runs out of band. Responder posts the threaded reply
+            # whenever it completes — usually within ~10-20s.
+            if slack_ok and slack_channel_id and slack_parent_ts:
+                _spawn_responder(seat, flag, slack_channel_id, slack_parent_ts)
+                summary["responders_started"] = summary.get("responders_started", 0) + 1
 
     return summary
 

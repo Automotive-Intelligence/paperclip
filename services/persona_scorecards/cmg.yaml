@@ -1,0 +1,75 @@
+persona: cmg
+display_name: "Client Marketing Group (CMG)"
+f1_analog: "Customer Engineer"
+scope: |
+  Per-client marketing execution. Current active: Paper & Purpose (Miriam).
+  Owns plans, brand kit application, Shopify menus, DKIM, photoshoot pipeline,
+  client coordination, presell-launch cadence. Per project_pp_chat_routing:
+  B&T handles credentials/scripts; CMG owns plans + coordination.
+
+cron_cadence: daily
+wake_times_cdt: ["09:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: pp_presell_orders_per_week
+    display: "P&P presell orders booked per week"
+    source: shopify_pp
+    target: 0                   # TBD-with-Michael (Oct 2026 ship date)
+    target_unit: "orders/week"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    levers:
+      - "spawn promo_cadence_agent for next-week email/social push"
+      - "post flag to CMO if conversion off vs target"
+
+  - name: pp_email_signup_rate
+    display: "P&P email signup rate from site visitors"
+    source: ga4_pp + loops_pp
+    target: 3                   # TBD-with-Michael
+    target_unit: "% of sessions"
+    threshold_yellow: 1.5
+    threshold_red: 0.5
+    cadence: weekly
+    levers:
+      - "A/B test lead-magnet copy (per reference_ecommerce_signup_form_research)"
+      - "audit popup timing + offer"
+
+  - name: client_response_time
+    display: "Median hours from Miriam ping to CMG response"
+    source: imessage_log + email_log
+    target: 4
+    target_unit: "hours (business hours)"
+    threshold_yellow: 24
+    threshold_red: 72
+    cadence: daily
+    levers:
+      - "spawn draft_response_agent for low-stakes asks"
+      - "escalate to Michael on high-stakes / contractual"
+
+  - name: brand_voice_compliance_pp
+    display: "% P&P outbound content matching brand kit (sage/cream/gold, restrained botanicals)"
+    source: content_review_logs_pp
+    target: 100                 # locked per feedback_pp_brand_kit_governs
+    target_unit: "%"
+    threshold_yellow: 98
+    threshold_red: 95
+    cadence: weekly
+    levers:
+      - "halt offending agent until brand-kit fix"
+
+  - name: client_satisfaction_signal
+    display: "Aggregated client sentiment from comms (Miriam + future clients)"
+    source: comms_sentiment_aggregator
+    target: 80                  # TBD-with-Michael
+    target_unit: "sentiment score 0-100"
+    threshold_yellow: 65
+    threshold_red: 50
+    cadence: weekly
+    levers:
+      - "spawn check_in_agent on dip"
+      - "escalate to Michael on RED"
+
+token_budget_daily_usd: 6      # TBD-with-Michael

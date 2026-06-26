@@ -1,0 +1,73 @@
+persona: pit_wall
+display_name: "Pit Wall"
+f1_analog: "Chief Strategist"
+scope: |
+  Cross-portfolio strategic calls, persona-to-persona dependency resolution,
+  resource allocation across the racing fleet (brands), focus arbitration when
+  multiple lanes ask for the same hour. Twice-daily strategic read.
+
+cron_cadence: twice_daily
+wake_times_cdt: ["07:30", "17:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: strategic_bet_allocation
+    display: "% of cross-portfolio time/budget allocated to top-3 declared bets"
+    source: telemetry_strategic_calls
+    target: 75                  # TBD-with-Michael
+    target_unit: "% allocated"
+    threshold_yellow: 60
+    threshold_red: 40
+    cadence: weekly
+    levers:
+      - "post flag to CMO/CRO/B&T to re-prioritize"
+      - "surface drift in Owner's Brief for Michael's call"
+
+  - name: cross_persona_dependency_resolution_hours
+    display: "Median hours to resolve cross-persona blockers"
+    source: agent_handoffs_cross_persona
+    target: 12                  # TBD-with-Michael
+    target_unit: "hours (median)"
+    threshold_yellow: 24
+    threshold_red: 72
+    cadence: daily
+    levers:
+      - "spawn dependency_unblock_agent"
+      - "escalate to Michael when 2+ personas mutually blocked"
+
+  - name: decisions_blocking_execution
+    display: "Open decisions requiring Michael's nod, age > 48h"
+    source: red_tier_queue
+    target: 0
+    target_unit: "count"
+    threshold_yellow: 2
+    threshold_red: 5
+    cadence: daily
+    levers:
+      - "consolidate RED items into Owner's Brief top of fold"
+
+  - name: focus_arbitration_outcomes
+    display: "% of arbitration calls that moved a stalled lane (vs noise)"
+    source: pit_wall_decision_log
+    target: 75                  # TBD-with-Michael
+    target_unit: "%"
+    threshold_yellow: 50
+    threshold_red: 30
+    cadence: weekly
+    levers:
+      - "audit recent arbitrations; spawn lessons_extraction_agent"
+
+  - name: portfolio_health_index
+    display: "Composite 0-100 score across all 9 personas (avg of green-rate)"
+    source: scorecard_aggregator
+    target: 85                  # TBD-with-Michael
+    target_unit: "0-100"
+    threshold_yellow: 70
+    threshold_red: 50
+    cadence: daily
+    levers:
+      - "surface weakest persona in Owner's Brief"
+      - "post flag to weakest persona for action plan"
+
+token_budget_daily_usd: 10     # TBD-with-Michael

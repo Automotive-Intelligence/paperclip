@@ -1,0 +1,93 @@
+persona: internal_marketing
+display_name: "Internal Marketing"
+f1_analog: "Race Engineers (per car)"
+scope: |
+  Brand-marketing production for AvI, CD/WD, AIPG, Agent Empire,
+  CustomerAdvocate, Book'd (oversight). Production-lane execution: website,
+  blog, social, lead magnets, newsletter, reviews, SEO/AEO.
+  Reports up to CMO; executes day-to-day.
+
+cron_cadence: twice_daily
+wake_times_cdt: ["08:00", "16:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: per_brand_website_organic_sessions
+    display: "Organic sessions per brand site per week"
+    source: ga4_per_property
+    target: 0                   # TBD-with-Michael — set per-brand
+    target_unit: "sessions/week"
+    threshold_yellow: 0         # TBD per brand
+    threshold_red: 0            # TBD per brand
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg", "agent_empire", "customer_advocate"]
+    levers:
+      - "spawn seo_audit_agent on declining brand"
+      - "boost content velocity for brand"
+      - "post flag to CMO if drop > 30% (potential indexing issue)"
+
+  - name: per_brand_email_list_growth
+    display: "Newsletter subscriber net-add per brand per week"
+    source: loops_per_brand
+    target: 0                   # TBD-with-Michael
+    target_unit: "subs/week"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg", "agent_empire"]
+    levers:
+      - "spawn lead_magnet_promo_agent"
+      - "audit landing-page conversion on highest-traffic asset"
+
+  - name: per_brand_social_engagement
+    display: "Engagement rate per brand per platform (last 7d)"
+    source: zernio_per_platform_per_brand
+    target: 0                   # TBD-with-Michael
+    target_unit: "% engagement"
+    threshold_yellow: 0
+    threshold_red: 0
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg", "bookd", "agent_empire", "pp"]
+    levers:
+      - "spawn higgsfield content rotation on brand"
+      - "audit post-time + format mix"
+
+  - name: blog_publish_cadence
+    display: "Blog posts published per brand per week"
+    source: wordpress_ghost_per_brand
+    target: 2                   # TBD-with-Michael
+    target_unit: "posts/week/brand"
+    threshold_yellow: 1
+    threshold_red: 0
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg"]
+    levers:
+      - "spawn blog_draft_agent on lagging brand"
+      - "queue 4-post buffer ahead of next week"
+
+  - name: reviews_response_time
+    display: "Hours from review posted to response (per brand, GMB + platform reviews)"
+    source: gmb_reviews_per_brand + platform_reviews
+    target: 24
+    target_unit: "hours (median)"
+    threshold_yellow: 48
+    threshold_red: 120
+    cadence: daily
+    per_brand: ["wd", "avi", "aipg"]
+    levers:
+      - "spawn review_response_agent"
+      - "post flag to CMG if client-side review (P&P)"
+
+  - name: brand_voice_compliance
+    display: "% of outbound content passing brand-voice + hero-metrics review"
+    source: content_review_logs
+    target: 100                 # locked
+    target_unit: "%"
+    threshold_yellow: 98
+    threshold_red: 95
+    cadence: weekly
+    levers:
+      - "halt offending agent until prompt fix"
+
+token_budget_daily_usd: 14     # TBD-with-Michael — multi-brand production

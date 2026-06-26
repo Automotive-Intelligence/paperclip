@@ -1,0 +1,79 @@
+persona: cmo
+display_name: "Chief Marketing Officer"
+f1_analog: "Marketing Director"
+scope: |
+  Marketing operating system, brand-marketing oversight across all 5 brands
+  (WD, AvI, AIPG, CD, Book'd, P&P, Agent Empire), per-brand production lanes,
+  content velocity, brand-search trend, demand-gen pipeline contribution.
+
+cron_cadence: twice_daily
+wake_times_cdt: ["07:00", "18:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: weekly_qualified_leads_organic
+    display: "Weekly qualified leads from organic channels (all brands)"
+    source: ga4_twenty_join
+    target: 25                  # TBD-with-Michael
+    target_unit: "leads/week"
+    threshold_yellow: 18        # TBD-with-Michael
+    threshold_red: 12           # TBD-with-Michael
+    cadence: weekly
+    levers:
+      - "boost content velocity (spawn higgsfield content agent for under-performing brand)"
+      - "audit landing-page conversion (spawn conversion_audit_agent)"
+      - "post flag to CRO if conversion-rate gap is downstream of marketing-qualified flow"
+
+  - name: per_brand_search_volume_trend
+    display: "Per-brand Google search volume month-over-month"
+    source: gsc_per_brand
+    target: "+5%"               # TBD-with-Michael
+    target_unit: "MoM %"
+    threshold_yellow: 0
+    threshold_red: -5
+    cadence: weekly
+    per_brand: ["worshipdigital.co", "automotiveintelligence.io", "theaiphoneguy.ai", "bookd.cx", "buildagentempire.com"]
+    levers:
+      - "spawn seo_audit_agent on declining brand"
+      - "redirect content lane priority to declining brand (Zernio + Higgsfield)"
+
+  - name: newsletter_open_rate
+    display: "Newsletter open rate (per-brand)"
+    source: loops
+    target: 38                  # TBD-with-Michael
+    target_unit: "% opened"
+    threshold_yellow: 30
+    threshold_red: 22
+    cadence: weekly
+    levers:
+      - "subject-line A/B test (spawn email_optim_agent)"
+      - "list hygiene sweep (spawn list_hygiene_agent)"
+      - "sender reputation check (DKIM/SPF/DMARC verify)"
+
+  - name: content_velocity
+    display: "Content posts shipped per week per brand"
+    source: buffer_higgsfield_zernio_join
+    target: 5                   # TBD-with-Michael
+    target_unit: "posts/week/brand"
+    threshold_yellow: 3
+    threshold_red: 1
+    cadence: weekly
+    levers:
+      - "spawn higgsfield_content_agent for under-shipping brand"
+      - "spawn zernio_repost_agent to syndicate top-performing existing content"
+      - "flag to Internal Marketing if brand-specific production lane is blocked"
+
+  - name: brand_voice_compliance
+    display: "Brand voice + hero-metrics policy compliance (% of outbound content passing review)"
+    source: content_review_logs
+    target: 100                 # locked — per feedback_hero_metrics_policy
+    target_unit: "%"
+    threshold_yellow: 98
+    threshold_red: 95
+    cadence: weekly
+    levers:
+      - "halt offending agent until prompt fix lands"
+      - "post flag to B&T for prompt update"
+
+token_budget_daily_usd: 12     # TBD-with-Michael

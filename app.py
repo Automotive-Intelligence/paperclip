@@ -7817,3 +7817,62 @@ async def admin_flag_route_now(
         ]
     summary = await asyncio.to_thread(route_files, touched, sha, seed_only)
     return summary
+
+
+@app.post("/admin/flag-respond-now")
+async def admin_flag_respond_now(
+    seat: str,
+    file: str,
+    posted_ts: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Manually trigger the Flag Responder on one specific historical flag.
+
+    Used for acceptance testing — points the responder at a known flag (e.g.
+    the AIPG Missed-Call Playbook flag) and produces a draft Slack thread
+    reply on the original notification message. The (seat, file, posted_ts)
+    triple must already be in routed_flags (the responder uses slack_ts from
+    that row to thread under).
+
+    Example:
+      curl -X POST 'https://.../admin/flag-respond-now?seat=Build%20%26%20Tech&file=brand_rules.md&posted_ts=2026-06-26T01:43:00Z'
+    """
+    validate_key(authorization)
+    from services.flag_router import (
+        Seat, load_seats, fetch_telemetry_file, parse_flags, resolve_seat,
+    )
+    from services.flag_responder import respond_to_flag
+    from services.database import fetch_all
+
+    # Find the routed_flags row to pull slack_ts (so we can reply threaded).
+    rows = fetch_all(
+        "SELECT source_sha FROM routed_flags WHERE source_file=%s AND posted_ts=%s LIMIT 1",
+        (file, posted_ts),
+    )
+    if not rows:
+        raise HTTPException(404, f"no routed_flags row for {file}@{posted_ts}")
+    src_sha = rows[0][0] or "main"
+
+    seats = load_seats()
+    seat_obj = next((s for s in seats if s.canonical_name == seat), None)
+    if seat_obj is None:
+        raise HTTPException(400, f"unknown seat {seat!r}")
+
+    # Re-parse the file at its head sha to reconstruct the FlagBlock.
+    content = fetch_telemetry_file(file, src_sha)
+    if not content:
+        raise HTTPException(404, f"file {file} empty/missing at {src_sha}")
+    flags = parse_flags(content, source_file=file, source_sha=src_sha)
+    flag = next((f for f in flags if f.posted_ts == posted_ts), None)
+    if flag is None:
+        raise HTTPException(404, f"no live flag in {file} with posted={posted_ts}")
+
+    # Find the parent Slack ts via Slack search-by-text would be brittle;
+    # instead we re-post the parent flag notification and thread under it.
+    from services.flag_router import post_to_slack
+    ok, ch_id, parent_ts = await asyncio.to_thread(post_to_slack, seat_obj, flag)
+    if not ok or not ch_id or not parent_ts:
+        raise HTTPException(502, "failed to post parent Slack message")
+
+    resp = await asyncio.to_thread(respond_to_flag, seat_obj, flag, ch_id, parent_ts)
+    return {"parent_post": {"channel": ch_id, "ts": parent_ts}, "responder": resp}
