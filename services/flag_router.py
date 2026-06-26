@@ -449,6 +449,11 @@ _TABLE_MIGRATIONS = [
         "CREATE UNIQUE INDEX IF NOT EXISTS routed_flags_unique_v2_idx "
         "ON routed_flags (source_file, posted_ts, target_raw, COALESCE(body_hash, ''))"
     ),
+    # Drop the v1 UNIQUE on (source_file, posted_ts, target_raw). It silently
+    # ate escalation INSERTs via ON CONFLICT DO NOTHING (caught 2026-06-26
+    # during acceptance test — manual route reported newly_escalated:2 while
+    # routed_flags grew by 0). v2 index above is the live identity.
+    "ALTER TABLE routed_flags DROP CONSTRAINT IF EXISTS routed_flags_source_file_posted_ts_target_raw_key",
 ]
 
 _table_ensured = False
