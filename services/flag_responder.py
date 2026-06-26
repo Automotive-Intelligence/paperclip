@@ -39,6 +39,7 @@ from pathlib import Path
 import requests
 import yaml
 
+from services.current_time import current_time_block
 from services.database import execute_query, fetch_all
 from services.flag_router import FlagBlock, Seat, _fetch_telemetry_path
 
@@ -304,6 +305,10 @@ def _build_executor_prompt(
             "shifts the work, produce a fresh draft.\n"
         )
     return f"""{persona}
+
+---
+
+{current_time_block()}
 
 ---
 {escalation_note}
