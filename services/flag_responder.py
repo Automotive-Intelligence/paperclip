@@ -136,6 +136,9 @@ _TABLE_MIGRATIONS = [
         "CREATE UNIQUE INDEX IF NOT EXISTS persona_runs_unique_v2_idx "
         "ON persona_runs (seat, flag_source, flag_posted_ts, COALESCE(body_hash, ''))"
     ),
+    # Drop the v1 UNIQUE on (seat, flag_source, flag_posted_ts). Mirrors the
+    # routed_flags drop — same ON CONFLICT swallow bug applies here too.
+    "ALTER TABLE persona_runs DROP CONSTRAINT IF EXISTS persona_runs_seat_flag_source_flag_posted_ts_key",
 ]
 
 _table_ensured = False
