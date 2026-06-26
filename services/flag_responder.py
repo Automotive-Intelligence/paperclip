@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS persona_runs (
 )
 """
 
+# Idempotent migration: add body_hash + is_escalation, swap UNIQUE so each
+# escalation (same identity, different body) re-spawns one draft.
+_TABLE_MIGRATIONS = [
+    "ALTER TABLE persona_runs ADD COLUMN IF NOT EXISTS body_hash TEXT",
+    "ALTER TABLE persona_runs ADD COLUMN IF NOT EXISTS is_escalation BOOLEAN NOT NULL DEFAULT FALSE",
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS persona_runs_unique_v2_idx "
+        "ON persona_runs (seat, flag_source, flag_posted_ts, COALESCE(body_hash, ''))"
+    ),
+]
+
 _table_ensured = False
 
 
@@ -135,14 +146,28 @@ def _ensure_table() -> None:
     if _table_ensured:
         return
     execute_query(_TABLE_DDL)
+    for ddl in _TABLE_MIGRATIONS:
+        try:
+            execute_query(ddl)
+        except Exception as e:
+            logger.warning("[flag_responder] migration step skipped: %s (%s)", ddl[:60], e)
     _table_ensured = True
 
 
 def _already_ran(seat: str, flag: FlagBlock) -> bool:
+    """True if we've already produced a draft for this exact (seat, flag-identity,
+    body_hash) tuple. Same identity with a different body (an escalation) does
+    NOT match — the responder re-runs to produce a fresh draft for the new body.
+    """
     _ensure_table()
     rows = fetch_all(
-        "SELECT 1 FROM persona_runs WHERE seat=%s AND flag_source=%s AND flag_posted_ts=%s",
-        (seat, flag.source_file, flag.posted_ts),
+        """
+        SELECT 1 FROM persona_runs
+        WHERE seat=%s AND flag_source=%s AND flag_posted_ts=%s
+          AND COALESCE(body_hash, '') = %s
+        LIMIT 1
+        """,
+        (seat, flag.source_file, flag.posted_ts, flag.body_hash),
     )
     return bool(rows)
 
@@ -159,6 +184,7 @@ def _record_run(
     tokens_output: int | None = None,
     slack_ts: str | None = None,
     error: str | None = None,
+    is_escalation: bool = False,
 ) -> None:
     _ensure_table()
     execute_query(
@@ -166,14 +192,16 @@ def _record_run(
         INSERT INTO persona_runs
             (seat, flag_source, flag_posted_ts, flag_target_raw, status,
              judge_verdict, judge_reason, draft_chars,
-             tokens_input, tokens_output, slack_ts, error)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (seat, flag_source, flag_posted_ts) DO NOTHING
+             tokens_input, tokens_output, slack_ts, error,
+             body_hash, is_escalation)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (
             seat, flag.source_file, flag.posted_ts, flag.target_raw, status,
             judge_verdict, judge_reason, draft_chars,
             tokens_input, tokens_output, slack_ts, error,
+            flag.body_hash, is_escalation,
         ),
     )
 
@@ -253,14 +281,29 @@ def _llm_call(prompt: str, max_tokens: int = 2000) -> tuple[str, int, int]:
 # ── Prompt construction ───────────────────────────────────────────────────
 
 
-def _build_executor_prompt(persona: str, flag: FlagBlock, authority: dict) -> str:
+def _build_executor_prompt(
+    persona: str,
+    flag: FlagBlock,
+    authority: dict,
+    is_escalation: bool = False,
+) -> str:
     can = "\n".join(f"  - {x}" for x in (authority.get("can_draft") or []))
     cannot = "\n".join(f"  - {x}" for x in (authority.get("cannot") or []))
     mode = authority.get("mode", "draft_only")
+    escalation_note = ""
+    if is_escalation:
+        escalation_note = (
+            "\n*** ESCALATED FLAG ***\n"
+            "This flag was already routed once. The sender updated its body\n"
+            "(escalation marker, scope change, or status update). Your previous\n"
+            "draft is stale. Re-read the fields below; if your prior take still\n"
+            "holds, say so briefly and call out what changed. If the change\n"
+            "shifts the work, produce a fresh draft.\n"
+        )
     return f"""{persona}
 
 ---
-
+{escalation_note}
 A flag was just routed to you via the avo-telemetry flag-router:
 
   Target:    {flag.target_raw}
@@ -417,18 +460,21 @@ def respond_to_flag(
     flag: FlagBlock,
     slack_channel_id: str,
     slack_thread_ts: str,
+    is_escalation: bool = False,
 ) -> dict:
     """Run the responder for a single (seat, flag). Returns audit summary.
 
-    Idempotent via persona_runs UNIQUE(seat, flag_source, flag_posted_ts).
-    A flag routed twice (manual re-trigger, webhook redelivery) will not
-    double-spawn drafts.
+    Idempotent via persona_runs UNIQUE(seat, flag_source, flag_posted_ts,
+    body_hash). Same flag with the same body never re-spawns. Same flag with
+    a NEW body (escalation) DOES re-spawn — the work changed; the draft is
+    stale.
     """
     seat_name = seat.canonical_name
     summary = {
         "seat": seat_name,
         "flag_source": flag.source_file,
         "flag_posted_ts": flag.posted_ts,
+        "is_escalation": is_escalation,
         "status": "started",
     }
 
@@ -439,7 +485,9 @@ def respond_to_flag(
     persona = _load_persona_prompt(seat_name)
     if not persona:
         summary["status"] = "no_persona"
-        _record_run(seat_name, flag, "no_persona", error=f"no persona for seat {seat_name}")
+        _record_run(seat_name, flag, "no_persona",
+                    error=f"no persona for seat {seat_name}",
+                    is_escalation=is_escalation)
         return summary
 
     authority = _authority_for(seat_name)
@@ -451,15 +499,18 @@ def respond_to_flag(
             seat_name, flag, "cap_exceeded",
             tokens_output=0,
             error=f"daily cap {cap} reached ({spent} tokens already out)",
+            is_escalation=is_escalation,
         )
         return summary
 
-    prompt = _build_executor_prompt(persona, flag, authority)
+    prompt = _build_executor_prompt(persona, flag, authority, is_escalation=is_escalation)
     try:
         draft, t_in, t_out = _llm_call(prompt, max_tokens=2000)
     except Exception as e:
         summary["status"] = "llm_error"
-        _record_run(seat_name, flag, "llm_error", error=f"{type(e).__name__}: {e}")
+        _record_run(seat_name, flag, "llm_error",
+                    error=f"{type(e).__name__}: {e}",
+                    is_escalation=is_escalation)
         return summary
 
     if not draft.strip():
@@ -467,6 +518,7 @@ def respond_to_flag(
             seat_name, flag, "empty_draft",
             tokens_input=t_in, tokens_output=t_out,
             error="LLM returned empty content",
+            is_escalation=is_escalation,
         )
         summary["status"] = "empty_draft"
         return summary
@@ -487,6 +539,7 @@ def respond_to_flag(
         tokens_input=t_in,
         tokens_output=t_out,
         slack_ts=reply_ts,
+        is_escalation=is_escalation,
     )
     summary.update({
         "status": status,
