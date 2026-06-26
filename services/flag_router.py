@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import requests
@@ -104,8 +104,26 @@ class FlagBlock:
     source_sha: str          # head commit sha of the push that surfaced this
     line_no: int             # line number in source_file (for citations)
 
+    @property
+    def body_hash(self) -> str:
+        """16-char SHA-256 prefix of the fields that escalations mutate.
+
+        A flag's *identity* is (source_file, posted_ts, target_raw) — the
+        sender, when, and who it's for. A flag's *content* is what+why_now+
+        by_when+posted_by. Pit Wall escalating a flag in place (ESCALATE-AGAIN,
+        STALE-ALERT, scope rewrites) changes content while identity stays
+        constant. Routing on identity alone treats the escalation as already-
+        routed (silent). Routing on identity + body_hash makes the same flag
+        with different content re-fire as an ESCALATED notification.
+        """
+        h = hashlib.sha256()
+        for field_val in (self.what, self.why_now, self.by_when, self.posted_by):
+            h.update((field_val or "").encode("utf-8"))
+            h.update(b"\x00")
+        return h.hexdigest()[:16]
+
     def signature(self) -> str:
-        """Idempotency key for the routed_flags table."""
+        """Identity key (without body_hash)."""
         return f"{self.source_file}::{self.posted_ts}::{self.target_raw}"
 
 
@@ -321,9 +339,12 @@ def _slack_token() -> str | None:
     return (os.environ.get("SLACK_BOT_TOKEN") or "").strip() or None
 
 
-def _flag_to_slack_blocks(flag: FlagBlock, seat: Seat) -> list[dict]:
+def _flag_to_slack_blocks(flag: FlagBlock, seat: Seat, is_escalation: bool = False) -> list[dict]:
     """Render a FlagBlock as Slack Block-Kit. Compact, scannable, linked."""
-    header_text = f":triangular_flag_on_post: New flag for *{seat.canonical_name}*"
+    if is_escalation:
+        header_text = f":rotating_light: *ESCALATED:* updated flag for *{seat.canonical_name}*"
+    else:
+        header_text = f":triangular_flag_on_post: New flag for *{seat.canonical_name}*"
     file_url = (
         f"https://github.com/salesdroid/avo-telemetry/blob/"
         f"{flag.source_sha}/{flag.source_file}#L{flag.line_no}"
@@ -353,18 +374,26 @@ def _flag_to_slack_blocks(flag: FlagBlock, seat: Seat) -> list[dict]:
     ]
 
 
-def post_to_slack(seat: Seat, flag: FlagBlock) -> tuple[bool, str | None, str | None]:
+def post_to_slack(
+    seat: Seat,
+    flag: FlagBlock,
+    is_escalation: bool = False,
+) -> tuple[bool, str | None, str | None]:
     """Post a flag notification into the seat's Slack channel via the AVO bot.
 
     Returns (ok, channel_id, parent_ts). channel_id + parent_ts are used by
     the flag_responder to post a threaded draft reply. Either is None on
     failure — caller logs + skips the responder enqueue.
+
+    When is_escalation=True, header renders with `:rotating_light: ESCALATED:`
+    so a re-fired flag is distinguishable from a brand-new one at a glance.
     """
     token = _slack_token()
     if not token:
         logger.error("[flag_router] SLACK_BOT_TOKEN missing — Slack push skipped")
         return False, None, None
     try:
+        prefix = "ESCALATED: " if is_escalation else "New flag for "
         r = requests.post(
             _SLACK_API,
             headers={
@@ -373,8 +402,8 @@ def post_to_slack(seat: Seat, flag: FlagBlock) -> tuple[bool, str | None, str | 
             },
             json={
                 "channel": seat.slack_channel,  # channel name; bot must be a member
-                "text": f"New flag for {seat.canonical_name}: {flag.what[:120] or '(see file)'}",
-                "blocks": _flag_to_slack_blocks(flag, seat),
+                "text": f"{prefix}{seat.canonical_name}: {flag.what[:120] or '(see file)'}",
+                "blocks": _flag_to_slack_blocks(flag, seat, is_escalation=is_escalation),
                 "unfurl_links": False,
             },
             timeout=_REQUEST_TIMEOUT,
@@ -409,6 +438,19 @@ CREATE TABLE IF NOT EXISTS routed_flags (
 )
 """
 
+# Idempotent migration to add body_hash + is_escalation. Runs once per
+# process at first call. The CREATE UNIQUE INDEX uses COALESCE so legacy
+# rows with NULL body_hash don't trigger constraint violation on insert
+# of a fresh-hash row for the same flag identity.
+_TABLE_MIGRATIONS = [
+    "ALTER TABLE routed_flags ADD COLUMN IF NOT EXISTS body_hash TEXT",
+    "ALTER TABLE routed_flags ADD COLUMN IF NOT EXISTS is_escalation BOOLEAN NOT NULL DEFAULT FALSE",
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS routed_flags_unique_v2_idx "
+        "ON routed_flags (source_file, posted_ts, target_raw, COALESCE(body_hash, ''))"
+    ),
+]
+
 _table_ensured = False
 
 
@@ -417,16 +459,76 @@ def _ensure_table() -> None:
     if _table_ensured:
         return
     execute_query(_TABLE_DDL)
+    for ddl in _TABLE_MIGRATIONS:
+        try:
+            execute_query(ddl)
+        except Exception as e:
+            logger.warning("[flag_router] migration step skipped: %s (%s)", ddl[:60], e)
     _table_ensured = True
 
 
-def already_routed(flag: FlagBlock) -> bool:
+def check_routed_or_escalation(flag: FlagBlock) -> tuple[bool, bool]:
+    """Decide whether to route this flag and whether it's an escalation.
+
+    Returns (skip, is_escalation):
+      - (True,  False) — exact same flag (identity + body_hash) already routed
+      - (True,  False) — legacy row exists with NULL body_hash; backfilled in place
+      - (False, True ) — same identity exists with different body_hash → escalation
+      - (False, False) — never seen → first routing
+    """
     _ensure_table()
+    bh = flag.body_hash
+
+    # Case A: exact match (identity + body) → already routed
     rows = fetch_all(
-        "SELECT 1 FROM routed_flags WHERE source_file=%s AND posted_ts=%s AND target_raw=%s",
+        """
+        SELECT 1 FROM routed_flags
+        WHERE source_file=%s AND posted_ts=%s AND target_raw=%s AND body_hash=%s
+        LIMIT 1
+        """,
+        (flag.source_file, flag.posted_ts, flag.target_raw, bh),
+    )
+    if rows:
+        return True, False
+
+    # Case B: legacy row (NULL body_hash) for this identity → backfill, don't re-fire
+    legacy = fetch_all(
+        """
+        SELECT id FROM routed_flags
+        WHERE source_file=%s AND posted_ts=%s AND target_raw=%s AND body_hash IS NULL
+        LIMIT 1
+        """,
         (flag.source_file, flag.posted_ts, flag.target_raw),
     )
-    return bool(rows)
+    if legacy:
+        execute_query(
+            "UPDATE routed_flags SET body_hash=%s WHERE id=%s",
+            (bh, legacy[0][0]),
+        )
+        return True, False
+
+    # Case C: identity exists with a DIFFERENT body_hash → escalation
+    prior = fetch_all(
+        """
+        SELECT 1 FROM routed_flags
+        WHERE source_file=%s AND posted_ts=%s AND target_raw=%s AND body_hash IS NOT NULL
+        LIMIT 1
+        """,
+        (flag.source_file, flag.posted_ts, flag.target_raw),
+    )
+    if prior:
+        return False, True
+
+    # Case D: truly new
+    return False, False
+
+
+# Back-compat shim: older callers used a single bool. New code uses
+# check_routed_or_escalation. Keep this around so any out-of-tree caller
+# doesn't break, but route_files now uses the richer check above.
+def already_routed(flag: FlagBlock) -> bool:
+    skip, _ = check_routed_or_escalation(flag)
+    return skip
 
 
 def record_routing(
@@ -434,14 +536,16 @@ def record_routing(
     resolved_seat: str | None,
     slack_ok: bool,
     inbox_ok: bool,
+    is_escalation: bool = False,
 ) -> None:
     _ensure_table()
     execute_query(
         """
         INSERT INTO routed_flags
-            (source_file, posted_ts, target_raw, resolved_seat, source_sha, slack_ok, inbox_ok)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (source_file, posted_ts, target_raw) DO NOTHING
+            (source_file, posted_ts, target_raw, resolved_seat, source_sha,
+             slack_ok, inbox_ok, body_hash, is_escalation)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
         """,
         (
             flag.source_file,
@@ -451,6 +555,8 @@ def record_routing(
             flag.source_sha,
             slack_ok,
             inbox_ok,
+            flag.body_hash,
+            is_escalation,
         ),
     )
 
@@ -458,7 +564,13 @@ def record_routing(
 # ── Orchestrator ────────────────────────────────────────────────────────────
 
 
-def _spawn_responder(seat: Seat, flag: FlagBlock, channel_id: str, thread_ts: str) -> None:
+def _spawn_responder(
+    seat: Seat,
+    flag: FlagBlock,
+    channel_id: str,
+    thread_ts: str,
+    is_escalation: bool = False,
+) -> None:
     """Run the flag_responder in a daemon thread. Never raises into the caller."""
     import threading
 
@@ -469,6 +581,7 @@ def _spawn_responder(seat: Seat, flag: FlagBlock, channel_id: str, thread_ts: st
                 seat, flag,
                 slack_channel_id=channel_id,
                 slack_thread_ts=thread_ts,
+                is_escalation=is_escalation,
             )
             logger.info(
                 "[flag_router] responder finished: %s/%s status=%s verdict=%s",
@@ -493,7 +606,8 @@ def route_files(
     """Walk every modified .md file at `head_sha`, parse new flags, route them.
 
     Returns a summary dict suitable for webhook ACK + log line:
-        {"files_scanned": N, "flags_seen": N, "newly_routed": N, "seeded": N,
+        {"files_scanned": N, "flags_seen": N, "newly_routed": N,
+         "newly_escalated": N, "seeded": N,
          "unresolved": [{"target_raw": "...", "source_file": "..."}, ...],
          "slack_misses": [...], "errors": [...]}
 
@@ -507,6 +621,7 @@ def route_files(
         "files_scanned": 0,
         "flags_seen": 0,
         "newly_routed": 0,
+        "newly_escalated": 0,
         "seeded": 0,
         "unresolved": [],
         "slack_misses": [],
@@ -527,14 +642,19 @@ def route_files(
         summary["flags_seen"] += len(flags)
 
         for flag in flags:
-            if already_routed(flag):
+            skip, is_escalation = check_routed_or_escalation(flag)
+            if skip:
                 continue
             seat = resolve_seat(flag.target_raw, seats)
             if seat is None:
                 summary["unresolved"].append(
                     {"target_raw": flag.target_raw, "source_file": path}
                 )
-                record_routing(flag, resolved_seat=None, slack_ok=False, inbox_ok=False)
+                record_routing(
+                    flag, resolved_seat=None,
+                    slack_ok=False, inbox_ok=False,
+                    is_escalation=is_escalation,
+                )
                 continue
 
             if seed_only:
@@ -544,11 +664,14 @@ def route_files(
                     resolved_seat=seat.canonical_name,
                     slack_ok=False,
                     inbox_ok=False,
+                    is_escalation=is_escalation,
                 )
                 summary["seeded"] += 1
                 continue
 
-            slack_ok, slack_channel_id, slack_parent_ts = post_to_slack(seat, flag)
+            slack_ok, slack_channel_id, slack_parent_ts = post_to_slack(
+                seat, flag, is_escalation=is_escalation,
+            )
             inbox_ok = False  # Phase 4 wires inbox file append; v1 is Slack-first.
 
             if not slack_ok:
@@ -561,15 +684,22 @@ def route_files(
                 resolved_seat=seat.canonical_name,
                 slack_ok=slack_ok,
                 inbox_ok=inbox_ok,
+                is_escalation=is_escalation,
             )
-            summary["newly_routed"] += 1
+            if is_escalation:
+                summary["newly_escalated"] += 1
+            else:
+                summary["newly_routed"] += 1
 
             # Fire the flag responder in a background thread so the GitHub
             # webhook returns quickly (10s timeout) while the LLM call
             # (5-15s) runs out of band. Responder posts the threaded reply
             # whenever it completes — usually within ~10-20s.
             if slack_ok and slack_channel_id and slack_parent_ts:
-                _spawn_responder(seat, flag, slack_channel_id, slack_parent_ts)
+                _spawn_responder(
+                    seat, flag, slack_channel_id, slack_parent_ts,
+                    is_escalation=is_escalation,
+                )
                 summary["responders_started"] = summary.get("responders_started", 0) + 1
 
     return summary
