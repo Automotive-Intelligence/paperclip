@@ -1,0 +1,109 @@
+persona: bt
+display_name: "Build & Tech"
+f1_analog: "Technical Director + Chief Engineer (post-CTO merge 2026-06-23)"
+scope: |
+  Paperclip code, 22 CrewAI agents, infrastructure surface (post-merge per
+  project_build_tech_scope), vendor stack, secrets, identity, DR. Watches the
+  car AND the platform underneath. Every 4 hours during business, daily after.
+
+cron_cadence: every_4h
+wake_times_cdt: ["06:00", "10:00", "14:00", "18:00", "22:00"]
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: agent_error_rate
+    display: "Agent run error rate across all 22 agents (last 24h)"
+    source: postgres_agent_logs
+    target: 0.5                 # % errored runs
+    target_unit: "%"
+    threshold_yellow: 2
+    threshold_red: 5
+    cadence: hourly
+    levers:
+      - "spawn diagnostic agent on top-offender"
+      - "halt offending agent + post flag for code fix"
+
+  - name: agent_run_completion_rate
+    display: "Agent runs reaching completion (vs hanging/timeout)"
+    source: postgres_agent_logs
+    target: 99                  # %
+    target_unit: "%"
+    threshold_yellow: 95
+    threshold_red: 90
+    cadence: hourly
+    levers:
+      - "spawn timeout_audit_agent"
+      - "rotate API key if rate-limit pattern detected"
+
+  - name: api_uptime_per_service
+    display: "Uptime per critical service (Paperclip, AVO, Cockpit, Twenty WD, Twenty AvI, Loops, GHL)"
+    source: cto_daily_sweep + railway_status
+    target: 99.9                # %
+    target_unit: "%"
+    threshold_yellow: 99
+    threshold_red: 97
+    cadence: hourly
+    levers:
+      - "redeploy service from last known-good"
+      - "escalate to vendor (Railway/Vercel/Cloudflare)"
+
+  - name: domain_ssl_green_rate
+    display: "% of monitored domains with SSL cert >30d from expiry"
+    source: cto_daily_sweep
+    target: 100                 # locked — already monitored
+    target_unit: "%"
+    threshold_yellow: 95
+    threshold_red: 90
+    cadence: daily
+    levers:
+      - "auto-issue Let's Encrypt renewal where supported"
+      - "post flag to Michael on registrar-level expiry (manual)"
+
+  - name: time_to_resolution_flagged_issues
+    display: "Median hours from flag posted to flag closed (across all personas)"
+    source: agent_handoffs
+    target: 24                  # hours
+    target_unit: "hours (median)"
+    threshold_yellow: 48
+    threshold_red: 96
+    cadence: daily
+    levers:
+      - "spawn flag_triage_agent on oldest open"
+      - "post nag flag to assignee persona"
+
+  - name: deploy_frequency
+    display: "Deploys to production per week (Paperclip + AVO Cockpit + AvI site)"
+    source: github_actions
+    target: 10                  # TBD-with-Michael
+    target_unit: "deploys/week"
+    threshold_yellow: 4
+    threshold_red: 1
+    cadence: weekly
+    levers:
+      - "audit PR backlog; spawn merge_assistant_agent on stalled PRs"
+
+  - name: secrets_rotation_compliance
+    display: "Secrets rotated within 90-day window (Doppler)"
+    source: doppler_audit
+    target: 100                 # %
+    target_unit: "%"
+    threshold_yellow: 95
+    threshold_red: 85
+    cadence: weekly
+    levers:
+      - "rotate via doppler secrets set (per project_secrets_management)"
+
+  - name: token_budget_burn_rate
+    display: "Daily Claude token spend across all personas + APE"
+    source: anthropic_usage_api
+    target: 0                   # TBD-with-Michael — set ceiling
+    target_unit: "USD"
+    threshold_yellow: 0         # TBD
+    threshold_red: 0            # TBD — hard ceiling triggers persona pause
+    cadence: hourly
+    levers:
+      - "rate-limit lowest-priority persona first"
+      - "post flag to Michael on sustained > target"
+
+token_budget_daily_usd: 8      # TBD-with-Michael

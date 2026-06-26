@@ -1,0 +1,92 @@
+persona: cro
+display_name: "Chief Revenue Officer"
+f1_analog: "Commercial Director"
+scope: |
+  3 B2B pipelines (WD, AvI, AIPG) + Agent Empire + 3 CRMs (Twenty WD, Twenty AvI,
+  GHL AIPG; HubSpot retiring per project_hubspot_retirement). Owns pipeline
+  coverage, lead-to-close velocity, win rate, AVO MRR, cold-email reply rate per
+  brand. Revenue is time-sensitive — hourly wake.
+
+cron_cadence: hourly
+wake_times_cdt: ["business_hours_only"]  # 07:00-19:00 CDT, mon-sat
+adversarial_review: required
+escalation_email_red: michael@worshipdigital.co
+
+kpis:
+  - name: pipeline_coverage_ratio
+    display: "Pipeline coverage ratio (open pipeline value / remaining quarterly target)"
+    source: twenty_pipeline_join
+    target: 3.5                 # TBD-with-Michael
+    target_unit: "x"
+    threshold_yellow: 2.5
+    threshold_red: 1.5
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg"]
+    levers:
+      - "spawn outbound_burst_agent (Instantly campaign volume bump)"
+      - "spawn enrichment_agent (re-score warm leads in CRM)"
+      - "post flag to CMO for demand-gen acceleration"
+
+  - name: new_opportunities_per_week
+    display: "New opportunities created in CRM per week per brand"
+    source: twenty_opportunity_log
+    target: 8                   # TBD-with-Michael
+    target_unit: "opportunities/week/brand"
+    threshold_yellow: 5
+    threshold_red: 2
+    cadence: weekly
+    per_brand: ["wd", "avi", "aipg"]
+    levers:
+      - "spawn marcus prospecting (CD/WD) or ryan_data prospecting (AvI)"
+      - "audit instantly reply-rate per campaign and rotate poor copy"
+
+  - name: cold_email_reply_rate
+    display: "Cold-email reply rate per Instantly campaign per brand"
+    source: instantly_per_campaign
+    target: 5                   # TBD-with-Michael
+    target_unit: "% reply"
+    threshold_yellow: 2.5
+    threshold_red: 1.0
+    cadence: daily
+    per_brand: ["avi", "aipg", "bookd", "pp"]  # WD uses Loops, not cold
+    levers:
+      - "pause + rotate underperforming campaign"
+      - "spawn copy_optim_agent on persona/subject A/B test"
+      - "verify mailbox health (no warmup deficit, no DMARC drop)"
+
+  - name: avo_mrr
+    display: "AVO MRR (Stripe + invoiced ARR ÷ 12)"
+    source: stripe_arr
+    target: 0                   # TBD-with-Michael — pre-revenue baseline
+    target_unit: "USD"
+    threshold_yellow: 0
+    threshold_red: -10           # MRR decline > $10/mo (churn)
+    cadence: daily
+    levers:
+      - "post flag to B2B Operations on churn signal"
+      - "post flag to CMG on at-risk client"
+
+  - name: pipeline_velocity_days
+    display: "Median days from first-touch to close-won"
+    source: twenty_opportunity_log
+    target: 21                  # TBD-with-Michael
+    target_unit: "days (median)"
+    threshold_yellow: 35
+    threshold_red: 60
+    cadence: weekly
+    levers:
+      - "spawn followup_agent on stalled opportunities (>14d no touch)"
+      - "post flag to CMG / Internal Marketing on bottleneck stage"
+
+  - name: instantly_mailbox_warmup_health
+    display: "Instantly mailbox warmup score per mailbox"
+    source: instantly_mailbox_health
+    target: 95                  # TBD-with-Michael
+    target_unit: "score / 100"
+    threshold_yellow: 80
+    threshold_red: 60
+    cadence: daily
+    levers:
+      - "pause sending on degraded mailbox; flag B&T for DNS / reputation review"
+
+token_budget_daily_usd: 18     # TBD-with-Michael — revenue is highest priority
