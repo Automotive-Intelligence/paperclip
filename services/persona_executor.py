@@ -150,7 +150,9 @@ class PersonaExecutor:
         system_prompt = load_persona_prompt(persona)
         tool_allowlist = load_persona_tools(persona)
 
+        from services.current_time import current_time_block
         user_message = (
+            f"{current_time_block()}\n\n"
             f"A flag has been posted to {persona}. Read the flag, plan, "
             f"execute per your scope, verify, and emit the JSON audit "
             f"envelope.\n\n"
@@ -230,7 +232,9 @@ class PersonaExecutor:
     ) -> AuditEnvelope:
         """Re-spawn executor session with reviewer's revision request."""
         system_prompt = load_persona_prompt(flag["target"])
+        from services.current_time import current_time_block
         user_msg = (
+            f"{current_time_block()}\n\n"
             f"You proposed a ship that the adversarial reviewer asked you to revise.\n\n"
             f"--- ORIGINAL FLAG ---\n{flag['flag_content']}\n--- END FLAG ---\n\n"
             f"--- YOUR PRIOR ENVELOPE ---\n{json.dumps(asdict(prior_envelope), indent=2)}\n"
