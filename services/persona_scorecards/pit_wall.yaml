@@ -1,3 +1,12 @@
+# ── STATUS: targets PROPOSED by Pit Wall — pending Michael's lock ─────────────
+# Phase A scorecard. Numbers below are starting proposals with inline rationale,
+# NOT yet locked. Action = approve or adjust each, then Phase B (metrics
+# collector) builds against this contract.
+# No baseline data exists yet (Phase B unbuilt), so proposals are judgment calls,
+# not measured — revisit anything cost/throughput-driven after one baseline week.
+# OPEN FLEET-WIDE FLAG (not changed here): escalation_email_red is
+# michael@worshipdigital.co on all 9 scorecards — confirm vs the
+# automotiveintelligence.io address before RED-tier email goes live.
 persona: pit_wall
 display_name: "Pit Wall"
 f1_analog: "Chief Strategist"
@@ -15,7 +24,7 @@ kpis:
   - name: strategic_bet_allocation
     display: "% of cross-portfolio time/budget allocated to top-3 declared bets"
     source: telemetry_strategic_calls
-    target: 75                  # TBD-with-Michael
+    target: 75                  # PROPOSED — ≥75% of cross-portfolio time/budget on top-3 declared bets; ~25% slack for opportunistic/maintenance
     target_unit: "% allocated"
     threshold_yellow: 60
     threshold_red: 40
@@ -27,7 +36,7 @@ kpis:
   - name: cross_persona_dependency_resolution_hours
     display: "Median hours to resolve cross-persona blockers"
     source: agent_handoffs_cross_persona
-    target: 12                  # TBD-with-Michael
+    target: 12                  # PROPOSED — median cross-persona blocker cleared within half a business day
     target_unit: "hours (median)"
     threshold_yellow: 24
     threshold_red: 72
@@ -50,7 +59,7 @@ kpis:
   - name: focus_arbitration_outcomes
     display: "% of arbitration calls that moved a stalled lane (vs noise)"
     source: pit_wall_decision_log
-    target: 75                  # TBD-with-Michael
+    target: 75                  # PROPOSED — ≥3 of 4 arbitration calls move a stalled lane (vs noise)
     target_unit: "%"
     threshold_yellow: 50
     threshold_red: 30
@@ -61,7 +70,7 @@ kpis:
   - name: portfolio_health_index
     display: "Composite 0-100 score across all 9 personas (avg of green-rate)"
     source: scorecard_aggregator
-    target: 85                  # TBD-with-Michael
+    target: 85                  # PROPOSED — fleet green-rate composite ≥85/100 across all 9 personas
     target_unit: "0-100"
     threshold_yellow: 70
     threshold_red: 50
@@ -70,4 +79,4 @@ kpis:
       - "surface weakest persona in Owner's Brief"
       - "post flag to weakest persona for action plan"
 
-token_budget_daily_usd: 10     # TBD-with-Michael
+token_budget_daily_usd: 10     # PROPOSED — twice-daily snapshot read + summarize; revisit after Phase C wake-cycle cost is measured
