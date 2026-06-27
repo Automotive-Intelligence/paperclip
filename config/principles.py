@@ -113,6 +113,71 @@ If a feature fails any of these — redesign it.
 
 
 # ---------------------------------------------------------------------------
+# Foundation Header — prompt-ready assembler
+#
+# The constants above are the canonical source of the AIBOS foundation, but
+# they only shape behavior if they actually reach the model's reasoning
+# context. `foundation_header()` assembles them into a single string that is
+# prepended to every persona system prompt at load time (see
+# services/persona_prompts/__init__.py and services/flag_responder.py),
+# mirroring the runtime-injection pattern of services/current_time.py.
+#
+# This is the ONE place persona-facing foundation text is composed. Phase 2
+# (vision / mission / direction) extends this function rather than touching
+# each call site.
+#
+# CROSS-REPO NOTE: the live Slack chats run from a SEPARATE repo
+# (avo-slack/app.py), whose persona files are mirrored from services/personas/
+# here. Those live sessions are NOT covered by this function. To close the gap
+# for the live surface, mirror foundation_header() into avo-slack and prepend
+# it to the system prompt there too. Tracked as out-of-scope follow-up.
+# ---------------------------------------------------------------------------
+
+# Stable marker the regression test asserts on. If you ever change the
+# foundation wording, keep a phrase containing "servant leadership" so the
+# "is the foundation still running?" guard keeps working.
+_FOUNDATION_MARKER: str = "servant leadership"
+
+_OPERATING_FOUNDATION: str = (
+    "AIBOS OPERATING FOUNDATION\n"
+    "==========================\n"
+    "This system is built on servant leadership.\n"
+    "Every agent exists to serve the human it works for.\n"
+    "Every decision prioritizes people over profit.\n"
+    "Every interaction is conducted with honesty, dignity, and genuine\n"
+    "care for the other person.\n"
+    "We build tools that give power back to the small business owner —\n"
+    "not tools that extract from them.\n"
+    "We operate with excellence because excellence honors the gifts\n"
+    "we've been given.\n"
+    "We do not deceive. We do not manipulate. We do not build features\n"
+    "that harm the vulnerable.\n"
+    "Profit is the outcome of service, not the purpose."
+)
+
+
+def foundation_header() -> str:
+    """Return the prompt-ready servant-leader foundation for persona prompts.
+
+    Composes, in order:
+      1. The AIBOS Operating Foundation (servant-leadership statement)
+      2. SYSTEM_IDENTITY (who AIBOS serves and why)
+      3. AGENT_BEHAVIORAL_CONSTRAINTS (the non-negotiable behavioral gates)
+
+    Safe to drop verbatim at the top of any persona system prompt. This is the
+    single composition point — extend it (e.g. with VISION / MISSION /
+    DIRECTION in Phase 2) rather than editing call sites.
+    """
+    return (
+        f"{_OPERATING_FOUNDATION}\n\n"
+        f"WHY WE EXIST\n"
+        f"============\n"
+        f"{SYSTEM_IDENTITY}\n"
+        f"{AGENT_BEHAVIORAL_CONSTRAINTS.strip()}\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Moral Gate — callable from agent task logic and pipeline decision points
 # ---------------------------------------------------------------------------
 

@@ -12,15 +12,22 @@ tool not in the allowlist in the SDK tool definitions it passes.
 
 from pathlib import Path
 
+from config.principles import foundation_header
+
 _PROMPTS_DIR = Path(__file__).parent
 
 
 def load_persona_prompt(persona: str) -> str:
-    """Return the system prompt markdown for a persona. Raises if missing."""
+    """Return the system prompt markdown for a persona. Raises if missing.
+
+    The servant-leader foundation (config/principles.py) is prepended so it
+    lives in the model's reasoning context *before* the persona's role-specific
+    instructions — the foundation runs first, not as a backstop.
+    """
     path = _PROMPTS_DIR / f"{persona.lower()}.md"
     if not path.exists():
         raise FileNotFoundError(f"No prompt for persona '{persona}' at {path}")
-    return path.read_text(encoding="utf-8")
+    return f"{foundation_header()}\n{path.read_text(encoding='utf-8')}"
 
 
 def load_persona_tools(persona: str) -> list[str]:
