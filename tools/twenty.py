@@ -29,7 +29,8 @@ keys so the consumer contract stays identical to the HubSpot writer.
 import logging
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -110,6 +111,14 @@ _WORKSPACE_KEY_ENV = {
 }
 
 _REQUEST_TIMEOUT = 15
+
+# Twenty's default opportunity pipeline stages. CUSTOMER is the terminal "won"
+# stage; everything else is open pipeline. These workspaces use the stock stage
+# set (verified live 2026-06-27: NEW/SCREENING/MEETING/PROPOSAL/CUSTOMER) — no
+# custom LOST stage exists, so "lost" deals are soft-deleted (deletedAt) and the
+# REST list endpoint omits them by default.
+_WON_STAGE = "CUSTOMER"
+_MEETING_STAGE = "MEETING"
 
 
 def _workspace_config(business_key: str) -> Tuple[str, str]:
@@ -510,3 +519,121 @@ def push_prospects_to_twenty(
             })
 
     return results
+
+
+# ── Read side: pipeline summary (CRO morning-brief telemetry) ────────────────
+
+
+def _parse_ts(raw: Optional[str]) -> Optional[datetime]:
+    """Parse a Twenty ISO-8601 timestamp (e.g. '2026-06-26T17:34:39.835Z')
+    into a tz-aware UTC datetime. Returns None on empty/unparseable input."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _amount_dollars(amount: Optional[dict]) -> int:
+    """Twenty stores currency as {amountMicros, currencyCode}; micros are
+    dollars * 1_000_000. Returns whole dollars (0 if unset)."""
+    micros = (amount or {}).get("amountMicros")
+    if not micros:
+        return 0
+    try:
+        return int(int(micros) / 1_000_000)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _iter_opportunities(base_url: str, api_key: str, max_pages: int = 15) -> List[dict]:
+    """Fetch all (non-deleted) opportunities for a workspace via REST,
+    following Twenty's cursor pagination. Caps at max_pages * 60 records as a
+    runaway guard (same bound as the Instantly lead pull)."""
+    out: List[dict] = []
+    cursor: Optional[str] = None
+    for _ in range(max_pages):
+        params: Dict[str, Any] = {"limit": 60}
+        if cursor:
+            params["starting_after"] = cursor
+        r = requests.get(
+            f"{base_url}/rest/opportunities",
+            headers=_headers(api_key),
+            params=params,
+            timeout=_REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        body = r.json()
+        page = (body.get("data") or {}).get("opportunities") or []
+        out.extend(page)
+        page_info = body.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            break
+    else:
+        logger.warning(
+            "[Twenty] opportunity pagination hit %d-page cap for %s — counts may undercount",
+            max_pages, base_url,
+        )
+    return out
+
+
+def fetch_pipeline_summary(
+    business_key: str, now: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """Read one workspace's opportunity pipeline for the CRO morning brief.
+
+    Returns a per-brand metrics dict:
+      pipeline_value:    sum of amounts on open (non-CUSTOMER) deals, whole $
+      deals_active:      count of open deals
+      deals_stalled_7d:  open deals not touched in > 7 days (by updatedAt)
+      bookings_24h:      deals in MEETING stage touched in last 24h (proxy —
+                         REST has no stage-transition log, so this counts
+                         current-stage + recently-updated)
+      closed_24h:        deals in CUSTOMER stage touched in last 24h (same proxy)
+      wired:             True if the workspace was reachable and read
+
+    Never raises: an unconfigured or unreachable workspace returns a zeroed
+    dict with wired=False, so a single brand outage can't break the brief.
+    """
+    base = {
+        "pipeline_value": 0,
+        "deals_active": 0,
+        "deals_stalled_7d": 0,
+        "bookings_24h": 0,
+        "closed_24h": 0,
+        "wired": False,
+    }
+    if not twenty_ready(business_key):
+        return base
+    try:
+        base_url, api_key = _workspace_config(business_key)
+        opps = _iter_opportunities(base_url, api_key)
+    except Exception as e:
+        logger.warning("[Twenty] pipeline read failed for %s: %s", business_key, e)
+        return base
+
+    now = now or datetime.now(timezone.utc)
+    stall_cutoff = now - timedelta(days=7)
+    fresh_cutoff = now - timedelta(hours=24)
+
+    for o in opps:
+        stage = (o.get("stage") or "").upper()
+        updated = _parse_ts(o.get("updatedAt"))
+        is_open = stage != _WON_STAGE
+        if is_open:
+            base["deals_active"] += 1
+            base["pipeline_value"] += _amount_dollars(o.get("amount"))
+            if updated and updated < stall_cutoff:
+                base["deals_stalled_7d"] += 1
+        is_fresh = bool(updated and updated >= fresh_cutoff)
+        if is_fresh and stage == _MEETING_STAGE:
+            base["bookings_24h"] += 1
+        if is_fresh and stage == _WON_STAGE:
+            base["closed_24h"] += 1
+
+    base["wired"] = True
+    return base

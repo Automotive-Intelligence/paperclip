@@ -90,8 +90,6 @@ class RuntimeSettings:
     agent_crm_map: Dict[str, str]
     ghl_api_key_present: bool
     ghl_location_id_present: bool
-    hubspot_api_key_present: bool
-    attio_api_key_present: bool
     twenty_wd_ready: bool
     twenty_avi_ready: bool
     twenty_bookd_ready: bool
@@ -108,14 +106,6 @@ class RuntimeSettings:
     def llm_ready(self) -> bool:
         return self.llm_api_key_present
 
-    @property
-    def hubspot_ready(self) -> bool:
-        return self.hubspot_api_key_present
-
-    @property
-    def attio_ready(self) -> bool:
-        return self.attio_api_key_present
-
     def twenty_ready_for_business(self, business_key: str) -> bool:
         """Twenty is multi-tenant by workspace — readiness is per-business."""
         bk = (business_key or "").strip().lower()
@@ -131,10 +121,6 @@ class RuntimeSettings:
         p = (provider or "").strip().lower()
         if p == "ghl":
             return self.ghl_ready
-        if p == "hubspot":
-            return self.hubspot_ready
-        if p == "attio":
-            return self.attio_ready
         if p == "twenty":
             # Per-business when business_key is provided; otherwise "any workspace wired"
             if business_key:
@@ -206,10 +192,14 @@ class RuntimeSettings:
 @lru_cache(maxsize=1)
 def get_settings() -> RuntimeSettings:
     model, api_key = resolve_llm_model_and_key()
+    # Default routing: Twenty for CD (WD) + AvI + Book'd, GHL for AIPG.
+    # Attio + HubSpot retired 2026-06-27 (PRs through #76+); BUSINESS_CRM_MAP
+    # env var still overrides these defaults per business.
     default_business_crm_map = {
         "aiphoneguy": "ghl",
-        "callingdigital": "attio",
-        "autointelligence": "hubspot",
+        "callingdigital": "twenty",
+        "autointelligence": "twenty",
+        "bookd": "twenty",
     }
     business_crm_map = _parse_json_map(os.getenv("BUSINESS_CRM_MAP", ""), default_business_crm_map)
     agent_crm_map = _parse_json_map(os.getenv("AGENT_CRM_MAP", ""), {})
@@ -226,8 +216,6 @@ def get_settings() -> RuntimeSettings:
         agent_crm_map=agent_crm_map,
         ghl_api_key_present=bool((os.getenv("GHL_API_KEY") or "").strip()),
         ghl_location_id_present=bool((os.getenv("GHL_LOCATION_ID") or "").strip()),
-        hubspot_api_key_present=bool((os.getenv("HUBSPOT_API_KEY") or os.getenv("HUBSPOT_ACCESS_TOKEN") or "").strip()),
-        attio_api_key_present=bool((os.getenv("ATTIO_API_KEY") or "").strip()),
         twenty_wd_ready=bool((os.getenv("TWENTY_WD_API_KEY") or "").strip()),
         twenty_avi_ready=bool(
             (os.getenv("TWENTY_AVI_API_KEY") or "").strip()

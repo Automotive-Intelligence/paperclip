@@ -21,28 +21,35 @@ class CrmRoutingConfigTests(unittest.TestCase):
         os.environ.pop('AGENT_CRM_MAP', None)
         runtime.get_settings.cache_clear()
         s = runtime.get_settings()
+        # Defaults flipped 2026-06-27 alongside HubSpot + Attio writer deletion.
         self.assertEqual(s.business_crm_map.get('aiphoneguy'), 'ghl')
-        self.assertEqual(s.business_crm_map.get('callingdigital'), 'attio')
-        self.assertEqual(s.business_crm_map.get('autointelligence'), 'hubspot')
+        self.assertEqual(s.business_crm_map.get('callingdigital'), 'twenty')
+        self.assertEqual(s.business_crm_map.get('autointelligence'), 'twenty')
+        self.assertEqual(s.business_crm_map.get('bookd'), 'twenty')
 
     def test_agent_override_wins(self):
-        os.environ['BUSINESS_CRM_MAP'] = json.dumps({'callingdigital': 'attio'})
-        os.environ['AGENT_CRM_MAP'] = json.dumps({'marcus': 'hubspot'})
+        # Agent-level CRM override takes precedence over the business default.
+        os.environ['BUSINESS_CRM_MAP'] = json.dumps({'callingdigital': 'twenty'})
+        os.environ['AGENT_CRM_MAP'] = json.dumps({'marcus': 'ghl'})
         runtime.get_settings.cache_clear()
         s = runtime.get_settings()
-        self.assertEqual(s.resolve_crm_provider('callingdigital', 'marcus'), 'hubspot')
-        self.assertEqual(s.resolve_crm_provider('callingdigital', 'carlos'), 'attio')
+        self.assertEqual(s.resolve_crm_provider('callingdigital', 'marcus'), 'ghl')
+        self.assertEqual(s.resolve_crm_provider('callingdigital', 'carlos'), 'twenty')
 
     def test_provider_readiness(self):
-        os.environ['HUBSPOT_API_KEY'] = 'x'
-        os.environ['ATTIO_API_KEY'] = ''
         os.environ['GHL_API_KEY'] = 'x'
         os.environ['GHL_LOCATION_ID'] = 'x'
+        os.environ['TWENTY_WD_API_KEY'] = 'x'
+        os.environ.pop('TWENTY_AVI_API_KEY', None)
         runtime.get_settings.cache_clear()
         s = runtime.get_settings()
-        self.assertTrue(s.crm_provider_ready('hubspot'))
-        self.assertFalse(s.crm_provider_ready('attio'))
         self.assertTrue(s.crm_provider_ready('ghl'))
+        # Twenty is per-business — WD wired, AvI not.
+        self.assertTrue(s.crm_provider_ready('twenty', business_key='callingdigital'))
+        self.assertFalse(s.crm_provider_ready('twenty', business_key='autointelligence'))
+        # Retired providers should always return False.
+        self.assertFalse(s.crm_provider_ready('hubspot'))
+        self.assertFalse(s.crm_provider_ready('attio'))
 
 
 class CrmConfigWriteEndpointTests(unittest.TestCase):
@@ -65,12 +72,12 @@ class CrmConfigWriteEndpointTests(unittest.TestCase):
         os.environ.pop('API_KEYS', None)
         runtime.get_settings.cache_clear()
 
-        payload = {"business_crm_map": {"aiphoneguy": "hubspot"}}
+        payload = {"business_crm_map": {"aiphoneguy": "twenty"}}
         resp = client.post("/api/crm/config", json=payload)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("business_crm_map", data["updated"])
-        self.assertEqual(os.environ.get("BUSINESS_CRM_MAP"), '{"aiphoneguy": "hubspot"}')
+        self.assertEqual(os.environ.get("BUSINESS_CRM_MAP"), '{"aiphoneguy": "twenty"}')
 
     def test_post_crm_config_rejects_invalid_provider(self):
         from fastapi.testclient import TestClient
