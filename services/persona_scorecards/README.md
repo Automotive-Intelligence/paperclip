@@ -57,7 +57,7 @@ token_budget_daily_usd: <numeric>        # daily Claude spend ceiling for this p
 
 | File | Persona | F1 Analog | Cadence |
 |---|---|---|---|
-| pit_wall.yaml | Pit Wall | Chief Strategist | twice_daily |
+| pit_wall.yaml | Pit Wall | Strategy Telemetry / Pit Wall stand (read-only) | twice_daily |
 | cmo.yaml | Chief Marketing Officer | Marketing Director | twice_daily |
 | cro.yaml | Chief Revenue Officer | Commercial Director | hourly |
 | bt.yaml | Build & Tech | Technical Director + Chief Engineer | every_4h |

@@ -4,16 +4,24 @@
 # collector) builds against this contract.
 # No baseline data exists yet (Phase B unbuilt), so proposals are judgment calls,
 # not measured — revisit anything cost/throughput-driven after one baseline week.
-# OPEN FLEET-WIDE FLAG (not changed here): escalation_email_red is
-# michael@worshipdigital.co on all 9 scorecards — confirm vs the
-# automotiveintelligence.io address before RED-tier email goes live.
+#
+# SEAT (locked 2026-06-27 by Michael): Pit Wall is a READ-ONLY TELEMETRY SURFACE,
+# not a decision seat. It surfaces signal vs noise and ROUTES decisions to the
+# owning persona — it does not make cross-portfolio calls or own execution. This
+# matches personas/pit_wall.md ("telemetry channel, not a working channel;
+# summarize and link, don't execute"). The earlier "Chief Strategist" framing was
+# B&T's mapping in the Phase A plan, not Michael's intent — reverted here.
+# KPIs below therefore measure REPORTING QUALITY (signal, latency, freshness,
+# coverage), never execution outcomes that belong to the personas doing the work.
 persona: pit_wall
 display_name: "Pit Wall"
-f1_analog: "Chief Strategist"
+f1_analog: "Strategy Telemetry / Pit Wall stand (read-only)"
 scope: |
-  Cross-portfolio strategic calls, persona-to-persona dependency resolution,
-  resource allocation across the racing fleet (brands), focus arbitration when
-  multiple lanes ask for the same hour. Twice-daily strategic read.
+  Cross-portfolio telemetry surface (read-only). Surfaces signal vs noise from
+  every persona's scorecard plus ops telemetry, routes each decision to the
+  owning persona, and feeds the twice-daily Owner's Brief. Does NOT make
+  cross-portfolio calls or own execution — it reports and routes. Twice-daily
+  strategic read.
 
 cron_cadence: twice_daily
 wake_times_cdt: ["07:30", "17:00"]
@@ -21,51 +29,53 @@ adversarial_review: required
 escalation_email_red: michael@worshipdigital.co
 
 kpis:
-  - name: strategic_bet_allocation
-    display: "% of cross-portfolio time/budget allocated to top-3 declared bets"
-    source: telemetry_strategic_calls
-    target: 75                  # PROPOSED — ≥75% of cross-portfolio time/budget on top-3 declared bets; ~25% slack for opportunistic/maintenance
-    target_unit: "% allocated"
-    threshold_yellow: 60
-    threshold_red: 40
-    cadence: weekly
-    levers:
-      - "post flag to CMO/CRO/B&T to re-prioritize"
-      - "surface drift in Owner's Brief for Michael's call"
-
-  - name: cross_persona_dependency_resolution_hours
-    display: "Median hours to resolve cross-persona blockers"
-    source: agent_handoffs_cross_persona
-    target: 12                  # PROPOSED — median cross-persona blocker cleared within half a business day
-    target_unit: "hours (median)"
-    threshold_yellow: 24
-    threshold_red: 72
-    cadence: daily
-    levers:
-      - "spawn dependency_unblock_agent"
-      - "escalate to Michael when 2+ personas mutually blocked"
-
-  - name: decisions_blocking_execution
-    display: "Open decisions requiring Michael's nod, age > 48h"
-    source: red_tier_queue
-    target: 0
-    target_unit: "count"
-    threshold_yellow: 2
-    threshold_red: 5
-    cadence: daily
-    levers:
-      - "consolidate RED items into Owner's Brief top of fold"
-
-  - name: focus_arbitration_outcomes
-    display: "% of arbitration calls that moved a stalled lane (vs noise)"
+  - name: signal_to_noise_ratio
+    display: "% of Pit Wall surfaced items the owning persona acted on (signal vs noise)"
     source: pit_wall_decision_log
-    target: 75                  # PROPOSED — ≥3 of 4 arbitration calls move a stalled lane (vs noise)
+    target: 70                  # PROPOSED — ≥70% of what Pit Wall surfaces is real signal someone acted on
     target_unit: "%"
     threshold_yellow: 50
     threshold_red: 30
     cadence: weekly
     levers:
-      - "audit recent arbitrations; spawn lessons_extraction_agent"
+      - "tune surfacing thresholds; audit recent false-positive surfacings"
+      - "spawn lessons_extraction_agent on noisy categories"
+
+  - name: surfacing_latency_hours
+    display: "Median hours from a signal appearing in telemetry to it being surfaced/routed to the owning persona"
+    source: agent_handoffs_cross_persona
+    target: 6                   # PROPOSED — signal routed within a wake-cycle (twice-daily cadence ≈ 9.5h/14.5h gaps)
+    target_unit: "hours (median)"
+    threshold_yellow: 12
+    threshold_red: 24
+    cadence: daily
+    levers:
+      - "tighten wake cadence or add an off-cycle wake for hot lanes"
+      - "add/repair a connector for a source that's surfacing late"
+
+  - name: telemetry_freshness
+    display: "% of telemetry sources pulled successfully and current at each wake (stale/missing counts against)"
+    source: metrics_collector_snapshot
+    target: 95                  # PROPOSED — a telemetry surface is only as good as its freshest source; near-total coverage required
+    target_unit: "% sources fresh"
+    threshold_yellow: 80
+    threshold_red: 60
+    cadence: daily
+    levers:
+      - "flag the broken connector to B&T"
+      - "mark the source MISSING in the brief — never fabricate to fill a gap"
+
+  - name: red_surfacing_completeness
+    display: "Open decisions requiring Michael's nod (age > 48h) that were NOT surfaced top-of-brief"
+    source: red_tier_queue
+    target: 0
+    target_unit: "count (misses)"
+    threshold_yellow: 1
+    threshold_red: 3
+    cadence: daily
+    levers:
+      - "consolidate RED items into Owner's Brief top of fold"
+      - "route each RED item to its owning persona's channel for action"
 
   - name: portfolio_health_index
     display: "Composite 0-100 score across all 9 personas (avg of green-rate)"
@@ -77,6 +87,6 @@ kpis:
     cadence: daily
     levers:
       - "surface weakest persona in Owner's Brief"
-      - "post flag to weakest persona for action plan"
+      - "route a flag to the weakest persona to action (Pit Wall surfaces, the persona acts)"
 
 token_budget_daily_usd: 10     # PROPOSED — twice-daily snapshot read + summarize; revisit after Phase C wake-cycle cost is measured
