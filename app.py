@@ -3436,6 +3436,36 @@ scheduler.add_job(_run_ape_post_snapshot, IntervalTrigger(minutes=30, timezone=C
     id="ape_post_snapshot_sweep", name="APE Post-Snapshot Sweep — Every 30min",
     replace_existing=True, misfire_grace_time=600)
 
+# Postal Agent (Phase 4) — poll every connected inbox every 15 min: pull new
+# mail via the Gmail history cursor, classify, and run the destination writers
+# (Twenty / Slack / Gmail labels). Real writes are gated behind
+# POSTAL_WRITES_ENABLED; until it's set the pass runs in dry-run (log-only).
+def _run_postal_sweep():
+    try:
+        from agents.postal.postal_agent import process_all_accounts
+        summary = process_all_accounts(limit_per_account=20)
+        logging.info(f"[Paperclip] Postal sweep: {summary}")
+    except Exception as e:
+        logging.error(f"[Paperclip] Postal sweep failed: {e}")
+
+scheduler.add_job(_run_postal_sweep, IntervalTrigger(minutes=15, timezone=CST),
+    id="postal_sweep_15m", name="Postal Agent Sweep — Every 15min",
+    replace_existing=True, misfire_grace_time=600)
+
+# Postal Agent — daily prune of the postal_processed idempotency log (90d TTL).
+def _run_postal_prune():
+    try:
+        from agents.postal.postal_agent import prune_processed
+        removed = prune_processed(ttl_days=90)
+        if removed:
+            logging.info(f"[Paperclip] Postal prune removed {removed} rows")
+    except Exception as e:
+        logging.error(f"[Paperclip] Postal prune failed: {e}")
+
+scheduler.add_job(_run_postal_prune, CronTrigger(hour=4, minute=15, timezone=CST),
+    id="postal_prune_daily", name="Postal Agent Prune — 4:15am CST",
+    replace_existing=True, misfire_grace_time=3600)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
@@ -7726,6 +7756,51 @@ async def postal_oauth_callback_endpoint(
     error: str = "",
 ):
     return _postal_oauth_callback(code or None, state or None, error or None)
+
+
+# Postal Agent (Phase 4) status + manual trigger.
+#   GET  /postal/status        — connected accounts + sync state (no secrets)
+#   POST /postal/run           — run one sweep now (Bearer API key required)
+@app.get("/postal/status")
+async def postal_status_endpoint():
+    from services.postal_oauth import list_connected_accounts
+    from services.postal_writers import writes_enabled
+    from services.database import fetch_all as _fetch_all
+
+    accounts = list_connected_accounts()
+    try:
+        state_rows = _fetch_all(
+            "SELECT account_label, last_history_id, last_synced_at, sync_count, last_error "
+            "FROM postal_state ORDER BY account_label",
+            (),
+        )
+        state = {
+            r[0]: {
+                "last_history_id": r[1],
+                "last_synced_at": str(r[2]) if r[2] else None,
+                "sync_count": r[3],
+                "last_error": r[4],
+            }
+            for r in state_rows
+        }
+    except Exception as e:
+        state = {"error": str(e)[:200]}
+
+    return {
+        "writes_enabled": writes_enabled(),
+        "accounts": accounts,
+        "sync_state": state,
+    }
+
+
+@app.post("/postal/run")
+async def postal_run_endpoint(
+    limit: int = 20,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from agents.postal.postal_agent import process_all_accounts
+    return process_all_accounts(limit_per_account=limit)
 
 
 # ===== Smartlead WD webhook receiver =====

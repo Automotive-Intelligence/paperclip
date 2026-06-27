@@ -1,18 +1,18 @@
-"""Postal Agent router — maps (account, category) to destinations.
+"""Postal Agent router — maps (account, category) to destinations + writes them.
 
 Per Postal Agent plan Q2: intent-data replies route to Twenty + AVO chat;
 other categories route per the v1 default config below.
 
-V1 SCOPE (this file): RESOLVE the destination but DON'T WRITE to it yet.
-Actual writes to Twenty CRM / AVO Slack / Pit Wall happen in Phase 4 once
-we've watched real classifications for a day and verified routing works
-the way we expect. For v1, the router logs the intended destination + the
-agent stores it in postal_processed.routed_to for audit.
+Phase 3 RESOLVED the destination but logged only. Phase 4 (this file +
+services/postal_writers.py) actually performs the writes, gated behind the
+POSTAL_WRITES_ENABLED env flag so the side effects can be switched on once
+we've watched real classifications and trust the routing. When the flag is
+off, route_to_destinations falls back to the old log-only behaviour.
 
 Destination types (string codes stored in postal_processed.routed_to):
-    twenty:<workspace>          — would create Person + Conversation in Twenty
-    avo_chat:<channel>          — would post a Slack message to a persona chat
-    pit_wall                    — would surface as a flag in infrastructure_state.md
+    twenty:<workspace>          — create/dedupe a Person in the Twenty workspace
+    avo_chat:<channel>          — post a Slack message to a persona chat
+    pit_wall                    — post a Slack message to #pit-wall
     label_only                  — only Gmail label applied; no downstream
     archive                     — labeled and archived; no downstream
     skip                        — explicitly do nothing
@@ -85,26 +85,33 @@ def route_to_destinations(
     category: str,
     thread_meta: dict[str, Any],
 ) -> tuple[list[str], list[str]]:
-    """V1: resolve destinations + log them. NO actual writes to Twenty/Slack/PW yet.
+    """Resolve destinations for (account, category) and execute the writers.
 
     Returns:
         (destinations, side_effects_taken)
 
-    side_effects_taken is the list of destinations that were *intended* in v1
-    so postal_processed can record the audit trail. In Phase 4 this will
-    actually invoke the writers and only return successful ones.
+    `destinations` is the resolved routing list. `side_effects_taken` is what
+    actually completed — the Phase 4 writers (services/postal_writers) only
+    return the destinations whose side effect succeeded, so postal_processed
+    records the true audit trail. When POSTAL_WRITES_ENABLED is off the writers
+    no-op and return the intended destinations tagged `dry-run:` instead.
     """
+    from services.postal_writers import execute_destinations
+
     destinations = resolve(account_label, category)
     thread_id = thread_meta.get("id", "?")
     sender = thread_meta.get("sender", "?")
     subject = (thread_meta.get("subject") or "")[:80]
 
-    logger.info(
-        f"postal route v1 (LOG ONLY): account={account_label} category={category} "
-        f"thread={thread_id[:16]} sender={sender} subject={subject!r} "
-        f"would_route_to={destinations}"
+    completed, failed = execute_destinations(
+        account_label, category, destinations, thread_meta
     )
 
-    # In v1, we record the *intended* destinations as if they ran.
-    # Phase 4 will replace this with actual destination writers.
-    return destinations, destinations
+    logger.info(
+        f"postal route: account={account_label} category={category} "
+        f"thread={str(thread_id)[:16]} sender={sender} subject={subject!r} "
+        f"resolved={destinations} completed={completed}"
+        + (f" failed={failed}" if failed else "")
+    )
+
+    return destinations, completed
