@@ -7803,6 +7803,113 @@ async def postal_run_endpoint(
     return process_all_accounts(limit_per_account=limit)
 
 
+# ===== Postal Agent — on-demand multi-inbox access (Option A) =====
+# Lets AVO search / read / triage ANY connected inbox by account_label
+# (avi, wd, salesdroid, aipg, agentempire, bookd) via the Paperclip MCP.
+# All endpoints require the Bearer API key. Read + modify ops here are driven
+# by an explicit human request, so they are NOT gated by POSTAL_WRITES_ENABLED
+# (that flag guards only the autonomous sweep's writer fan-out).
+def _postal_inbox_http_error(e: Exception) -> HTTPException:
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=400, detail=str(e))
+    if isinstance(e, RuntimeError):
+        # gmail_multi raises RuntimeError when there's no active token for the account
+        return HTTPException(status_code=404, detail=str(e))
+    return HTTPException(status_code=502, detail=f"gmail error: {type(e).__name__}: {e}")
+
+
+class InboxThreadRequest(BaseModel):
+    account: str
+    thread_id: str
+
+
+class InboxLabelRequest(BaseModel):
+    account: str
+    thread_id: str
+    label: str
+
+
+@app.get("/postal/inbox/search")
+async def postal_inbox_search(
+    account: str,
+    q: str,
+    limit: int = 25,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return {"account": account, "query": q, "threads": postal_inbox.search(account, q, limit)}
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
+@app.get("/postal/inbox/thread")
+async def postal_inbox_thread(
+    account: str,
+    thread_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return postal_inbox.read_thread(account, thread_id)
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
+@app.get("/postal/inbox/labels")
+async def postal_inbox_labels(
+    account: str,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return {"account": account, "labels": postal_inbox.labels(account)}
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
+@app.post("/postal/inbox/label")
+async def postal_inbox_label(
+    req: InboxLabelRequest,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return postal_inbox.apply_label(req.account, req.thread_id, req.label)
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
+@app.post("/postal/inbox/archive")
+async def postal_inbox_archive(
+    req: InboxThreadRequest,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return postal_inbox.archive(req.account, req.thread_id)
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
+@app.post("/postal/inbox/mark_read")
+async def postal_inbox_mark_read(
+    req: InboxThreadRequest,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services import postal_inbox
+    try:
+        return postal_inbox.mark_read(req.account, req.thread_id)
+    except Exception as e:
+        raise _postal_inbox_http_error(e)
+
+
 # ===== Smartlead WD webhook receiver =====
 # Smartlead → POST events to /webhooks/smartlead/wd/{secret} → handler
 # suppresses matching contact in Twenty WD (lead_unsubscribed) or logs replies.
