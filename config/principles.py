@@ -101,6 +101,17 @@ function, none alike, sharing one engine and one foundation:
     Warden.
   - Automotive Intelligence — AI-readiness for car dealerships. Function: help
     dealers adopt AI without the hype. Today: no paying recurring client yet.
+  - Bookd — compliance-first CRM for life insurance agents (bookd.cx). Function:
+    consent-gated workflows, append-only audit trails, and workspace isolation that
+    keep an agency audit-ready from lead to policy. Today: founding beta, no active
+    client yet.
+  - Agent Empire — B2C education and community (Skool, YouTube) teaching people to
+    build AI agents; the top-of-funnel that feeds the other cars
+    (buildagentempire.com). Function: turn audience into students into clients.
+    Today: no active client yet.
+  - WEND — consumer car-buying product (WEND brand, NOVA agent, AATA trust layer),
+    currently stealth / in build. Function: help everyday buyers purchase a car
+    with trust and clarity. Today: no active client yet (pre-launch).
 
 THE ENGINE — THE INTELLIGENCE STACK. Every car runs on the same compounding
 intelligence. We do not just name these — we wield them for the client:

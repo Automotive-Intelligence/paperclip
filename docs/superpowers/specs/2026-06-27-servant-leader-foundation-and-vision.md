@@ -112,8 +112,9 @@ persona loaders pick it up automatically — no call-site changes.
   purpose, and goals (scale / growth / acquisition).
 - **Mission:** take a client's discovery documents and use the Intelligence Stack to
   make their calling come true; build for the underdog SMB.
-- **Direction:** the garage (3 cars — AI Phone Guy, Worship Digital, Automotive
-  Intelligence) + the Intelligence Stack engine (psychological intelligence fenced
+- **Direction:** the garage (6 cars — AI Phone Guy, Worship Digital, Automotive
+  Intelligence, Bookd, Agent Empire, WEND; the last three with no active client yet)
+  + the Intelligence Stack engine (psychological intelligence fenced
   under the no-manipulation constraint) + the **MRR scoreboard** + a **North Star +
   honest bridge** (20+ clients/car and a Fields West deposit, stated alongside the
   honest near-zero starting line and the first milestone) + lean/focused/
