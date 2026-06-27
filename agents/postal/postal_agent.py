@@ -183,9 +183,11 @@ def process_account(account_label: str, limit: int = 20) -> dict[str, Any]:
             meta["account_label"] = account_label
 
             category, confidence, reason, used_llm = classify(meta)
-            destinations, _taken = route_to_destinations(account_label, category, meta)
+            _destinations, taken = route_to_destinations(account_label, category, meta)
 
-            _record_processed(account_label, mid, tid, category, destinations, confidence)
+            # Record the destinations that actually completed (Phase 4 writers),
+            # so postal_processed.routed_to is a true audit trail of side effects.
+            _record_processed(account_label, mid, tid, category, taken, confidence)
 
             stats["classified"] += 1
             stats["by_category"][category] = stats["by_category"].get(category, 0) + 1
@@ -218,3 +220,23 @@ def process_all_accounts(limit_per_account: int = 20) -> dict[str, Any]:
         except Exception as e:
             out["results"].append({"account_label": a["account_label"], "fatal": str(e)[:200]})
     return out
+
+
+def prune_processed(ttl_days: int = 90) -> int:
+    """Delete postal_processed rows older than ttl_days. Returns rows removed.
+
+    The idempotency log only needs to outlive Gmail's 7-day history cursor; 90d
+    is a generous safety margin. Called occasionally by the scheduled sweep.
+    """
+    rows = fetch_all(
+        """
+        WITH deleted AS (
+            DELETE FROM postal_processed
+             WHERE processed_at < now() - (%s || ' days')::interval
+            RETURNING 1
+        )
+        SELECT count(*) FROM deleted
+        """,
+        (ttl_days,),
+    )
+    return int(rows[0][0]) if rows else 0
