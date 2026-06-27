@@ -117,8 +117,6 @@ from tools.zernio import (
     publish_content_piece_to_zernio,
 )
 from tools.crm_router import push_prospects_to_crm, resolve_provider, provider_ready, crm_status_snapshot
-from tools.hubspot import hubspot_email_ready
-from tools.attio import attio_email_ready
 from tools.outbound_email import email_delivery_mode, unified_email_ready
 from tools.email_engine import parse_prospects, parse_retention_actions, parse_content_pieces
 
@@ -830,8 +828,7 @@ def _provider_email_capability(provider: str) -> Dict[str, Any]:
         # MAIL_FROM_<SUFFIX> / RESEND_API_KEY_<SUFFIX> lookups.
         _provider_business_map = {
             "ghl": "aiphoneguy",
-            "hubspot": "autointelligence",
-            "attio": "callingdigital",
+            "twenty": "callingdigital",  # WD; AvI + Book'd ride per-business workspace via twenty.py
         }
         bk = _provider_business_map.get(p, "")
         ready = unified_email_ready(bk)
@@ -853,32 +850,15 @@ def _provider_email_capability(provider: str) -> Dict[str, Any]:
             "missing_requirements": [] if SETTINGS.ghl_ready else ["GHL_API_KEY", "GHL_LOCATION_ID"],
             "notes": "Requires a connected sending mailbox inside GHL; API cannot verify mailbox state.",
         }
-    if p == "hubspot":
-        hubspot_ready_for_email = hubspot_email_ready()
+    if p == "twenty":
+        # Twenty has no native transactional-email surface; email send rides
+        # the unified-email path (Resend) per-business via MAIL_FROM_<SUFFIX>.
         return {
-            "provider": "hubspot",
-            "email_supported": hubspot_ready_for_email,
-            "email_send_ready": hubspot_ready_for_email,
-            "missing_requirements": [] if hubspot_ready_for_email else ["HUBSPOT_TRANSACTIONAL_EMAIL_ID"],
-            "notes": (
-                "HubSpot transactional first-touch email is enabled when HUBSPOT_TRANSACTIONAL_EMAIL_ID is set "
-                "and the template supports customProperties (subject_line, body_copy, business_name)."
-            ),
-        }
-    if p == "attio":
-        attio_ready_for_email = attio_email_ready()
-        return {
-            "provider": "attio",
-            "email_supported": attio_ready_for_email,
-            "email_send_ready": attio_ready_for_email,
-            "missing_requirements": [] if attio_ready_for_email else [
-                "ATTIO_SMTP_HOST",
-                "ATTIO_SMTP_PORT",
-                "ATTIO_SMTP_USERNAME",
-                "ATTIO_SMTP_PASSWORD",
-                "ATTIO_SMTP_FROM",
-            ],
-            "notes": "Attio first-touch email is enabled via SMTP when ATTIO_SMTP_* settings are configured.",
+            "provider": "twenty",
+            "email_supported": False,
+            "email_send_ready": False,
+            "missing_requirements": [],
+            "notes": "Twenty has no transactional-email API. Set EMAIL_DELIVERY_MODE=unified to send via Resend.",
         }
     return {
         "provider": p or "unknown",
@@ -891,7 +871,7 @@ def _provider_email_capability(provider: str) -> Dict[str, Any]:
 
 def _sales_preflight_report() -> Dict[str, Any]:
     """Build provider + agent-level readiness report for sales execution."""
-    providers = ("ghl", "hubspot", "attio")
+    providers = ("ghl", "twenty")
     by_provider: Dict[str, Any] = {}
     mode = email_delivery_mode()
     overall_ready = True
@@ -903,10 +883,8 @@ def _sales_preflight_report() -> Dict[str, Any]:
         if not creds_ready:
             if provider == "ghl":
                 missing.extend(["GHL_API_KEY", "GHL_LOCATION_ID"])
-            elif provider == "hubspot":
-                missing.extend(["HUBSPOT_API_KEY or HUBSPOT_ACCESS_TOKEN"])
-            elif provider == "attio":
-                missing.extend(["ATTIO_API_KEY"])
+            elif provider == "twenty":
+                missing.extend(["TWENTY_WD_API_KEY or TWENTY_AVI_API_KEY or TWENTY_BOOKD_API_KEY"])
         for item in email_cap.get("missing_requirements", []):
             if item not in missing:
                 missing.append(item)
@@ -1251,132 +1229,14 @@ def _ghl_live_metrics() -> Dict[str, Any]:
     }
 
 
-def _hubspot_live_metrics() -> Dict[str, Any]:
-    token = (os.getenv("HUBSPOT_API_KEY") or os.getenv("HUBSPOT_ACCESS_TOKEN") or "").strip()
-    if not token:
-        return {"available": False, "reason": "credentials_missing"}
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    base = "https://api.hubapi.com"
-
-    deals_open: Optional[int] = None
-    contacts_recent: Optional[int] = None
-    stage_counts: Dict[str, int] = {}
-
-    deals_resp = request_with_retry(
-        provider="hubspot",
-        operation="deals",
-        method="POST",
-        url=f"{base}/crm/v3/objects/deals/search",
-        headers=headers,
-        json_body={"properties": ["dealstage"], "limit": 100},
-        timeout=10,
-        max_attempts=2,
-    )
-    if deals_resp.ok and isinstance(deals_resp.data, dict):
-        deals = deals_resp.data.get("results", []) or []
-        open_count = 0
-        for d in deals:
-            stage = str((d.get("properties") or {}).get("dealstage", "")).strip().lower()
-            if stage:
-                stage_counts[stage] = stage_counts.get(stage, 0) + 1
-            if stage not in {"closedwon", "closedlost"}:
-                open_count += 1
-        deals_open = open_count
-
-    dt_30d = datetime.datetime.utcnow() - datetime.timedelta(days=30)
-    contact_resp = request_with_retry(
-        provider="hubspot",
-        operation="contacts_recent",
-        method="POST",
-        url=f"{base}/crm/v3/objects/contacts/search",
-        headers=headers,
-        json_body={
-            "filterGroups": [
-                {
-                    "filters": [
-                        {
-                            "propertyName": "lastmodifieddate",
-                            "operator": "GTE",
-                            "value": str(int(dt_30d.timestamp() * 1000)),
-                        }
-                    ]
-                }
-            ],
-            "limit": 100,
-        },
-        timeout=10,
-        max_attempts=2,
-    )
-    if contact_resp.ok and isinstance(contact_resp.data, dict):
-        contacts_recent = len(contact_resp.data.get("results", []) or [])
-
-    rev = _team_revenue_kpis("autointelligence")
-    return {
-        "available": True,
-        "open_deals": deals_open,
-        "contact_activity_30d": contacts_recent,
-        "pipeline_stage_counts": stage_counts,
-        "win_rate": rev["win_rate"],
-    }
-
-
-def _attio_live_metrics() -> Dict[str, Any]:
-    token = (os.getenv("ATTIO_API_KEY") or "").strip()
-    if not token:
-        return {"available": False, "reason": "credentials_missing"}
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    base = "https://api.attio.com/v2"
-
-    company_count: Optional[int] = None
-    person_recent: Optional[int] = None
-
-    company_resp = request_with_retry(
-        provider="attio",
-        operation="companies",
-        method="POST",
-        url=f"{base}/objects/companies/records/query",
-        headers=headers,
-        json_body={"limit": 100},
-        timeout=10,
-        max_attempts=2,
-    )
-    if company_resp.ok and isinstance(company_resp.data, dict):
-        companies = company_resp.data.get("data", []) or []
-        company_count = len(companies)
-
-    person_resp = request_with_retry(
-        provider="attio",
-        operation="people_recent",
-        method="POST",
-        url=f"{base}/objects/people/records/query",
-        headers=headers,
-        json_body={"limit": 100},
-        timeout=10,
-        max_attempts=2,
-    )
-    if person_resp.ok and isinstance(person_resp.data, dict):
-        people = person_resp.data.get("data", []) or []
-        person_recent = len(people)
-
-    rev = _team_revenue_kpis("callingdigital")
-    return {
-        "available": True,
-        "client_records": company_count,
-        "activity_feed_30d": person_recent,
-        "pipeline_health": rev["raw"],
-    }
-
-
 def _crm_live_metrics(team_id: str, provider: str) -> Dict[str, Any]:
     p = (provider or "").strip().lower()
     if p == "ghl":
         return _ghl_live_metrics()
-    if p == "hubspot":
-        return _hubspot_live_metrics()
-    if p == "attio":
-        return _attio_live_metrics()
+    # Twenty live-metrics not yet wired (per-workspace REST cost; rev KPIs
+    # come from the prospect-side tracking in agent_run_costs + persona_runs
+    # instead). HubSpot + Attio metric paths retired 2026-06-27 alongside
+    # their writer deletion.
     return {"available": False, "reason": f"unsupported_provider:{p}"}
 
 
@@ -3465,6 +3325,23 @@ def _run_postal_prune():
 scheduler.add_job(_run_postal_prune, CronTrigger(hour=4, minute=15, timezone=CST),
     id="postal_prune_daily", name="Postal Agent Prune — 4:15am CST",
     replace_existing=True, misfire_grace_time=3600)
+
+# WD "CRM push" reply-trigger (avo-telemetry file 72, D3). Sweeps the WD inbox,
+# detects an inbound reply that says "CRM push", auto-sends the 2a scoping form.
+# Sender degrades gracefully (Loops txn -> Resend -> manual-pending); idempotent
+# via WD/crm-push-handled + WD/crm-push-pending Gmail labels.
+def _run_wd_crm_push_responder():
+    try:
+        from services.wd_crm_push_responder import run as _wd_crm_push_run
+        summary = _wd_crm_push_run()
+        if summary.get("matched"):
+            logging.info(f"[Paperclip] WD CRM-push responder: {summary}")
+    except Exception as e:
+        logging.error(f"[Paperclip] WD CRM-push responder failed: {e}")
+
+scheduler.add_job(_run_wd_crm_push_responder, IntervalTrigger(minutes=15, timezone=CST),
+    id="wd_crm_push_responder_15m", name="WD CRM-push Reply Responder — Every 15min",
+    replace_existing=True, misfire_grace_time=600)
 
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
@@ -6057,8 +5934,6 @@ async def get_metrics():
         "environment": SETTINGS.environment,
         "strict_startup": SETTINGS.strict_startup,
         "ghl_ready": SETTINGS.ghl_ready,
-        "hubspot_ready": SETTINGS.hubspot_ready,
-        "attio_ready": SETTINGS.attio_ready,
         "business_crm_map": SETTINGS.business_crm_map,
         "llm_model": SETTINGS.llm_model,
         "llm_ready": SETTINGS.llm_ready,
@@ -6191,11 +6066,9 @@ class CrmConfigUpdate(BaseModel):
     # Credentials — omit any key you don't want to change
     ghl_api_key: Optional[str] = None
     ghl_location_id: Optional[str] = None
-    hubspot_api_key: Optional[str] = None
-    attio_api_key: Optional[str] = None
 
 
-_VALID_PROVIDERS = {"ghl", "hubspot", "attio"}
+_VALID_PROVIDERS = {"ghl", "twenty"}
 
 
 @app.post("/api/crm/config")
@@ -6243,12 +6116,6 @@ async def update_crm_config(
     if payload.ghl_location_id:
         os.environ["GHL_LOCATION_ID"] = payload.ghl_location_id.strip()
         changed.append("ghl_location_id")
-    if payload.hubspot_api_key:
-        os.environ["HUBSPOT_API_KEY"] = payload.hubspot_api_key.strip()
-        changed.append("hubspot_api_key")
-    if payload.attio_api_key:
-        os.environ["ATTIO_API_KEY"] = payload.attio_api_key.strip()
-        changed.append("attio_api_key")
 
     if not changed:
         raise HTTPException(status_code=400, detail="No fields provided to update.")
@@ -6963,8 +6830,6 @@ async def health():
         "jobs_registered": len(jobs_info),
         "postgres": "connected" if SETTINGS.postgres_enabled else "not configured",
         "ghl_configured": SETTINGS.ghl_ready,
-        "hubspot_configured": SETTINGS.hubspot_ready,
-        "attio_configured": SETTINGS.attio_ready,
         "business_crm_map": SETTINGS.business_crm_map,
         "revenue_tracking": SETTINGS.postgres_enabled,
         "environment": SETTINGS.environment,
@@ -7071,13 +6936,6 @@ async def paperclip_trigger_agent(agent: str):
     func = getattr(mod, func_name)
     func()
     return {"status": "completed", "agent": agent}
-
-
-@app.post("/paperclip/cleanup/hubspot")
-async def paperclip_cleanup():
-    """Re-run HubSpot contact classification."""
-    from rivers.automotive_intelligence.cleanup import run_cleanup
-    return run_cleanup()
 
 
 @app.get("/bridge/status")

@@ -26,8 +26,6 @@ from typing import Dict, List, Tuple
 from config.runtime import get_settings
 from services.database import execute_query
 from tools.ghl import push_prospects_to_ghl
-from tools.hubspot import push_prospects_to_hubspot
-from tools.attio import push_prospects_to_attio
 from tools.twenty import push_prospects_to_twenty, twenty_ready
 
 logger = logging.getLogger(__name__)
@@ -51,8 +49,6 @@ def crm_status_snapshot() -> Dict[str, object]:
         "agent_crm_map": dict(settings.agent_crm_map),
         "provider_readiness": {
             "ghl": settings.ghl_ready,
-            "hubspot": settings.hubspot_ready,
-            "attio": settings.attio_ready,
             "twenty": {
                 biz: twenty_ready(biz)
                 for biz in ("callingdigital", "autointelligence", "bookd")
@@ -77,14 +73,13 @@ def push_prospects_to_crm(prospects: list, source_agent: str, business_key: str)
     provider = resolve_provider(business_key=business_key, agent_name=source_agent)
     if provider == "ghl":
         results = push_prospects_to_ghl(prospects, source_agent=source_agent, business_key=business_key)
-    elif provider == "hubspot":
-        results = push_prospects_to_hubspot(prospects, source_agent=source_agent, business_key=business_key)
-    elif provider == "attio":
-        results = push_prospects_to_attio(prospects, source_agent=source_agent, business_key=business_key)
     elif provider == "twenty":
         results = push_prospects_to_twenty(prospects, source_agent=source_agent, business_key=business_key)
     else:
-        raise ValueError(f"Unsupported CRM provider '{provider}' for business '{business_key}'")
+        raise ValueError(
+            f"Unsupported CRM provider '{provider}' for business '{business_key}'. "
+            "Live providers: ghl, twenty. (hubspot + attio retired 2026-06-27.)"
+        )
 
     for r in results:
         log_crm_push(source_agent, provider, r.get("business_name", ""), r.get("status", "unknown"))
