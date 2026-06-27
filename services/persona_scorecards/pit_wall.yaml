@@ -1,9 +1,8 @@
-# ── STATUS: targets PROPOSED by Pit Wall — pending Michael's lock ─────────────
-# Phase A scorecard. Numbers below are starting proposals with inline rationale,
-# NOT yet locked. Action = approve or adjust each, then Phase B (metrics
-# collector) builds against this contract.
-# No baseline data exists yet (Phase B unbuilt), so proposals are judgment calls,
-# not measured — revisit anything cost/throughput-driven after one baseline week.
+# ── STATUS: targets LOCKED 2026-06-27 by Michael ─────────────────────────────
+# Phase A scorecard complete. Targets below are locked and are the contract
+# Phase B (metrics collector) builds against.
+# No baseline data existed at lock time (Phase B unbuilt), so these were judgment
+# calls — revisit anything cost/throughput-driven after one baseline week.
 #
 # SEAT (locked 2026-06-27 by Michael): Pit Wall is a READ-ONLY TELEMETRY SURFACE,
 # not a decision seat. It surfaces signal vs noise and ROUTES decisions to the
@@ -32,7 +31,7 @@ kpis:
   - name: signal_to_noise_ratio
     display: "% of Pit Wall surfaced items the owning persona acted on (signal vs noise)"
     source: pit_wall_decision_log
-    target: 70                  # PROPOSED — ≥70% of what Pit Wall surfaces is real signal someone acted on
+    target: 70                  # LOCKED 2026-06-27 —≥70% of what Pit Wall surfaces is real signal someone acted on
     target_unit: "%"
     threshold_yellow: 50
     threshold_red: 30
@@ -44,7 +43,7 @@ kpis:
   - name: surfacing_latency_hours
     display: "Median hours from a signal appearing in telemetry to it being surfaced/routed to the owning persona"
     source: agent_handoffs_cross_persona
-    target: 6                   # PROPOSED — signal routed within a wake-cycle (twice-daily cadence ≈ 9.5h/14.5h gaps)
+    target: 6                   # LOCKED 2026-06-27 —signal routed within a wake-cycle (twice-daily cadence ≈ 9.5h/14.5h gaps)
     target_unit: "hours (median)"
     threshold_yellow: 12
     threshold_red: 24
@@ -56,7 +55,7 @@ kpis:
   - name: telemetry_freshness
     display: "% of telemetry sources pulled successfully and current at each wake (stale/missing counts against)"
     source: metrics_collector_snapshot
-    target: 95                  # PROPOSED — a telemetry surface is only as good as its freshest source; near-total coverage required
+    target: 95                  # LOCKED 2026-06-27 —a telemetry surface is only as good as its freshest source; near-total coverage required
     target_unit: "% sources fresh"
     threshold_yellow: 80
     threshold_red: 60
@@ -80,7 +79,7 @@ kpis:
   - name: portfolio_health_index
     display: "Composite 0-100 score across all 9 personas (avg of green-rate)"
     source: scorecard_aggregator
-    target: 85                  # PROPOSED — fleet green-rate composite ≥85/100 across all 9 personas
+    target: 85                  # LOCKED 2026-06-27 —fleet green-rate composite ≥85/100 across all 9 personas
     target_unit: "0-100"
     threshold_yellow: 70
     threshold_red: 50
@@ -89,4 +88,4 @@ kpis:
       - "surface weakest persona in Owner's Brief"
       - "route a flag to the weakest persona to action (Pit Wall surfaces, the persona acts)"
 
-token_budget_daily_usd: 10     # PROPOSED — twice-daily snapshot read + summarize; revisit after Phase C wake-cycle cost is measured
+token_budget_daily_usd: 10     # LOCKED 2026-06-27 —twice-daily snapshot read + summarize; revisit after Phase C wake-cycle cost is measured
