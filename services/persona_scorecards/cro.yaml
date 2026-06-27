@@ -15,7 +15,7 @@ escalation_email_red: michael@worshipdigital.co
 kpis:
   - name: pipeline_coverage_ratio
     display: "Pipeline coverage ratio (open pipeline value / remaining quarterly target)"
-    source: twenty_pipeline_join
+    source: twenty_opportunity_log
     target: 3.5                 # TBD-with-Michael
     target_unit: "x"
     threshold_yellow: 2.5
@@ -74,6 +74,7 @@ kpis:
     threshold_yellow: 35
     threshold_red: 60
     cadence: weekly
+    per_brand: ["wd", "avi", "aipg"]
     levers:
       - "spawn followup_agent on stalled opportunities (>14d no touch)"
       - "post flag to CMG / Internal Marketing on bottleneck stage"
