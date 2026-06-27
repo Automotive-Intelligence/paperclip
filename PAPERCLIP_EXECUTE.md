@@ -477,7 +477,7 @@ Post to Agent Empire Skool every Saturday. This IS the build-in-public content.
 2. Run HubSpot cleanup script FIRST — 690 contacts need classification
 3. Build core/ infrastructure
 4. Build Randy — GHL/AI Phone Guy (43 open opps — highest priority)
-5. Build Brenda — Attio/Calling Digital
+5. Build Brenda — Attio/Worship Digital
 6. Build Darrell — HubSpot/Automotive Intelligence
 7. Build Tammy — Skool/Agent Empire
 8. Build Debra — Content producer/Agent Empire

@@ -7,7 +7,7 @@ PROBLEM IT FIXES
 ----------------
 Before this module, the cockpit bridge created `agent_handoffs` rows correctly
 but the agent runners never read them. `_avo_sched_sofia` always called
-`run_sofia_content()` which is hard-coded for Calling Digital's daily self-
+`run_sofia_content()` which is hard-coded for Worship Digital's daily self-
 promotion. A flag for a client like Paper & Purpose would land in
 agent_handoffs, get marked `pending`, never be claimed, and never produce
 output. Handoffs sat at `picked_up` (or `pending`) for >24h with no work.
@@ -194,7 +194,7 @@ _AGENT_IMPORT_MAP: Dict[str, str] = {
     "jennifer":     "agents.aiphoneguy.jennifer:jennifer",
     "randy":        "agents.aiphoneguy.randy:randy",
     "joshua":       "agents.aiphoneguy.joshua:joshua",
-    # Calling Digital
+    # Worship Digital
     "dek":          "agents.callingdigital.dek:dek",
     "sofia":        "agents.callingdigital.sofia:sofia",
     "marcus":       "agents.callingdigital.marcus:marcus",

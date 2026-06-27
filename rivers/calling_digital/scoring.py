@@ -1,4 +1,4 @@
-"""ICP scoring for Calling Digital (Brenda).
+"""ICP scoring for Worship Digital (Brenda).
 
 Score 7+ = Track B (warm). Under 7 = Track A (cold).
 """

@@ -244,7 +244,7 @@ def render_digest_html(items: list[dict[str, Any]], business_key: str, base_url:
     </div>
     {item_blocks}
     <div style="font-size:12px;color:#9ca3af;text-align:center;padding:16px">
-      Calling Digital &middot; You're receiving this because you're the active client owner for {html.escape(business_key)}.
+      Worship Digital &middot; You're receiving this because you're the active client owner for {html.escape(business_key)}.
     </div>
   </div>
 </body>

@@ -146,7 +146,7 @@ class RuntimeSettings:
         # Business-level mapping is the source of truth.
         # Agent-level override is only honored if it matches the business mapping.
         # This prevents stale AGENT_CRM_MAP env vars from silently routing
-        # agents to the wrong CRM (e.g., Marcus → GHL when Calling Digital uses Attio).
+        # agents to the wrong CRM (e.g., Marcus → GHL when Worship Digital uses Attio).
         biz_key = (business_key or "").strip().lower()
         business_provider = self.business_crm_map.get(biz_key, "ghl")
 

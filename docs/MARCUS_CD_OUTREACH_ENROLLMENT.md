@@ -99,7 +99,7 @@ Once you've enabled the sequence and seen first emails go out, the highest-lever
 
 ## Reference
 
-- Attio workspace: Calling Digital
+- Attio workspace: Worship Digital
 - Sequence URL pattern: `https://app.attio.com/calling-digital/sequences/<id>`
 - Sender: connected Gmail account (likely `michael@calling.digital`)
 - Pipeline stage attribute: `pipeline_stage` (single-select on People)

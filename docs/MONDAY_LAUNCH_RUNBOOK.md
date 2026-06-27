@@ -1,6 +1,6 @@
 # Monday 2026-04-20 Launch Runbook
 
-**What this is:** The first real Monday after a 48-hour sprint that wired up 3 sales agents, 3 email systems, and 3 RevOps pit walls across AI Phone Guy, Automotive Intelligence, and Calling Digital. This runbook walks you through what to check, in what order, from 8:30am through the day.
+**What this is:** The first real Monday after a 48-hour sprint that wired up 3 sales agents, 3 email systems, and 3 RevOps pit walls across AI Phone Guy, Automotive Intelligence, and Worship Digital. This runbook walks you through what to check, in what order, from 8:30am through the day.
 
 ---
 

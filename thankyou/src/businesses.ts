@@ -37,7 +37,7 @@ export const businesses: Business[] = [
   },
   {
     key: "cd",
-    name: "Calling Digital",
+    name: "Worship Digital",
     domain: "calling.digital",
     hostname: "book.calling.digital",
     accentClass: "text-slate-700",

@@ -107,7 +107,7 @@ def verify_setup():
     print("   - Set ZERNIO_API_KEY in .env or Railway")
     print("\n2. Create Zernio profiles and connect accounts:")
     print("   - Log into https://zernio.com/")
-    print("   - Create profiles for each business (The AI Phone Guy, Calling Digital, etc.)")
+    print("   - Create profiles for each business (The AI Phone Guy, Worship Digital, etc.)")
     print("   - Connect social accounts (Twitter, LinkedIn, Instagram, etc.)")
     print("\n3. Test publishing:")
     print("   curl -X POST http://localhost:8000/content/publish/zernio/aiphoneguy?limit=5 \\")

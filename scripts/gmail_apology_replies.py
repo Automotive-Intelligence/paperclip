@@ -81,7 +81,7 @@ Either way, I appreciate your patience. Building in public means you see the win
 and the screwups. This was a screwup.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Dallas, TX
 """
 

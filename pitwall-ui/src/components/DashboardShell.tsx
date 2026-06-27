@@ -11,7 +11,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Overview', to: '/', icon: 'O' },
   { label: 'AI Phone Guy', to: '/team/aiphoneguy', icon: 'P' },
-  { label: 'Calling Digital', to: '/team/callingdigital', icon: 'C' },
+  { label: 'Worship Digital', to: '/team/callingdigital', icon: 'C' },
   { label: 'Automotive Intel', to: '/team/autointelligence', icon: 'A' },
   { label: 'Agent Empire', to: '/team/agentempire', icon: 'E' },
   { label: 'CustomerAdvocate', to: '/team/customeradvocate', icon: 'V' },

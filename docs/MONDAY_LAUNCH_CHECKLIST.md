@@ -36,7 +36,7 @@
 
 ---
 
-## Marcus (Calling Digital → Attio)
+## Marcus (Worship Digital → Attio)
 
 ### Already live
 - [x] Running Mon-Fri 8:32 AM CST

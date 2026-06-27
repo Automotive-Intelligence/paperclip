@@ -16,7 +16,7 @@ GHL_LOCATION_ID=     → Settings > Business Profile > Location ID (starts with 
 ```
 **Where:** https://app.gohighlevel.com → Settings > Business Profile
 
-### Attio (Calling Digital — Brenda)
+### Attio (Worship Digital — Brenda)
 ```
 ATTIO_API_KEY=       → Settings > Developers > API Keys > Create new key
 ```
@@ -41,7 +41,7 @@ MICHAEL_PHONE=       → Michael's cell (format: +1XXXXXXXXXX)
 ### Booking Links
 ```
 BOOKING_LINK_APG=    → Your Calendly/Cal.com link for AI Phone Guy demos
-BOOKING_LINK_CD=     → Your Calendly/Cal.com link for Calling Digital audits
+BOOKING_LINK_CD=     → Your Calendly/Cal.com link for Worship Digital audits
 BOOKING_LINK_AI=     → Your Calendly/Cal.com link for Automotive Intelligence audits
 ```
 
@@ -99,7 +99,7 @@ curl https://your-app.railway.app/health
 | Agent | River | CRM | Frequency |
 |-------|-------|-----|-----------|
 | Randy | AI Phone Guy | GoHighLevel | Every 4 hours |
-| Brenda | Calling Digital | Attio | Every 2 hours |
+| Brenda | Worship Digital | Attio | Every 2 hours |
 | Darrell | Automotive Intelligence | HubSpot | Every 1 hour |
 | Tammy | Agent Empire | Skool | Every 6 hours |
 | Wade | Agent Empire | Gmail MCP | Monday 9am CST |

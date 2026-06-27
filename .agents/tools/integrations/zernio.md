@@ -70,7 +70,7 @@ Social media scheduling platform supporting 14+ networks via unified REST API.
 3. **Create Business Profiles** (in Zernio dashboard)
    ```
    Profile: "The AI Phone Guy"
-   Profile: "Calling Digital"
+   Profile: "Worship Digital"
    Profile: "Automotive Intelligence"
    ```
 

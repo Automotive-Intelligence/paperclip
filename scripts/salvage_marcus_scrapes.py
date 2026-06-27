@@ -41,8 +41,8 @@ JUNK_EMAILS = {
     "tattoosbymartin21@gmail.com",   # No data
     "service@bradfieldpiano.com",    # No description
     "adewalewyze@gmail.com",         # No data
-    "harry@ranked.ai",               # SaaS founder, not Calling Digital ICP
-    "paulp@teamworkscom.com",        # Enterprise consultant, not Calling Digital ICP
+    "harry@ranked.ai",               # SaaS founder, not Worship Digital ICP
+    "paulp@teamworkscom.com",        # Enterprise consultant, not Worship Digital ICP
 }
 
 # Skip if name contains these (test/placeholder names)

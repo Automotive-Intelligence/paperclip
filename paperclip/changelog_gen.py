@@ -130,7 +130,7 @@ def _render_pipeline_section(by_business: dict) -> str:
     }
     biz_display = {
         "aiphoneguy": "AI Phone Guy (GoHighLevel)",
-        "callingdigital": "Calling Digital (Attio)",
+        "callingdigital": "Worship Digital (Attio)",
         "autointelligence": "Automotive Intelligence (HubSpot)",
     }
     revenue_rivers = ["aiphoneguy", "callingdigital", "autointelligence"]

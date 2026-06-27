@@ -59,7 +59,7 @@ Output: scannable, decision-forcing, paste-ready. No exposition.
 Without an org-tech owner, the platforms creep — wired-in vendors not used, runaway tool calls, secret sprawl, domain expiry incidents (CD LLC was the real example), silent integration failures (the briefing analytics 404 hid 0% opens for weeks). The CTO persona is the standing immune system.
 
 ## Current org snapshot (verify before recommending — recall is a starting point, not source of truth)
-- **Brands**: Calling Digital → Worship Digital (DBA under CD LLC), AI Phone Guy, Automotive Intelligence, Agent Empire, Paper & Purpose (active client).
+- **Brands**: Worship Digital → Worship Digital (DBA under CD LLC), AI Phone Guy, Automotive Intelligence, Agent Empire, Paper & Purpose (active client).
 - **Cofounders**: Ryan Velazquez (Book'd / 3velazquez LLC).
 - **Entity state**: CD LLC EXPIRED (reactivation queued); AIPG no entity (blocks GBP); Automotive Intelligence LLC active; 3velazquez LLC active. Default = DBAs under CD.
 - **Self-hosted**: Twenty CRM (Railway, crm.worshipdigital.co, single-workspace pending Cloudflare wildcard SSL); Paperclip MCP (Railway).

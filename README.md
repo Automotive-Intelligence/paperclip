@@ -61,12 +61,12 @@ Behavior:
 - Sends title/body/slug/graphic payload to your GHL webhook
 - Marks successful items as published in `content_queue`
 
-### Ghost Publishing (Calling Digital)
+### Ghost Publishing (Worship Digital)
 
-Paperclip can publish queued Calling Digital long-form content directly to Ghost
+Paperclip can publish queued Worship Digital long-form content directly to Ghost
 through the Ghost Admin API.
 
-Required env vars for Calling Digital:
+Required env vars for Worship Digital:
 
 - `CALLINGDIGITAL_GHOST_API_URL`: Ghost site base URL, e.g. `https://blog.calling.digital`
 - `CALLINGDIGITAL_GHOST_ADMIN_API_KEY`: Ghost Admin API key in `<id>:<secret>` format

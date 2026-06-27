@@ -1,4 +1,4 @@
-"""Email sequences for Calling Digital — DEPRECATED.
+"""Email sequences for Worship Digital — DEPRECATED.
 
 As of 2026-04-11, all email sequences are managed in Attio UI:
 - Marcus — Med Spa (4 steps)

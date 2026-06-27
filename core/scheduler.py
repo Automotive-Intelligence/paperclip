@@ -35,7 +35,7 @@ def register_all_jobs(scheduler: BackgroundScheduler):
     def daily_summary():
         stats = {
             "AI Phone Guy": apg_stats(),
-            "Calling Digital": cd_stats(),
+            "Worship Digital": cd_stats(),
             "Automotive Intelligence": ai_stats(),
             "Agent Empire": ae_stats(),
         }

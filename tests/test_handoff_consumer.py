@@ -153,7 +153,7 @@ class TaskDescriptionTests(unittest.TestCase):
                 "posted_by": "Michael / Pit Wall",
                 "posted": "2026-05-17 14:00 CST",
                 "_routing": {
-                    "reasoning": "Sofia owns Calling Digital client content; P&P is a CD client",
+                    "reasoning": "Sofia owns Worship Digital client content; P&P is a CD client",
                 },
             },
         }
@@ -162,7 +162,7 @@ class TaskDescriptionTests(unittest.TestCase):
         self.assertIn("Pre-sale opens 5/29", desc)
         self.assertIn("EOD today", desc)
         self.assertIn("Michael / Pit Wall", desc)
-        self.assertIn("Sofia owns Calling Digital client content", desc)
+        self.assertIn("Sofia owns Worship Digital client content", desc)
         # Execution rules must be present
         self.assertIn("Empty is better than fake", desc)
         self.assertIn("Paper & Purpose", desc)

@@ -36,7 +36,7 @@ DNS typically propagates in 5–60 minutes. Railway auto-provisions SSL once the
 
 ### 2. Wire the thank you pages into your calendars
 
-#### Calendly (Automotive Intelligence + Calling Digital)
+#### Calendly (Automotive Intelligence + Worship Digital)
 Free plan doesn't support auto-redirect after booking. Two options:
 
 **Option A (free):** Add a link to the confirmation email template.

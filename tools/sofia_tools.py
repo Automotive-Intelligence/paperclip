@@ -1,6 +1,6 @@
 """tools/sofia_tools.py — CrewAI tool wrappers for Sofia's creative + queue surface.
 
-Sofia (Head of Content & Creative at Calling Digital) needs three things at
+Sofia (Head of Content & Creative at Worship Digital) needs three things at
 runtime that the lower-level modules expose as plain Python functions:
   1. Image generation     (tools/image_gen.generate_image)
   2. Video generation     (tools/video_gen.generate_video)
@@ -282,7 +282,7 @@ def sofia_queue_for_approval(
         # set risk_level="medium" so the artifact lands in pending_approval
         # status regardless of confidence — high-confidence content does NOT
         # bypass the client-approval gate. This is a hard rule of the
-        # Calling Digital agency model: clients approve every post.
+        # Worship Digital agency model: clients approve every post.
         artifact = create_artifact(
             agent_id="sofia",
             business_key=business_key,

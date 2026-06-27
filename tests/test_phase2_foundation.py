@@ -266,7 +266,7 @@ class FoundationEndpointsTests(unittest.TestCase):
                 'created_at': '2026-03-29T08:00:00Z',
             }
         ]
-        mock_profiles.return_value = [{'_id': 'profile-1', 'name': 'Calling Digital'}]
+        mock_profiles.return_value = [{'_id': 'profile-1', 'name': 'Worship Digital'}]
         mock_publish.return_value = {'_id': 'zpost-1'}
 
         resp = self.client.post('/content/publish/zernio/callingdigital?limit=1')
@@ -308,8 +308,8 @@ class ParsingFallbackTests(unittest.TestCase):
         self.assertEqual(result['status'], 'ok')
         self.assertEqual(result['queued'], 1)
         queued_pieces = mock_queue.call_args[0][2]
-        self.assertEqual(queued_pieces[0]['title'], 'Why Calling Digital Matters')
-        self.assertIn('Calling Digital helps firms modernize marketing.', queued_pieces[0]['body'])
+        self.assertEqual(queued_pieces[0]['title'], 'Why Worship Digital Matters')
+        self.assertIn('Worship Digital helps firms modernize marketing.', queued_pieces[0]['body'])
         self.assertIn('https://calling.digital', queued_pieces[0]['body'])
         self.assertIn('https://calling.digital', queued_pieces[0]['cta'])
 
