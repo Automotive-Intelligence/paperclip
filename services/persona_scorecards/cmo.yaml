@@ -15,10 +15,10 @@ kpis:
   - name: weekly_qualified_leads_organic
     display: "Weekly qualified leads from organic channels (all brands)"
     source: ga4_twenty_join
-    target: 25                  # TBD-with-Michael
+    target: null                # BASELINE WEEK (locked 2026-06-27): no organic structure built yet — unknown if we're visible in search. Measure 1 week via Phase B collector, then lock target/yellow/red against real baseline.
     target_unit: "leads/week"
-    threshold_yellow: 18        # TBD-with-Michael
-    threshold_red: 12           # TBD-with-Michael
+    threshold_yellow: null      # set after baseline week
+    threshold_red: null         # set after baseline week
     cadence: weekly
     levers:
       - "boost content velocity (spawn higgsfield content agent for under-performing brand)"
@@ -28,7 +28,7 @@ kpis:
   - name: per_brand_search_volume_trend
     display: "Per-brand Google search volume month-over-month"
     source: gsc_per_brand
-    target: "+5%"               # TBD-with-Michael
+    target: "+5%"               # locked 2026-06-27 — trend goal, baseline-independent
     target_unit: "MoM %"
     threshold_yellow: 0
     threshold_red: -5
@@ -41,7 +41,7 @@ kpis:
   - name: newsletter_open_rate
     display: "Newsletter open rate (per-brand)"
     source: loops
-    target: 38                  # TBD-with-Michael
+    target: 38                  # locked 2026-06-27 — industry benchmark for engaged SMB/B2B newsletters (30-40%)
     target_unit: "% opened"
     threshold_yellow: 30
     threshold_red: 22
@@ -54,10 +54,10 @@ kpis:
   - name: content_velocity
     display: "Content posts shipped per week per brand"
     source: buffer_higgsfield_zernio_join
-    target: 5                   # TBD-with-Michael
+    target: 7                   # locked 2026-06-27 — Michael's call: 7 posts/brand/week
     target_unit: "posts/week/brand"
-    threshold_yellow: 3
-    threshold_red: 1
+    threshold_yellow: 5
+    threshold_red: 3
     cadence: weekly
     levers:
       - "spawn higgsfield_content_agent for under-shipping brand"
@@ -76,4 +76,4 @@ kpis:
       - "halt offending agent until prompt fix lands"
       - "post flag to B&T for prompt update"
 
-token_budget_daily_usd: 12     # TBD-with-Michael
+token_budget_daily_usd: 12     # locked 2026-06-27 — runaway tripwire, NOT a target. Personas fire via Anthropic API (per-token billed), not covered by Claude Max. Ceiling catches stuck-loop overspend; lift as cron volume grows.
