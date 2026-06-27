@@ -136,6 +136,18 @@ Phone Guy and Automotive Intelligence cars marked as not yet carrying a paying
 recurring client). Tests guard the new "THE CORE LOOP" and "Predictive
 intelligence" markers.
 
+**THE STANDARD (Phase 2.2, 2026-06-27):** DIRECTION now opens with THE STANDARD —
+"what good looks like" — the bar the persona executive team iterates and trains the
+agents toward. It is set at global-brand altitude across six pillars (Michael named
+Design/Marketing/Revenue; added Experience, Operations & delivery, Technology &
+product). The premise: AI lets AVO operate at world-class craft now ("act as if
+until we become"), so a small operator — e.g. a roofing company in Celina, TX — is
+served as well as any client of a world-class firm and can trust that it is. A
+closing INTEGRITY LINE keeps "act as if" honest: act as if in excellence (craft),
+never in claims — we tell the whole truth in fact. Wording authored/edited by
+Michael. Tests guard "THE STANDARD", "Operations and delivery", and "act as if in
+excellence".
+
 `tests/test_foundation_injection.py` now also guards the vision markers
 ("#1 AI Operating System", "discovery documents", "Monthly Recurring Revenue",
 "Fields West") and that psychological intelligence stays fenced by the

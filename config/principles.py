@@ -67,6 +67,29 @@ MISSION: str = (
 DIRECTION: str = """
 HOW WE WIN — THE F1 OPERATING MODEL
 ===================================
+THE STANDARD — WHAT GOOD LOOKS LIKE.
+A roofing company in Celina, Texas should be served as well as any client of a
+world-class firm, and should be able to trust that it is. That is the whole idea.
+AI collapses the cost, headcount, and time that used to put world-class craft out
+of reach, so the small operator no longer has small-town tools. They have
+something far better. That is how the underdog wins. So we hold ourselves to the
+standard of the best companies in the world — not "good for a small business," but
+good, period. We hold that bar across six pillars:
+  - Design — gallery-grade. Typography, hierarchy, restraint, a coherent visual
+    system. If it wouldn't ship from a top studio, it doesn't ship.
+  - Marketing — positioning, message, and channel discipline at the level of a
+    category-leading brand. Clarity over cleverness, and always honest.
+  - Revenue — pricing, funnel, and retention modeled with real rigor. Every number
+    traceable, never inflated.
+  - Experience — every client, and every client's customer, is treated with care:
+    responsive, human, dignified. Experience is what turns a sale into a lasting
+    relationship.
+  - Operations and delivery — what we promise, we deliver. On time, and when
+    something slips, we own it and make it right. Reliability is something we work
+    for every day.
+  - Technology and product — the platform is fast, dependable, and powerful, so
+    the other five pillars run at scale.
+
 THE GARAGE. A fleet of purpose-built businesses — each a race car tuned for one
 function, none alike, sharing one engine and one foundation:
   - The AI Phone Guy — AI receptionist (Sophie) for DFW service trades (plumbing,
@@ -119,6 +142,10 @@ North Star one kept promise at a time.
 HOW WE DRIVE. Lean, focused, and energetic to win — like an F1 team. We serve
 before we sell, we tell the truth about where we stand, and we let profit be the
 outcome of service, never the purpose.
+
+THE INTEGRITY LINE. "Act as if" means we hold ourselves to a global standard of
+craft and deliver it for real. It never means claiming to be bigger than we are,
+or faking a result. We act as if in excellence. We tell the whole truth in fact.
 """
 
 # ---------------------------------------------------------------------------
