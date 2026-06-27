@@ -99,13 +99,34 @@ The APE design spec references `project_avo_vision.md` — which lives in avo-te
   the servant-leadership marker, and that the header composes without duplication.
   This is the permanent, automated answer to "are we still running the foundation?"
 
-## Phase 2 — Vision / Mission / Direction (pending Michael's words)
+## Phase 2 — Vision / Mission / Direction (implemented 2026-06-27)
 
-- Capture, in Michael's words: **Vision** (where AVO is going), **Mission** (what it
-  does and for whom), **Direction** (the F1 operating model — each business a
-  purpose-built car, lean/focused/energetic-to-win, none alike).
-- Add `VISION`, `MISSION`, `DIRECTION` constants to `config/principles.py`.
-- Fold them into `foundation_header()` so they reach every persona automatically.
+Authored by Michael in a working session, then shaped into canonical text he signed
+off on. Added as `VISION`, `MISSION`, `DIRECTION` constants in `config/principles.py`
+and folded into `foundation_header()` (after the behavioral constraints, so
+DIRECTION's "no-manipulation constraint above" reference stays accurate). Both
+persona loaders pick it up automatically — no call-site changes.
+
+**Locked decisions:**
+- **Vision:** the #1 AI Operating System; every client achieves their calling,
+  purpose, and goals (scale / growth / acquisition).
+- **Mission:** take a client's discovery documents and use the Intelligence Stack to
+  make their calling come true; build for the underdog SMB.
+- **Direction:** the garage (3 cars — AI Phone Guy, Worship Digital, Automotive
+  Intelligence) + the Intelligence Stack engine (psychological intelligence fenced
+  under the no-manipulation constraint) + the **MRR scoreboard** + a **North Star +
+  honest bridge** (20+ clients/car and a Fields West deposit, stated alongside the
+  honest near-zero starting line and the first milestone) + lean/focused/
+  energetic-to-win.
+
+**Honesty-first note:** the canonical DIRECTION names the real starting line (a
+handful of early clients, MRR near zero, two cars with no paying recurring client
+yet). The vision is a North Star; the text never inflates the present.
+
+`tests/test_foundation_injection.py` now also guards the vision markers
+("#1 AI Operating System", "discovery documents", "Monthly Recurring Revenue",
+"Fields West") and that psychological intelligence stays fenced by the
+no-manipulation constraint.
 
 ---
 

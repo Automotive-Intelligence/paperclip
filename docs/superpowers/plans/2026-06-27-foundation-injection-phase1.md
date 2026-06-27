@@ -60,5 +60,5 @@ pattern of `services/current_time.py::current_time_block()`.
 
 - [ ] Mirror `foundation_header()` into `avo-slack/app.py` (separate repo) so the
   live Slack chats also lead with the foundation.
-- [ ] Phase 2: `VISION` / `MISSION` / `DIRECTION` constants, authored by Michael,
-  folded into `foundation_header()`.
+- [x] Phase 2: `VISION` / `MISSION` / `DIRECTION` constants, authored by Michael,
+  folded into `foundation_header()`. (Done 2026-06-27.)
