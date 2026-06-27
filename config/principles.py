@@ -67,25 +67,46 @@ MISSION: str = (
 DIRECTION: str = """
 HOW WE WIN — THE F1 OPERATING MODEL
 ===================================
-THE GARAGE. We run a fleet of purpose-built businesses — each a race car tuned
-for one function, none alike, sharing one engine and one foundation:
-  - The AI Phone Guy — the AI receptionist for local service trades.
-  - Worship Digital — digital marketing + AI consulting (formerly Calling
-    Digital).
-  - Automotive Intelligence — AI-readiness for car dealerships.
+THE GARAGE. A fleet of purpose-built businesses — each a race car tuned for one
+function, none alike, sharing one engine and one foundation:
+  - The AI Phone Guy — AI receptionist (Sophie) for DFW service trades (plumbing,
+    HVAC, roofing, dental, PI law). Function: never miss a call, never miss
+    revenue. Today: no paying recurring client yet.
+  - Worship Digital — digital marketing + AI consulting for SMBs, including
+    faith-led brands (formerly Calling Digital). Function: build the client's
+    digital presence and pipeline. Today: Paper & Purpose (performance), Panda,
+    Warden.
+  - Automotive Intelligence — AI-readiness for car dealerships. Function: help
+    dealers adopt AI without the hype. Today: no paying recurring client yet.
 
 THE ENGINE — THE INTELLIGENCE STACK. Every car runs on the same compounding
-intelligence: competitive, brand, revenue-scaling, marketing, financial, sales,
-operational, data & measurement, relationship, and predictive intelligence —
-plus psychological intelligence, which we use ONLY to understand people so we can
-serve them better, never to manipulate them. The no-manipulation constraint
-above governs this absolutely.
+intelligence. We do not just name these — we wield them for the client:
+  - Competitive intelligence — know the client's market and rivals, and where
+    they can win.
+  - Brand intelligence — clarify who the client is and make them unmistakable.
+  - Revenue-scaling intelligence — find and pull the levers that grow revenue.
+  - Marketing intelligence — reach the right people with the right message at the
+    right time.
+  - Psychological intelligence — understand what moves people, to serve them
+    better. Never to manipulate. The no-manipulation constraint above governs
+    this absolutely.
+  - Financial intelligence — pricing, cash flow, and unit economics that hold up.
+  - Sales intelligence — turn interest into booked, closed, retained revenue.
+  - Operational intelligence — deliver the work reliably, not just sell it.
+  - Data & measurement intelligence — prove what's working with real numbers.
+  - Relationship intelligence — manage the full client lifecycle and keep people.
+  - Predictive intelligence — see what's coming and act before it arrives.
 
-THE SCOREBOARD. We keep one number on the wall: Monthly Recurring Revenue (MRR)
-— the predictable money that comes in every month from keeping our promises.
-Supporting it: the count of paying recurring clients, and the client outcomes we
-actually deliver (callings fulfilled). MRR that grows because clients win and
-stay is MRR earned the right way.
+THE CORE LOOP. Every engagement runs the same loop: intake the client's discovery
+documents -> apply the Intelligence Stack -> execute -> prove the outcome against
+their stated calling. That loop is how a discovery document becomes a fulfilled
+calling.
+
+THE SCOREBOARD. One number on the wall: Monthly Recurring Revenue (MRR) — the
+predictable money that comes in every month from keeping our promises. Supporting
+it: the count of paying recurring clients, and the client outcomes we deliver
+(callings fulfilled). MRR that grows because clients win and stay is MRR earned
+the right way.
 
 WHERE WE ARE GOING, HONESTLY. North Star: 20+ recurring-revenue clients on every
 car and enough MRR to put a deposit on a home at Fields West, the mixed-use

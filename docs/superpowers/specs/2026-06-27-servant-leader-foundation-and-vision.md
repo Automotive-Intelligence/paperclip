@@ -123,6 +123,19 @@ persona loaders pick it up automatically — no call-site changes.
 handful of early clients, MRR near zero, two cars with no paying recurring client
 yet). The vision is a North Star; the text never inflates the present.
 
+**Deepened DIRECTION (Phase 2.1, 2026-06-27):** DIRECTION was upgraded from a list
+into a capability map and operating model. The Intelligence Stack now defines what
+each of the 11 intelligences does for the client (Michael's verbatim five —
+competitive, brand, revenue-scaling, marketing, psychological — plus six confirmed
+additions: financial, sales, operational, data & measurement, relationship,
+predictive). A named **CORE LOOP** makes the mission's mechanism explicit (intake
+discovery documents → apply the Intelligence Stack → execute → prove the outcome
+against the client's calling). The garage gains per-car function and the honest
+current-client roster (Worship Digital: Paper & Purpose, Panda, Warden; the AI
+Phone Guy and Automotive Intelligence cars marked as not yet carrying a paying
+recurring client). Tests guard the new "THE CORE LOOP" and "Predictive
+intelligence" markers.
+
 `tests/test_foundation_injection.py` now also guards the vision markers
 ("#1 AI Operating System", "discovery documents", "Monthly Recurring Revenue",
 "Fields West") and that psychological intelligence stays fenced by the
