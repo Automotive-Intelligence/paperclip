@@ -262,33 +262,77 @@ def pull_instantly_campaign_summary(api_key: str, campaign_id: str) -> Dict[str,
     return summary
 
 
-def pull_revenue_pipeline_summary() -> Dict[str, Any]:
+# Morning-brief brand label → Twenty workspace business_key (tools/twenty.py).
+# AIPG has no Twenty workspace (runs on GHL, no entity yet) so it maps to None
+# and renders as an unwired row rather than fabricating zeros as real data.
+_BRAND_TO_TWENTY_KEY = {
+    "WD": "callingdigital",
+    "AvI": "autointelligence",
+    "AIPG": None,
+    "Book'd": "bookd",
+}
+
+
+def pull_revenue_pipeline_summary(replies_pending_4h: int = 0) -> Dict[str, Any]:
     """CRO revenue layer — cross-brand pipeline state for the morning brief.
 
-    v1 stub. Returns an unwired baseline until per-brand Twenty workspaces
-    are integrated. When wired, this function pulls from each brand's Twenty
-    CRM (env pattern: TWENTY_API_KEY_<BRAND>, TWENTY_BASE_URL_<BRAND>) and
-    aggregates deal stages + activity timestamps.
+    Reads each brand's own Twenty workspace (multi-tenant; see tools/twenty.py
+    _workspace_config — TWENTY_<BRAND>_API_KEY / _URL) and aggregates open-deal
+    value, stall counts, and 24h booking/close activity. Brands without a
+    provisioned workspace (AIPG today; Book'd until its Doppler secrets land)
+    surface as unwired rows instead of zeros masquerading as data.
 
     Returns:
-      pipeline_value:     sum of active deal values across brands
-      deals_active:       all non-closed deals
-      deals_stalled_7d:   active deals with no activity > 7 days
-      replies_pending_4h: replies awaiting response > 4 hours
-      bookings_24h:       meetings booked in last 24h
-      closed_24h:         deals moved to won in last 24h
-      by_brand:           per-brand dict (WD, AvI, AIPG, Book'd)
-      wired:              False until Twenty integration lands
+      pipeline_value:     sum of open-deal values across wired brands ($)
+      deals_active:       all open (non-CUSTOMER) deals
+      deals_stalled_7d:   open deals not touched in > 7 days
+      replies_pending_4h: replies awaiting response > 4h — passed in from the
+                          outreach reply queue (Instantly/Loops). 0 until a
+                          reply-age feed exists; Instantly's lead payload has no
+                          per-reply timestamp, so it can't be derived here.
+      bookings_24h:       deals moved to MEETING in last 24h (stage proxy)
+      closed_24h:         deals moved to CUSTOMER in last 24h (stage proxy)
+      by_brand:           per-brand metrics dict (WD, AvI, AIPG, Book'd)
+      wired:              True if at least one brand workspace was read
     """
+    try:
+        from tools.twenty import fetch_pipeline_summary
+    except Exception as e:
+        logger.warning(f"[Briefing] Twenty client import failed: {e}")
+        return {
+            "pipeline_value": 0, "deals_active": 0, "deals_stalled_7d": 0,
+            "replies_pending_4h": replies_pending_4h, "bookings_24h": 0,
+            "closed_24h": 0, "by_brand": {}, "wired": False,
+        }
+
+    now = datetime.now(timezone.utc)
+    totals = {
+        "pipeline_value": 0, "deals_active": 0,
+        "deals_stalled_7d": 0, "bookings_24h": 0, "closed_24h": 0,
+    }
+    by_brand: Dict[str, Any] = {}
+    any_wired = False
+
+    for brand, business_key in _BRAND_TO_TWENTY_KEY.items():
+        if business_key is None:
+            by_brand[brand] = {**{k: 0 for k in totals}, "wired": False}
+            continue
+        try:
+            b = fetch_pipeline_summary(business_key, now=now)
+        except Exception as e:
+            logger.warning(f"[Briefing] {brand} pipeline pull failed: {e}")
+            b = {**{k: 0 for k in totals}, "wired": False}
+        by_brand[brand] = b
+        if b.get("wired"):
+            any_wired = True
+            for k in totals:
+                totals[k] += b.get(k, 0)
+
     return {
-        "pipeline_value": 0,
-        "deals_active": 0,
-        "deals_stalled_7d": 0,
-        "replies_pending_4h": 0,
-        "bookings_24h": 0,
-        "closed_24h": 0,
-        "by_brand": {},
-        "wired": False,
+        **totals,
+        "replies_pending_4h": replies_pending_4h,
+        "by_brand": by_brand,
+        "wired": any_wired,
     }
 
 
@@ -447,6 +491,12 @@ def _revenue_section_html(rev: Dict[str, Any]) -> str:
     brand_rows = []
     for brand in ["WD", "AvI", "AIPG", "Book'd"]:
         b = by_brand.get(brand, {})
+        if not b.get("wired"):
+            brand_rows.append(
+                f"<tr style='color:#999;'><td style='padding:6px 10px;'><b>{brand}</b></td>"
+                f"<td style='padding:6px 10px;' colspan='4'><i>workspace not wired</i></td></tr>"
+            )
+            continue
         brand_rows.append(
             f"<tr><td style='padding:6px 10px;'><b>{brand}</b></td>"
             f"<td style='padding:6px 10px;'>${b.get('pipeline_value', 0):,}</td>"
