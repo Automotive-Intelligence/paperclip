@@ -211,7 +211,11 @@ sherry = _load_agent_symbol("agents.customeradvocate.sherry", "sherry")
 randy = _load_agent_symbol("agents.aiphoneguy.randy", "randy")
 brenda = _load_agent_symbol("agents.callingdigital.brenda", "brenda")
 
-run_coo_command = _load_agent_job("agents.coo.coo_agent", "run_coo_command")
+run_cro_audit = _load_agent_job("agents.executive.cro_audit_job", "run_cro_audit")
+# Back-compat alias: the function was renamed from run_coo_command 2026-06-28
+# per Revenue & Sales flag #17 (CRO chat now owns this surface). Keep this
+# binding so any in-tree reference not yet swept stays working.
+run_coo_command = run_cro_audit
 
 
 CST = pytz.timezone("America/Chicago")
@@ -3039,9 +3043,11 @@ def _avo_sched_axiom():
 
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
-# COO Command — 7:45 (runs before all other agents)
-scheduler.add_job(run_coo_command, CronTrigger(hour=7, minute=45, timezone=CST),
-    id="coo_command_daily", name="COO Command Daily Ops",
+# CRO Daily Audit — 7:45 (runs before all other agents). Renamed from
+# coo_command_daily 2026-06-28 (RS #17). `replace_existing=True` swaps the
+# old job id in place on next scheduler refresh.
+scheduler.add_job(run_cro_audit, CronTrigger(hour=7, minute=45, timezone=CST),
+    id="cro_audit_daily", name="CRO Daily Audit",
     replace_existing=True, misfire_grace_time=3600)
 
 # Flag-router daily digest — 7:50 CDT, before the 8:00 CEO briefings so any
@@ -3683,8 +3689,13 @@ RUN_NOW_SCOPES = {
     "quality": [
         ("quality_snapshot_daily", run_quality_snapshot_daily),
     ],
+    # Canonical scope name post-2026-06-28 rename. `coo` kept as a back-compat
+    # alias one block below so old curl invocations + cockpit triggers don't 404.
+    "cro": [
+        ("cro_audit", run_cro_audit),
+    ],
     "coo": [
-        ("coo_command", run_coo_command),
+        ("cro_audit", run_cro_audit),
     ],
     "axiom": [
         ("axiom_ceo", _avo_sched_axiom),
@@ -4779,12 +4790,20 @@ async def sales_email_templates_report(
     return JSONResponse(content=result)
 
 
-@app.post("/admin/run-coo")
-async def run_coo_now(authorization: Optional[str] = Header(None)):
-    """Trigger COO Command ops report immediately."""
+@app.post("/admin/run-cro-audit")
+async def run_cro_audit_now(authorization: Optional[str] = Header(None)):
+    """Trigger CRO Daily Audit immediately. Renamed from /admin/run-coo
+    2026-06-28 (RS #17); both routes call the same handler so existing
+    cockpit triggers continue to work."""
     validate_key(authorization)
-    result = await asyncio.to_thread(run_coo_command)
+    result = await asyncio.to_thread(run_cro_audit)
     return JSONResponse(content=result)
+
+
+@app.post("/admin/run-coo")
+async def _run_coo_now_alias(authorization: Optional[str] = Header(None)):
+    """Back-compat alias for /admin/run-cro-audit (pre-2026-06-28 name)."""
+    return await run_cro_audit_now(authorization=authorization)
 
 
 @app.post("/admin/run-now")
@@ -6854,17 +6873,17 @@ async def pitwall_ops_dashboard():
 
 @app.post("/api/pitwall/clear-alerts")
 async def clear_alerts():
-    """Re-run the COO command to refresh ops alerts.
+    """Re-run the CRO audit to refresh ops alerts.
 
-    The COO checks live system state every time it runs. If issues
-    have been fixed since the last report, the alerts disappear from
-    the new report. Issues that are still real will reappear.
+    The CRO audit checks live system state every time it runs. If issues
+    have been fixed since the last report, the alerts disappear from the
+    new report. Issues that are still real will reappear.
 
     This is the right semantics for a 'Clear Alerts' button — it does
     not silence anything, it re-checks the system.
     """
     try:
-        report = run_coo_command()
+        report = run_cro_audit()
         return JSONResponse(content={
             "status": "ok",
             "alerts_remaining": report.get("alert_count", 0),
