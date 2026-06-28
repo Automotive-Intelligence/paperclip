@@ -3323,8 +3323,8 @@ def _run_randy():
             contacts, _randy_contact_line,
             "no Tyler-tagged contacts to enroll yet",
         )
-        # Persist + run AVO post-hooks (memory + cost tracking + handoffs).
-        persist_log("randy", "revops", raw_output)
+        # _avo_post_run already calls persist_log + tracks memory + cost;
+        # do NOT also call persist_log directly or every run double-writes.
         _avo_post_run("randy", "aiphoneguy", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Randy scheduled run failed: {e}")
@@ -3339,7 +3339,6 @@ def _run_brenda():
             contacts, _brenda_contact_line,
             "no DataMoon / lead-magnet / CSV import contacts yet",
         )
-        persist_log("brenda", "revops", raw_output)
         _avo_post_run("brenda", "callingdigital", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Brenda scheduled run failed: {e}")
@@ -3354,7 +3353,6 @@ def _run_darrell():
             contacts, _darrell_contact_line,
             "no Dealership Decision Maker contacts yet",
         )
-        persist_log("darrell", "revops", raw_output)
         _avo_post_run("darrell", "autointelligence", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Darrell scheduled run failed: {e}")
