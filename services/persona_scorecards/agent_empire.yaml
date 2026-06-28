@@ -84,4 +84,4 @@ kpis:
       - "audit CTA from B2C to B2B path"
       - "post flag to CRO on funnel break"
 
-token_budget_daily_usd: 8      # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows

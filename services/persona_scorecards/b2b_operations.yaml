@@ -85,4 +85,4 @@ kpis:
       - "audit team capacity vs commitment"
       - "post flag to CMO/CRO if over-committed"
 
-token_budget_daily_usd: 6      # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows

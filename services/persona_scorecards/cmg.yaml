@@ -72,4 +72,4 @@ kpis:
       - "spawn check_in_agent on dip"
       - "escalate to Michael on RED"
 
-token_budget_daily_usd: 6      # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows

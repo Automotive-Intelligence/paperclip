@@ -106,4 +106,4 @@ kpis:
       - "rate-limit lowest-priority persona first"
       - "post flag to Michael on sustained > target"
 
-token_budget_daily_usd: 8      # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows
