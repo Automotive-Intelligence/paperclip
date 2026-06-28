@@ -65,19 +65,24 @@ def _ghl_pipeline_id() -> str:
     return (os.getenv("GHL_PIPELINE_ID") or "").strip()
 
 
-def _ghl_count_appointments(days: int) -> Optional[int]:
-    """Count GHL appointments in the trailing N days. None on auth fail."""
+def _ghl_count_appointments(days: int) -> tuple[Optional[int], Optional[str]]:
+    """Count GHL appointments in the trailing N days.
+
+    Returns (count, blocker_reason). count is None when we can't read; the
+    reason string explains why (so the scoreboard's `notes` can be specific
+    instead of vague "unavailable"). The correct path is /calendars/events;
+    `/calendars/events/appointments` (an earlier guess) is a 404.
+    """
     headers = _ghl_headers()
     loc = _ghl_location_id()
     if not headers or not loc:
-        return None
+        return None, "GHL_API_KEY or GHL_LOCATION_ID missing"
+    import datetime as _dt
+    end = _dt.datetime.now(_dt.timezone.utc)
+    start = end - _dt.timedelta(days=days)
     try:
-        # GHL appointments endpoint accepts startDate (epoch ms) + endDate
-        import datetime as _dt
-        end = _dt.datetime.now(_dt.timezone.utc)
-        start = end - _dt.timedelta(days=days)
         r = requests.get(
-            f"{GHL_BASE}/calendars/events/appointments",
+            f"{GHL_BASE}/calendars/events",
             headers=headers,
             params={
                 "locationId": loc,
@@ -87,15 +92,68 @@ def _ghl_count_appointments(days: int) -> Optional[int]:
             },
             timeout=_REQUEST_TIMEOUT,
         )
+        if r.status_code == 401:
+            return None, "GHL_API_KEY lacks calendars.readonly scope — reauth with calendar scopes added"
         if not r.ok:
-            logger.warning("[aipg-scoreboard] GHL appointments http=%s", r.status_code)
-            return None
+            return None, f"/calendars/events http={r.status_code}"
         body = r.json()
         events = body.get("events") or body.get("appointments") or []
-        return len(events)
+        return len(events), None
     except Exception as e:
-        logger.warning("[aipg-scoreboard] GHL appointments raised: %s", e)
-        return None
+        return None, f"/calendars/events raised {type(e).__name__}: {e}"
+
+
+def _ghl_count_tyler_prospects(days: int) -> tuple[Optional[int], Optional[str]]:
+    """Count GHL contacts tagged 'tyler-prospect' added in the trailing N days.
+
+    Uses the /contacts/ endpoint that our token CAN read (verified — returns
+    175 tyler-prospect contacts at scope check). This is the closest live
+    proxy for "AIPG funnel new-entry volume" while calendars scope is missing.
+    """
+    headers = _ghl_headers()
+    loc = _ghl_location_id()
+    if not headers or not loc:
+        return None, "GHL_API_KEY or GHL_LOCATION_ID missing"
+    import datetime as _dt
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    cutoff_iso = cutoff.isoformat()
+    try:
+        # Paginate up to 5 pages = 1000 contacts max (well above weekly volume).
+        seen = 0
+        start_after = None
+        start_after_id = None
+        for _ in range(5):
+            params = {"locationId": loc, "limit": 200}
+            if start_after and start_after_id:
+                params["startAfter"] = start_after
+                params["startAfterId"] = start_after_id
+            r = requests.get(
+                f"{GHL_BASE}/contacts/",
+                headers=headers,
+                params=params,
+                timeout=_REQUEST_TIMEOUT,
+            )
+            if not r.ok:
+                return None, f"/contacts/ http={r.status_code}"
+            body = r.json()
+            contacts = body.get("contacts") or []
+            if not contacts:
+                break
+            for c in contacts:
+                tags = c.get("tags") or []
+                if not any(t.startswith("tyler-prospect") for t in tags):
+                    continue
+                created = c.get("dateAdded") or ""
+                if created and created >= cutoff_iso:
+                    seen += 1
+            meta = body.get("meta") or {}
+            start_after = meta.get("startAfter")
+            start_after_id = meta.get("startAfterId")
+            if not start_after or not start_after_id:
+                break
+        return seen, None
+    except Exception as e:
+        return None, f"/contacts/ raised {type(e).__name__}: {e}"
 
 
 def _ghl_count_deals_won(days: int) -> Optional[int]:
@@ -168,6 +226,7 @@ class AipgScoreboard:
     tyler_pushes_duplicate_skipped: int
     tyler_pushes_failed: int
     zoe_runs: int
+    tyler_prospects_in_ghl: Optional[int]   # contacts tagged tyler-prospect, last N days
     appointments_count: Optional[int]
     deals_won_count: Optional[int]
     close_rate_pct: Optional[float]
@@ -181,6 +240,7 @@ class AipgScoreboard:
                 "pushes_created": self.tyler_pushes_created,
                 "pushes_duplicate_skipped": self.tyler_pushes_duplicate_skipped,
                 "pushes_failed": self.tyler_pushes_failed,
+                "prospects_in_ghl": self.tyler_prospects_in_ghl,
             },
             "zoe": {
                 "runs": self.zoe_runs,
@@ -198,7 +258,8 @@ def build_aipg_scoreboard(days: int = 7) -> AipgScoreboard:
     tyler_pushes = _push_counts("tyler", days)
     zoe_runs = _agent_runs("zoe", days)
 
-    appointments = _ghl_count_appointments(days)
+    appointments, appt_reason = _ghl_count_appointments(days)
+    prospects_in_ghl, prospects_reason = _ghl_count_tyler_prospects(days)
     deals_won = _ghl_count_deals_won(days)
 
     close_rate: Optional[float] = None
@@ -208,8 +269,12 @@ def build_aipg_scoreboard(days: int = 7) -> AipgScoreboard:
     notes: List[str] = []
     if appointments is None:
         notes.append(
-            "demo_booked_count unavailable — GHL_API_KEY / GHL_LOCATION_ID missing "
-            "or GHL appointments endpoint returned non-OK."
+            f"demo_booked_count unavailable — {appt_reason or 'unknown reason'}. "
+            f"In the meantime tyler.prospects_in_ghl is the closest live proxy."
+        )
+    if prospects_in_ghl is None:
+        notes.append(
+            f"tyler.prospects_in_ghl unavailable — {prospects_reason or 'unknown reason'}."
         )
     if deals_won is None:
         notes.append(
@@ -232,6 +297,7 @@ def build_aipg_scoreboard(days: int = 7) -> AipgScoreboard:
         tyler_pushes_duplicate_skipped=tyler_pushes.get("duplicate_skipped", 0),
         tyler_pushes_failed=tyler_pushes.get("failed", 0),
         zoe_runs=zoe_runs,
+        tyler_prospects_in_ghl=prospects_in_ghl,
         appointments_count=appointments,
         deals_won_count=deals_won,
         close_rate_pct=close_rate,
