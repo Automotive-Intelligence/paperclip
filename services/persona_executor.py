@@ -174,6 +174,8 @@ class PersonaExecutor:
                 messages=[{"role": "user", "content": user_message}],
             )
             text = response.content[0].text if response.content else ""
+            from services.llm_ledger import record_from_response
+            record_from_response(response, persona=persona, surface="executor")
         except Exception as e:
             logger.exception("[ape] session failed for flag %s: %s", flag["id"], e)
             return AuditEnvelope(
@@ -204,7 +206,7 @@ class PersonaExecutor:
         envelope = initial_envelope
 
         for cycle in range(1, max_cycles + 1):
-            verdict = reviewer.review(flag["flag_content"], asdict(envelope))
+            verdict = reviewer.review(flag["flag_content"], asdict(envelope), persona=flag["target"])
             verdicts.append(verdict)
             persist_reviewer_transcript(flag["id"], envelope.ship_id, cycle, verdict)
 
@@ -253,6 +255,8 @@ class PersonaExecutor:
                 messages=[{"role": "user", "content": user_msg}],
             )
             text = response.content[0].text if response.content else ""
+            from services.llm_ledger import record_from_response
+            record_from_response(response, persona=flag["target"], surface="executor:revision")
         except Exception as e:
             logger.exception("[ape] revision session failed: %s", e)
             return AuditEnvelope(
