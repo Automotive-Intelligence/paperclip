@@ -1866,6 +1866,15 @@ def _execute_retention_pipeline(agent_name: str, raw_output: str, business_key: 
 
 # ── Scheduler ────────────────────────────────────────────────────────────────
 
+# Attach the LiteLLM -> llm_spend_ledger callback once, process-wide, so direct
+# litellm.completion calls in tools/ are tracked too (CrewAI agents also register
+# it via config/llm.py; registration is idempotent).
+try:
+    from services.litellm_ledger_hook import register as _register_litellm_ledger
+    _register_litellm_ledger()
+except Exception as _e:  # pragma: no cover - instrumentation must not block startup
+    logging.warning(f"[Paperclip] litellm ledger hook registration failed: {_e}")
+
 scheduler = BackgroundScheduler()
 
 

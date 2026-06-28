@@ -113,14 +113,23 @@ def record_usage(
     brand: Optional[str] = None,
     client: Optional[str] = None,
     request_id: Optional[str] = None,
+    cost_usd_override: Optional[float] = None,
 ) -> Optional[float]:
     """Insert one ledger row. Returns computed cost_usd, or None on failure.
+
+    Pass cost_usd_override when the caller already has an authoritative cost
+    (e.g. LiteLLM's own per-model cost for Gemini/DeepSeek, which our Anthropic
+    pricing map doesn't cover). Otherwise cost is computed from the pricing map.
 
     Never raises — a ledger failure must not break the calling agent.
     """
     try:
-        cost = _cost_usd(
-            model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+        cost = (
+            cost_usd_override
+            if cost_usd_override is not None
+            else _cost_usd(
+                model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+            )
         )
         _ensure_table()
         execute_query(
