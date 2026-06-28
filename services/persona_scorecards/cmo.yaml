@@ -76,4 +76,4 @@ kpis:
       - "halt offending agent until prompt fix lands"
       - "post flag to B&T for prompt update"
 
-token_budget_daily_usd: 12     # locked 2026-06-27 — runaway tripwire, NOT a target. Personas fire via Anthropic API (per-token billed), not covered by Claude Max. Ceiling catches stuck-loop overspend; lift as cron volume grows.
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, NOT a target. Personas fire via Anthropic API (per-token, not covered by Claude Max). At $1: ~7 Opus / ~12 Sonnet / ~37 Haiku flags/day before halt — ample at current volume; lift per-seat as volume grows.

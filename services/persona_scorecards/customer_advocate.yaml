@@ -73,7 +73,7 @@ kpis:
     levers:
       - "spawn dealer_integration_diagnostic_agent"
 
-token_budget_daily_usd: 6      # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows
 
 # OPEN QUESTION FOR MICHAEL — what is the actual live metric surface for WEND
 # right now? This scorecard is the most speculative of the 9; recommend we sit

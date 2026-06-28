@@ -89,4 +89,4 @@ kpis:
     levers:
       - "pause sending on degraded mailbox; flag B&T for DNS / reputation review"
 
-token_budget_daily_usd: 18     # TBD-with-Michael — revenue is highest priority
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift first when revenue volume grows (CRO is the first seat to earn a higher ceiling)

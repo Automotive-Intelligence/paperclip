@@ -70,4 +70,4 @@ kpis:
       - "surface weakest persona in Owner's Brief"
       - "post flag to weakest persona for action plan"
 
-token_budget_daily_usd: 10     # TBD-with-Michael
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows

@@ -90,4 +90,4 @@ kpis:
     levers:
       - "halt offending agent until prompt fix"
 
-token_budget_daily_usd: 14     # TBD-with-Michael — multi-brand production
+token_budget_daily_usd: 1      # locked 2026-06-28 — runaway tripwire, not a target; lift per-seat as volume grows
