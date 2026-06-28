@@ -157,8 +157,9 @@ TELEMETRY_FILES: List[Dict[str, str]] = [
 #     worker (no Agent object, no scheduler entry).
 #   - vera: AI-to-AI buyer negotiation class (AATA protocol), infrastructure
 #     that Clint is building — not a pending-handoff consumer.
-#   - coo_agent: operational commander that runs the daily accountability
-#     check; receives nothing inbound from the cockpit, only audits.
+#   - cro_audit (formerly coo_agent, renamed 2026-06-28): runs the daily
+#     accountability check; receives nothing inbound from the cockpit,
+#     only audits.
 AGENT_ROSTER: List[Dict[str, Any]] = [
     # AI Phone Guy
     {"name": "alex",        "river": "aiphoneguy",       "role": "CEO of The AI Phone Guy",                             "is_ceo": True},

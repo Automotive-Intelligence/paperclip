@@ -1,10 +1,21 @@
 """
-agents/coo/coo_agent.py - COO Command Agent
+agents/executive/cro_audit_job.py - CRO Daily Audit Job
 
-Operational commander of all three businesses. Monitors execution,
-flags gaps, and generates daily ops reports. Does not set strategy.
+Originally `agents/coo/coo_agent.py::run_coo_command` (renamed 2026-06-28
+per Revenue & Sales flag #17). The CRO chat now owns the daily agent-
+accountability surface; the function name + module path reflect that.
+`run_cro_audit` is the canonical entry point; `run_coo_command` remains
+as a back-compat alias so out-of-tree callers don't break mid-rename.
 
-Schedule: Daily at 7:45am CST — runs before all other agents.
+Daily 7:45 AM CST audit — runs before every other agent. Pulls the last
+24h of agent_logs, checks each EXPECTED_AGENTS agent ran, summarizes
+CRM push counts + error patterns, and emits a report consumed by the
+Pit Wall cockpit views.
+
+The returned dict still uses the `coo_report` key (Pit Wall cockpit views
+read that key by name) — only the function + module are renamed in this
+pass. Full field rename to `cro_audit_report` is a follow-up alongside
+the cockpit-view refactor.
 """
 
 import datetime
@@ -123,9 +134,11 @@ def _check_agents_ran(logs: List[Dict]) -> Dict[str, Any]:
     return {"ran": ran, "missed": missed}
 
 
-def run_coo_command() -> Dict[str, Any]:
+def run_cro_audit() -> Dict[str, Any]:
     """
-    Daily COO ops check. Runs at 7:45 AM CST before all other agents.
+    Daily CRO accountability audit. Runs at 7:45 AM CST before all other
+    agents. Renamed from `run_coo_command` 2026-06-28; back-compat alias
+    is defined at the bottom of this module.
 
     1. Pull last 24h logs
     2. Check each agent ran
@@ -234,3 +247,10 @@ def run_coo_command() -> Dict[str, Any]:
             "error": str(e),
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
+
+
+# ── Back-compat alias ───────────────────────────────────────────────────────
+# `run_coo_command` was the original public name (before 2026-06-28 rename).
+# Out-of-tree scripts + Railway scheduler entries may still import it; this
+# alias keeps them working until they're updated to `run_cro_audit`.
+run_coo_command = run_cro_audit
