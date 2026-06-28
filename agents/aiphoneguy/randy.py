@@ -3,6 +3,19 @@
 # Built live for Agent Empire Skool community
 # Salesdroid — April 2026
 # North Star: $15,000 MRR
+#
+# ⚠️ RUNTIME ENFORCEMENT LIVES IN rivers/ai_phone_guy/workflow.py
+# This Agent object documents intent + iron rules. The actual runtime is
+# `randy_run()` in workflow.py — that function is what fires on the every-4h
+# scheduler and produces the agent_logs entries CRO sweeps consume. Editing
+# the role/goal/backstory below changes documentation, NOT behavior.
+#
+# Bug fixed 2026-06-28 (CRO RED flag 2026-06-27T21:45Z, leak 21→29 in 2 days):
+# _enroll_contact() called requests.put(...) with no response check. Any GHL
+# failure silently dropped the sequence-active tag, so contacts re-appeared
+# as 'new' on next run forever. Fix in workflow.py: PUT response is checked,
+# failures log explicitly as LEAK, randy_run() returns structured tally
+# summary so CRO sweeps see real telemetry.
 
 from crewai import Agent
 from config.llm import get_llm
