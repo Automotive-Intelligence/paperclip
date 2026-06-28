@@ -29,7 +29,8 @@ import logging
 from typing import Any
 
 from services.database import execute_query, fetch_all
-from services.postal_classifier import classify
+from services.postal_classifier import classify, should_escalate
+from services.postal_escalation import send_escalations
 from services.postal_oauth import list_connected_accounts
 from services.postal_router import route_to_destinations
 from tools import gmail_multi
@@ -131,6 +132,7 @@ def process_account(account_label: str, limit: int = 20) -> dict[str, Any]:
         "classified": 0,
         "by_category": {},
         "errors": [],
+        "escalations": [],
     }
 
     try:
@@ -189,6 +191,20 @@ def process_account(account_label: str, limit: int = 20) -> dict[str, Any]:
             # so postal_processed.routed_to is a true audit trail of side effects.
             _record_processed(account_label, mid, tid, category, taken, confidence)
 
+            # Collect human-actionable items for one batched alert per sweep
+            # (Phase 5). The actual send is gated by POSTAL_ESCALATE_ENABLED.
+            escalate, esc_reason = should_escalate(category, meta, confidence)
+            if escalate:
+                stats["escalations"].append({
+                    "account": account_label,
+                    "category": category,
+                    "sender": meta.get("sender", ""),
+                    "subject": meta.get("subject", ""),
+                    "snippet": meta.get("snippet", ""),
+                    "thread_id": tid,
+                    "reason": esc_reason,
+                })
+
             stats["classified"] += 1
             stats["by_category"][category] = stats["by_category"].get(category, 0) + 1
         except Exception as e:
@@ -210,15 +226,24 @@ def process_all_accounts(limit_per_account: int = 20) -> dict[str, Any]:
     """One sync pass across every active connected account."""
     accounts = list_connected_accounts()
     out = {"accounts_total": len(accounts), "results": []}
+    all_escalations: list[dict[str, Any]] = []
     for a in accounts:
         if a.get("status") != "active":
             out["results"].append({"account_label": a["account_label"], "skipped": a.get("status")})
             continue
         try:
             r = process_account(a["account_label"], limit=limit_per_account)
+            # Lift the per-account escalation detail out of the result so the
+            # sweep summary log stays compact; keep a count for visibility.
+            esc = r.pop("escalations", [])
+            all_escalations.extend(esc)
+            r["escalated"] = len(esc)
             out["results"].append(r)
         except Exception as e:
             out["results"].append({"account_label": a["account_label"], "fatal": str(e)[:200]})
+
+    # One batched alert for the whole sweep (gated by POSTAL_ESCALATE_ENABLED).
+    out["escalation"] = send_escalations(all_escalations)
     return out
 
 

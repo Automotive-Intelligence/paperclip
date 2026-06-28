@@ -99,6 +99,62 @@ SUBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+# ----- Escalation: which inbounds a human must act on TODAY -----
+#
+# Used by the Postal Agent to decide whether to push a batched SMS+email alert
+# (services/postal_escalation.py). Deliberately tight to avoid alert fatigue:
+# real prospects always; money/security only when the subject signals a genuine
+# problem; and known automated/dev-bot senders never escalate even though their
+# category is billing/security.
+
+# Senders that are automated noise — never SMS-worthy.
+ESCALATE_SUPPRESS_DOMAINS = (
+    "github.com", "vercel.com", "railway.app", "doppler.com", "anthropic.com",
+    "openai.com", "cloudflare.com", "accounts.google.com", "noreply@google.com",
+)
+
+# Categories that are always human-actionable (real revenue).
+ESCALATE_CATEGORIES = {"intent_reply", "lead_response"}
+
+# A billing email escalates only if it reads like a PROBLEM, not a routine
+# receipt / "payment received".
+_BILLING_URGENT_RE = re.compile(
+    r"\b(past\s*due|over\s*due|payment\s*failed|failed\s*payment|declined|"
+    r"action\s*required|final\s*notice|card\s*(?:expir|declin)|suspend)\b",
+    re.I,
+)
+# A security email escalates only if it's a genuine account event.
+_SECURITY_URGENT_RE = re.compile(
+    r"\b(unusual\s*activity|new\s*sign-?in|account\s*(?:locked|suspended)|"
+    r"suspicious|unauthorized|compromis)\b",
+    re.I,
+)
+
+
+def should_escalate(
+    category: str, email_meta: dict[str, Any], confidence: float = 1.0
+) -> tuple[bool, str]:
+    """Decide whether an inbound warrants a direct alert to Michael.
+
+    Returns (escalate, reason). Tuned conservatively: prospects always; billing
+    /security only on real-problem subjects; automated/dev-bot senders never.
+    """
+    sender = (email_meta.get("sender") or "").lower()
+    subject = email_meta.get("subject") or ""
+
+    for d in ESCALATE_SUPPRESS_DOMAINS:
+        if d in sender:
+            return False, f"suppressed automated sender: {d}"
+
+    if category in ESCALATE_CATEGORIES:
+        return True, f"prospect ({category})"
+    if category == "billing" and _BILLING_URGENT_RE.search(subject):
+        return True, "payment problem"
+    if category == "security" and _SECURITY_URGENT_RE.search(subject):
+        return True, "account security"
+    return False, "not human-actionable"
+
+
 # ----- Public API -----
 
 def classify(email_meta: dict[str, Any]) -> tuple[str, float, str, bool]:
