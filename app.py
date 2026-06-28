@@ -3059,6 +3059,17 @@ scheduler.add_job(_flag_router_digest, CronTrigger(hour=7, minute=50, timezone=C
     id="flag_router_daily_digest", name="Flag Router Daily Unresolved Digest",
     replace_existing=True, misfire_grace_time=3600)
 
+# WD DMARC Monitor — weekly Sunday 8:00 CDT. Audits the WD primary domain
+# (worshipdigital.co — must stay at enforcement) + the two intent-campaign
+# warmup domains (bestworshipdigital.com / allworshipdigital.com — at
+# p=none during 14d warmup, must re-tighten after WARMUP_GRACE_END).
+# Posts to #build-tech via /pit-wall/dispatch on CRITICAL/WARN findings;
+# stays quiet when clean. Per IM-WD flag #9.
+from services.wd_dmarc_monitor import run_weekly as _wd_dmarc_weekly
+scheduler.add_job(_wd_dmarc_weekly, CronTrigger(day_of_week="sun", hour=8, minute=0, timezone=CST),
+    id="wd_dmarc_monitor_weekly", name="WD DMARC Monitor — Weekly Sunday",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -4804,6 +4815,17 @@ async def run_cro_audit_now(authorization: Optional[str] = Header(None)):
 async def _run_coo_now_alias(authorization: Optional[str] = Header(None)):
     """Back-compat alias for /admin/run-cro-audit (pre-2026-06-28 name)."""
     return await run_cro_audit_now(authorization=authorization)
+
+
+@app.post("/admin/wd-dmarc-audit")
+async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
+    """Run the WD DMARC monitor immediately. Mirrors the weekly Sunday
+    8:00 CDT scheduler job — useful for ad-hoc hygiene checks + verifying
+    fixes after a DMARC record change. Per IM-WD flag #9."""
+    validate_key(authorization)
+    from services.wd_dmarc_monitor import run_now_json
+    result = await asyncio.to_thread(run_now_json)
+    return JSONResponse(content=result)
 
 
 @app.post("/admin/run-now")
