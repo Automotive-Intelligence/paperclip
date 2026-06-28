@@ -2124,16 +2124,31 @@ def run_tyler_prospecting():
 # ── Marcus vertical rotation ────────────────────────────────────────────────
 # Cycles through verticals so each day targets a different ICP.
 # Monday=med-spa, Tuesday=pi-law, Wednesday=real-estate, Thursday=home-builder, Friday=med-spa
-# Region rotation — cycles per-run based on current hour so each of the
-# 7 daily runs (0, 4, 8, 10, 12, 14, 16 CST) hits a different region.
+#
+# Region rotation — cycles per-run based on current hour. Reweighted
+# 2026-06-28 (R4 Marcus fix per CRO RED 2026-06-27T21:45Z): the original
+# 7-region all-national rotation contradicted Marcus's own goal text
+# ("PRIMARY = 380 Corridor, SECONDARY = greater DFW, TERTIARY = national
+# only on trigger"). Over 10 runs Marcus produced 0 hits in 380, 0 in DFW,
+# 6 national. The Task description's region phrase ("Find {plural} in
+# {states}") was overriding the goal-text priority because the specific
+# won out over the general.
+#
+# New weighting (7 daily run slots — matches the existing scheduler cadence):
+#   5/7 slots → 380 Corridor + Greater DFW (the priority territory)
+#   2/7 slots → national rotation (preserves the trigger-event upside Marcus's
+#               goal explicitly allows for)
 PROSPECT_REGIONS = [
-    ("Southwest", "Texas, Arizona, New Mexico, or Nevada", "Dallas TX", "Phoenix AZ"),
-    ("Southeast", "Florida, Georgia, North Carolina, South Carolina, or Tennessee", "Miami FL", "Atlanta GA"),
-    ("Northeast", "New York, New Jersey, Connecticut, Massachusetts, or Pennsylvania", "New York NY", "Boston MA"),
-    ("Midwest", "Illinois, Ohio, Michigan, Minnesota, or Wisconsin", "Chicago IL", "Detroit MI"),
-    ("West Coast", "California, Oregon, Washington, or Colorado", "Los Angeles CA", "Denver CO"),
-    ("South Central", "Louisiana, Mississippi, Alabama, Arkansas, or Oklahoma", "New Orleans LA", "Nashville TN"),
-    ("Mid-Atlantic", "Virginia, Maryland, Washington DC, or Delaware", "Washington DC", "Richmond VA"),
+    ("380 Corridor",   "the 380 Corridor (Prosper, Celina, Aubrey, Little Elm, Pilot Point, Frisco-adjacent)",   "Prosper TX",  "Celina TX"),
+    ("Greater DFW",    "Greater DFW (Dallas, Plano, McKinney, Frisco, Denton, Arlington, Fort Worth)",            "Dallas TX",   "Plano TX"),
+    ("380 Corridor",   "the 380 Corridor (Prosper, Celina, Aubrey, Little Elm, Pilot Point, Frisco-adjacent)",   "Aubrey TX",   "Little Elm TX"),
+    ("Greater DFW",    "Greater DFW (Dallas, Plano, McKinney, Frisco, Denton, Arlington, Fort Worth)",            "McKinney TX", "Frisco TX"),
+    ("380 Corridor",   "the 380 Corridor (Prosper, Celina, Aubrey, Little Elm, Pilot Point, Frisco-adjacent)",   "Pilot Point TX", "Savannah TX"),
+    # 2/7 national slots — only for trigger-event hunts that justify the
+    # distance per Marcus's tertiary priority. Rotate across diverse regions
+    # so the national slice doesn't keep landing in the same place.
+    ("Southeast",      "Florida, Georgia, North Carolina, South Carolina, or Tennessee",                          "Miami FL",    "Atlanta GA"),
+    ("Northeast / Midwest", "New York, New Jersey, Pennsylvania, Illinois, Ohio, or Michigan",                    "New York NY", "Chicago IL"),
 ]
 
 
