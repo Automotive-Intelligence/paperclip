@@ -3347,24 +3347,34 @@ def _run_sterling():
         logging.error(f"[Paperclip] Sterling scheduled run failed: {e}")
 
 
-# Randy (GHL RevOps): every 4 hours
-scheduler.add_job(_run_randy, IntervalTrigger(hours=4, timezone=CST),
-    id="randy_revops_4h", name="Randy RevOps (GHL) — Every 4h",
+# RevOps / Pit Wall cadence — right-sized to daily batch (2026-06-28).
+# At ~0 inbound, sub-daily polling was idle Opus burn. Each interval is
+# env-configurable so a seat can be dialed back up the moment its volume
+# justifies it (the "volume trigger" lever) with no code change.
+#   e.g. RANDY_INTERVAL_HOURS=4 restores the old hourly-ish cadence.
+_RANDY_HRS = int(os.getenv("RANDY_INTERVAL_HOURS", "24"))
+_BRENDA_HRS = int(os.getenv("BRENDA_INTERVAL_HOURS", "24"))
+_DARRELL_HRS = int(os.getenv("DARRELL_INTERVAL_HOURS", "24"))
+_JOSHUA_HRS = int(os.getenv("JOSHUA_INTERVAL_HOURS", "24"))
+
+# Randy (GHL RevOps): default daily
+scheduler.add_job(_run_randy, IntervalTrigger(hours=_RANDY_HRS, timezone=CST),
+    id="randy_revops_4h", name=f"Randy RevOps (GHL) — Every {_RANDY_HRS}h",
     replace_existing=True, misfire_grace_time=3600)
 
-# Brenda (Attio RevOps): every 2 hours
-scheduler.add_job(_run_brenda, IntervalTrigger(hours=2, timezone=CST),
-    id="brenda_revops_2h", name="Brenda RevOps (Attio) — Every 2h",
+# Brenda (Attio RevOps): default daily
+scheduler.add_job(_run_brenda, IntervalTrigger(hours=_BRENDA_HRS, timezone=CST),
+    id="brenda_revops_2h", name=f"Brenda RevOps (Attio) — Every {_BRENDA_HRS}h",
     replace_existing=True, misfire_grace_time=3600)
 
-# Darrell (HubSpot RevOps + Pit Wall): every 1 hour
-scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
-    id="darrell_revops_1h", name="Darrell RevOps (HubSpot + Pit Wall) — Every 1h",
+# Darrell (HubSpot RevOps + Pit Wall): default daily
+scheduler.add_job(_run_darrell, IntervalTrigger(hours=_DARRELL_HRS, timezone=CST),
+    id="darrell_revops_1h", name=f"Darrell RevOps (HubSpot + Pit Wall) — Every {_DARRELL_HRS}h",
     replace_existing=True, misfire_grace_time=3600)
 
-# Joshua (Pit Wall — AI Phone Guy): every 2 hours
-scheduler.add_job(_run_joshua, IntervalTrigger(hours=2, timezone=CST),
-    id="joshua_pitwall_2h", name="Joshua Pit Wall (Instantly) — Every 2h",
+# Joshua (Pit Wall — AI Phone Guy): default daily
+scheduler.add_job(_run_joshua, IntervalTrigger(hours=_JOSHUA_HRS, timezone=CST),
+    id="joshua_pitwall_2h", name=f"Joshua Pit Wall (Instantly) — Every {_JOSHUA_HRS}h",
     replace_existing=True, misfire_grace_time=3600)
 
 # Morning Briefing — daily 8am CDT email + SMS to Michael
@@ -3403,8 +3413,13 @@ def _run_ape_tick():
     except Exception as e:
         logging.error(f"[Paperclip] APE tick failed: {e}")
 
-scheduler.add_job(_run_ape_tick, IntervalTrigger(seconds=60, timezone=CST),
-    id="ape_persona_executor_tick", name="APE Persona Executor — Every 60s",
+# Default relaxed 60s -> 300s (2026-06-28). The tick itself is a cheap DB poll;
+# LLM cost only fires when a flag is queued AND PERSONA_EXECUTOR_<persona>=on
+# (off by default), so 5-min latency keeps the gate responsive without burn.
+# APE_TICK_INTERVAL_S=60 restores the tighter poll if a seat needs it.
+_APE_TICK_S = int(os.getenv("APE_TICK_INTERVAL_S", "300"))
+scheduler.add_job(_run_ape_tick, IntervalTrigger(seconds=_APE_TICK_S, timezone=CST),
+    id="ape_persona_executor_tick", name=f"APE Persona Executor — Every {_APE_TICK_S}s",
     replace_existing=True, misfire_grace_time=120)
 
 # APE Daily Routine Digest — 6 PM CDT, per-persona consolidated email.
@@ -3436,9 +3451,10 @@ scheduler.add_job(_run_ape_post_snapshot, IntervalTrigger(minutes=30, timezone=C
     id="ape_post_snapshot_sweep", name="APE Post-Snapshot Sweep — Every 30min",
     replace_existing=True, misfire_grace_time=600)
 
-# Tammy (Skool Community): every 6 hours
-scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
-    id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
+# Tammy (Skool Community): default daily (was 6h); TAMMY_INTERVAL_HOURS to override
+_TAMMY_HRS = int(os.getenv("TAMMY_INTERVAL_HOURS", "24"))
+scheduler.add_job(_run_tammy, IntervalTrigger(hours=_TAMMY_HRS, timezone=CST),
+    id="tammy_community_6h", name=f"Tammy Community (Skool) — Every {_TAMMY_HRS}h",
     replace_existing=True, misfire_grace_time=3600)
 
 # Wade (Sponsor Outreach): Monday 9am CST
