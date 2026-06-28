@@ -7811,6 +7811,81 @@ async def postal_inbox_mark_read(
         raise _postal_inbox_http_error(e)
 
 
+# ===== Social / creative tools — Zernio drafts + image generation =====
+# Lets AVO personas (every IM chat) draft social posts and generate images on
+# demand, via the Paperclip backend that already holds ZERNIO_API_KEY +
+# REPLICATE_API_TOKEN (Sofia uses them today). Bearer API key required.
+#
+# DRAFT + READ + GENERATE only. Live publish (tools.zernio.publish_to_zernio)
+# is intentionally held back for a gated follow-up — same staging as the postal
+# write tools — so nothing here posts to a live audience without the 4-gate
+# check. Drafts land in Zernio for review; the human/gate promotes to publish.
+def _social_http_error(e: Exception) -> HTTPException:
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=400, detail=str(e))
+    return HTTPException(status_code=502, detail=f"social tool error: {type(e).__name__}: {e}")
+
+
+class ZernioDraftRequest(BaseModel):
+    content: str
+    platforms: List[str]
+    media_urls: Optional[List[str]] = None
+
+
+class ImageGenerateRequest(BaseModel):
+    prompt: str
+    business_key: str = ""
+    platform: str = "default"
+    aspect_ratio: str = ""
+    num_outputs: int = 1
+
+
+@app.post("/social/zernio/draft")
+async def social_zernio_draft(
+    req: ZernioDraftRequest,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from tools.zernio import create_zernio_draft
+    try:
+        return create_zernio_draft(
+            content=req.content,
+            platforms=req.platforms,
+            media_urls=req.media_urls,
+        )
+    except Exception as e:
+        raise _social_http_error(e)
+
+
+@app.get("/social/zernio/profiles")
+async def social_zernio_profiles(authorization: Optional[str] = Header(None)):
+    validate_key(authorization)
+    from tools.zernio import get_zernio_profiles
+    try:
+        return {"profiles": get_zernio_profiles()}
+    except Exception as e:
+        raise _social_http_error(e)
+
+
+@app.post("/social/image/generate")
+async def social_image_generate(
+    req: ImageGenerateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from tools.image_gen import generate_image
+    try:
+        return generate_image(
+            prompt=req.prompt,
+            business_key=req.business_key,
+            platform=req.platform,
+            aspect_ratio=req.aspect_ratio,
+            num_outputs=req.num_outputs,
+        )
+    except Exception as e:
+        raise _social_http_error(e)
+
+
 # ===== Smartlead WD webhook receiver =====
 # Smartlead → POST events to /webhooks/smartlead/wd/{secret} → handler
 # suppresses matching contact in Twenty WD (lead_unsubscribed) or logs replies.
