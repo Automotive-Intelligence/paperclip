@@ -3161,25 +3161,186 @@ scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, ti
     replace_existing=True, misfire_grace_time=3600)
 
 # ── Project Paperclip — RevOps Agents ─────────────────────────────────────────
+#
+# 2026-06-28: Replaced the hand-coded workflow.py paths (which never invoked
+# the CrewAI agents — they were a separate hand-rolled Attio/HubSpot loop)
+# with real Crew.kickoff() runners that mirror Marcus's pattern. The rivers/
+# workflow.py files are left in place as historical reference but are no
+# longer wired to the scheduler. Per RS RevOps fix (post-PR #74 prompt
+# retrain — code-side companion).
+#
+# Each runner pulls a fresh slice of CRM activity into a Task description,
+# runs the agent through a one-shot Crew, persists the LLM output as the
+# agent's run log, and lets _avo_post_run handle memory + cost tracking.
+
+
+def _fetch_recent_twenty_people(business_key: str, hours: int) -> list[dict]:
+    """Pull people created in the trailing N hours from a Twenty workspace.
+    Returns [] on any failure (missing key, bad URL, non-200) — the agent
+    still runs and produces a "no new contacts" heartbeat with a real
+    explanation, never a silent zero-content log.
+    """
+    try:
+        from tools.twenty import _workspace_config, _headers as _twenty_headers
+        base_url, api_key = _workspace_config(business_key)
+    except (ImportError, ValueError) as e:
+        logging.info("[revops] _fetch_recent_twenty_people skipped for %s: %s", business_key, e)
+        return []
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(hours=hours)
+    ).isoformat()
+    import requests as _requests
+    try:
+        r = _requests.get(
+            f"{base_url}/rest/people",
+            headers=_twenty_headers(api_key),
+            params={"filter": f"createdAt[gte]:{cutoff}", "limit": 50},
+            timeout=15,
+        )
+        if not r.ok:
+            logging.warning("[revops] Twenty people fetch http=%s for %s", r.status_code, business_key)
+            return []
+        return (r.json().get("data") or {}).get("people") or []
+    except Exception as e:
+        logging.warning("[revops] Twenty people fetch raised for %s: %s", business_key, e)
+        return []
+
+
+def _fetch_recent_ghl_tagged_contacts(tag_prefixes: list[str], hours: int) -> list[dict]:
+    """Pull GHL contacts tagged with any of `tag_prefixes` (e.g. ['tyler-prospect-']),
+    created in the trailing N hours. Used by Randy (AIPG) to detect newly-tagged
+    prospects awaiting enrollment. Returns [] on any failure."""
+    token = (os.environ.get("GHL_API_KEY") or "").strip()
+    location = (os.environ.get("GHL_LOCATION_ID") or "").strip()
+    if not token or not location:
+        return []
+    import requests as _requests
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(hours=hours)
+    )
+    try:
+        r = _requests.get(
+            "https://services.leadconnectorhq.com/contacts/search",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Version": "2021-07-28",
+                "Content-Type": "application/json",
+            },
+            params={"locationId": location, "limit": 100},
+            timeout=15,
+        )
+        if not r.ok:
+            return []
+        contacts = r.json().get("contacts") or []
+        out = []
+        for c in contacts:
+            tags = c.get("tags") or []
+            if not any(t.startswith(p) for t in tags for p in tag_prefixes):
+                continue
+            created = c.get("dateAdded") or c.get("createdAt") or ""
+            if created and created < cutoff.isoformat():
+                continue
+            out.append(c)
+        return out
+    except Exception as e:
+        logging.warning("[revops] GHL tagged-contacts fetch raised: %s", e)
+        return []
+
+
+def _run_revops_crew(agent_name: str, agent_symbol, workspace_label: str, contacts: list[dict],
+                    contact_renderer, default_action: str) -> str:
+    """Build a Task around the latest CRM slice + run the agent's crew once.
+
+    contact_renderer(contact) -> str (one-line summary for the prompt)
+    default_action            : what the agent should still produce when zero
+                                contacts are found (so the log is never empty)
+    """
+    summary = "\n".join(f"- {contact_renderer(c)}" for c in contacts[:25])
+    if not summary:
+        summary = f"(no new contacts in last cycle — {default_action})"
+    task = Task(
+        description=(
+            f"You're running your standard RevOps cycle against {workspace_label}.\n\n"
+            f"NEW CONTACTS PULLED THIS CYCLE ({len(contacts)} found):\n{summary}\n\n"
+            "For each contact, apply your scoring + track-assignment rubric exactly as your "
+            "backstory describes it, identify hot leads, and produce per-contact decision "
+            "lines plus a run summary. Be explicit about what you scored and which sequences "
+            "would fire.\n\n"
+            "If zero new contacts arrived: do NOT produce a heartbeat-only log. Output what "
+            "you DID check (source, time window, count, last successful read) and what you "
+            "would do next cycle. Your output must be >=200 chars per your IRON RULES."
+        ),
+        agent=agent_symbol,
+        expected_output="Per-contact scoring decisions + run summary (>=200 chars).",
+    )
+    crew = Crew(agents=[agent_symbol], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+    result = crew.kickoff()
+    return str(result)
+
+
+def _brenda_contact_line(p: dict) -> str:
+    name = (p.get("name") or {})
+    emails = (p.get("emails") or {})
+    return (
+        f"{(name.get('firstName') or '').strip()} {(name.get('lastName') or '').strip()} "
+        f"<{emails.get('primaryEmail','')}>"
+        f" — created {p.get('createdAt','')}"
+    ).strip()
+
+
+def _darrell_contact_line(p: dict) -> str:
+    return _brenda_contact_line(p)  # same Twenty shape
+
+
+def _randy_contact_line(c: dict) -> str:
+    name = f"{c.get('firstName','')} {c.get('lastName','')}".strip() or c.get("contactName") or "?"
+    return f"{name} <{c.get('email','')}> tags={c.get('tags','')} added={c.get('dateAdded','')}"
+
 
 def _run_randy():
     try:
-        from rivers.ai_phone_guy.workflow import randy_run
-        _avo_wrap_run("randy", "aiphoneguy", randy_run)
+        contacts = _fetch_recent_ghl_tagged_contacts(["tyler-prospect-"], hours=4)
+        raw_output = _run_revops_crew(
+            "randy", randy,
+            "GoHighLevel (AIPG workspace)",
+            contacts, _randy_contact_line,
+            "no Tyler-tagged contacts to enroll yet",
+        )
+        # Persist + run AVO post-hooks (memory + cost tracking + handoffs).
+        persist_log("randy", "revops", raw_output)
+        _avo_post_run("randy", "aiphoneguy", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Randy scheduled run failed: {e}")
 
+
 def _run_brenda():
     try:
-        from rivers.calling_digital.workflow import brenda_run
-        _avo_wrap_run("brenda", "callingdigital", brenda_run)
+        contacts = _fetch_recent_twenty_people("callingdigital", hours=2)
+        raw_output = _run_revops_crew(
+            "brenda", brenda,
+            "Twenty (WD workspace, crm.worshipdigital.co)",
+            contacts, _brenda_contact_line,
+            "no DataMoon / lead-magnet / CSV import contacts yet",
+        )
+        persist_log("brenda", "revops", raw_output)
+        _avo_post_run("brenda", "callingdigital", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Brenda scheduled run failed: {e}")
 
+
 def _run_darrell():
     try:
-        from rivers.automotive_intelligence.workflow import darrell_run
-        _avo_wrap_run("darrell", "autointelligence", darrell_run)
+        contacts = _fetch_recent_twenty_people("autointelligence", hours=1)
+        raw_output = _run_revops_crew(
+            "darrell", darrell,
+            "Twenty (AvI workspace)",
+            contacts, _darrell_contact_line,
+            "no Dealership Decision Maker contacts yet",
+        )
+        persist_log("darrell", "revops", raw_output)
+        _avo_post_run("darrell", "autointelligence", raw_output, duration_seconds=0.0)
     except Exception as e:
         logging.error(f"[Paperclip] Darrell scheduled run failed: {e}")
 
@@ -3240,12 +3401,12 @@ scheduler.add_job(_run_randy, IntervalTrigger(hours=4, timezone=CST),
 
 # Brenda (Attio RevOps): every 2 hours
 scheduler.add_job(_run_brenda, IntervalTrigger(hours=2, timezone=CST),
-    id="brenda_revops_2h", name="Brenda RevOps (Attio) — Every 2h",
+    id="brenda_revops_2h", name="Brenda RevOps (Twenty WD) — Every 2h",
     replace_existing=True, misfire_grace_time=3600)
 
 # Darrell (HubSpot RevOps + Pit Wall): every 1 hour
 scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
-    id="darrell_revops_1h", name="Darrell RevOps (HubSpot + Pit Wall) — Every 1h",
+    id="darrell_revops_1h", name="Darrell RevOps (Twenty AvI) — Every 1h",
     replace_existing=True, misfire_grace_time=3600)
 
 # Joshua (Pit Wall — AI Phone Guy): every 2 hours
