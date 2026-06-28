@@ -8198,6 +8198,45 @@ async def smartlead_wd_webhook(secret: str, request: Request):
     return await _smartlead_wd_handle_webhook(request, secret)
 
 
+# ===== GHL Voice AI receptionist → Twenty bridge =====
+# Per file 77 (AI Receptionists — AvI, WD, Book'd). The 3 receptionist
+# agents in the AIPG GHL location POST captured-call data here when a call
+# qualifies + books; this routes to the right Twenty workspace.
+#
+# Auth: URL-path secret (GHL workflows can embed it in the destination URL).
+#       Optional HMAC body verification via X-Webhook-Signature if
+#       GHL_VOICE_AI_WEBHOOK_HMAC_SECRET is set.
+#
+# Set BEFORE the receptionist UI build:
+#   GHL_VOICE_AI_WEBHOOK_PATH_SECRET (required, used in the workflow URL)
+#   GHL_VOICE_AI_WEBHOOK_HMAC_SECRET (optional, for HMAC defense-in-depth)
+@app.post("/webhooks/ghl/voice-ai/{secret}")
+async def ghl_voice_ai_receptionist_webhook(
+    secret: str,
+    request: Request,
+    x_webhook_signature: Optional[str] = Header(None, alias="X-Webhook-Signature"),
+):
+    expected_path_secret = (os.environ.get("GHL_VOICE_AI_WEBHOOK_PATH_SECRET") or "").strip()
+    if not expected_path_secret or not hmac.compare_digest(secret, expected_path_secret):
+        raise HTTPException(status_code=401, detail="bad path secret")
+
+    body = await request.body()
+
+    from services.ghl_voice_ai_bridge import verify_signature, handle_webhook
+    hmac_secret = (os.environ.get("GHL_VOICE_AI_WEBHOOK_HMAC_SECRET") or "").strip()
+    if hmac_secret and not verify_signature(hmac_secret, body, x_webhook_signature or ""):
+        raise HTTPException(status_code=401, detail="bad HMAC signature")
+
+    try:
+        payload = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON payload")
+
+    summary = await asyncio.to_thread(handle_webhook, payload)
+    logging.info("[ghl-voice-bridge] webhook summary: %s", summary)
+    return summary
+
+
 # ===== avo-telemetry GitHub flag-router webhook =====
 # Trigger: salesdroid/avo-telemetry pushes a commit to main → GitHub fires this.
 # Auth: URL-path secret (must match TELEMETRY_GITHUB_WEBHOOK_PATH_SECRET) AND
