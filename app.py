@@ -3058,6 +3058,14 @@ def _avo_sched_axiom():
 
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
+# CMO Daily — 7:00 AM CT. Reads ~/avo-telemetry/cmo_daily_state.json via the
+# auth'd GitHub Contents path and sends Michael the once-a-day marketing-gate
+# brief via Resend. Per CMO autonomy spec file 58 (B&T handoff step 1).
+from services.cmo_daily_email import run_daily as _cmo_daily_email
+scheduler.add_job(_cmo_daily_email, CronTrigger(hour=7, minute=0, timezone=CST),
+    id="cmo_daily_email_700", name="CMO Daily Email — 7:00 AM CT",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CRO Daily Audit — 7:45 (runs before all other agents). Renamed from
 # coo_command_daily 2026-06-28 (RS #17). `replace_existing=True` swaps the
 # old job id in place on next scheduler refresh.
@@ -4999,6 +5007,17 @@ async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
     validate_key(authorization)
     from services.wd_dmarc_monitor import run_now_json
     result = await asyncio.to_thread(run_now_json)
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/cmo-daily-email-now")
+async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
+    """Send the CMO Daily email immediately. Mirrors the 7:00 AM CT scheduler
+    job — useful for verifying Resend send + template rendering. Per file 58
+    (CMO autonomy spec, B&T handoff step 1)."""
+    validate_key(authorization)
+    from services.cmo_daily_email import run_daily
+    result = await asyncio.to_thread(run_daily)
     return JSONResponse(content=result)
 
 
