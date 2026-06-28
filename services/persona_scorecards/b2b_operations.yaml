@@ -14,7 +14,7 @@ escalation_email_red: michael@worshipdigital.co
 kpis:
   - name: client_churn_rate
     display: "Active-client net change per month (churn signal)"
-    source: stripe + twenty_client_status
+    source: twenty_client_status
     target: 0                   # net loss = bad; net add = good
     target_unit: "clients/month"
     threshold_yellow: -1
@@ -27,7 +27,7 @@ kpis:
 
   - name: client_health_score
     display: "Composite per-client health (engagement + payment + sentiment)"
-    source: client_health_aggregator
+    source: twenty_client_status
     target: 85                  # TBD-with-Michael
     target_unit: "score / 100 avg"
     threshold_yellow: 70

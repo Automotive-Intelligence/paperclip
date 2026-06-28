@@ -26,7 +26,7 @@ kpis:
 
   - name: cross_persona_dependency_resolution_hours
     display: "Median hours to resolve cross-persona blockers"
-    source: agent_handoffs_cross_persona
+    source: agent_handoffs
     target: 12                  # TBD-with-Michael
     target_unit: "hours (median)"
     threshold_yellow: 24
@@ -38,7 +38,7 @@ kpis:
 
   - name: decisions_blocking_execution
     display: "Open decisions requiring Michael's nod, age > 48h"
-    source: red_tier_queue
+    source: agent_handoffs
     target: 0
     target_unit: "count"
     threshold_yellow: 2
@@ -49,7 +49,7 @@ kpis:
 
   - name: focus_arbitration_outcomes
     display: "% of arbitration calls that moved a stalled lane (vs noise)"
-    source: pit_wall_decision_log
+    source: agent_handoffs
     target: 75                  # TBD-with-Michael
     target_unit: "%"
     threshold_yellow: 50
