@@ -35,13 +35,44 @@ _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0}
 
 
 def randy_run():
-    """Main loop — called by scheduler every 4 hours."""
+    """Main loop — called by scheduler every 4 hours.
+
+    Returns a structured per-run summary string (>=200 chars) so the post-run
+    hook in app.py persists it as raw_output instead of the heartbeat fallback.
+    CRO RED flag 2026-06-27T21:45Z: prior heartbeat-only logs masked the fact
+    that Randy was leaking contacts at the enrollment step (29 stuck, +4/day).
+    """
+    from datetime import datetime as _dt
+    started_at = _dt.now()
     log_info("ai_phone_guy", "=== RANDY RUN START ===")
+    tally = {
+        "prospects_found": 0,
+        "enrolled_attempted": 0,
+        "enrolled_tag_confirmed": 0,
+        "enrolled_tag_failed": 0,
+        "messages_sent_attempted": 0,
+        "messages_sent_confirmed": 0,
+        "hot_leads_flagged": 0,
+        "errors": 0,
+        "per_vertical": {},
+    }
     try:
         # Step 1: Find new contacts with tyler-prospect-* tags
         new_contacts = _find_new_prospects()
+        tally["prospects_found"] = len(new_contacts)
         for contact in new_contacts:
-            _enroll_contact(contact)
+            try:
+                vert = contact.get("_vertical", "unknown")
+                tally["per_vertical"][vert] = tally["per_vertical"].get(vert, 0) + 1
+                tally["enrolled_attempted"] += 1
+                ok = _enroll_contact(contact)
+                if ok:
+                    tally["enrolled_tag_confirmed"] += 1
+                else:
+                    tally["enrolled_tag_failed"] += 1
+            except Exception as e:
+                tally["errors"] += 1
+                log_error("ai_phone_guy", f"Per-contact enrollment failed: {e}")
 
         # Step 2: Process sequence steps for enrolled contacts
         _process_sequences()
@@ -50,9 +81,50 @@ def randy_run():
         enrolled_contacts = _fetch_enrolled_contacts()
         check_for_hot_leads(enrolled_contacts)
 
+        tally["messages_sent_confirmed"] = _stats["messages_sent"]
+        duration_sec = (_dt.now() - started_at).total_seconds()
         log_info("ai_phone_guy", f"=== RANDY RUN COMPLETE === Enrolled: {_stats['enrolled']} | Messages: {_stats['messages_sent']}")
+        return _format_run_summary(tally, duration_sec, started_at)
     except Exception as e:
         log_error("ai_phone_guy", f"Randy run failed: {e}")
+        return (
+            f"RANDY RUN FAILED — {started_at.isoformat()}\n"
+            f"  Error: {e}\n"
+            f"  Tallies before failure: {tally}\n"
+            f"  Action: CRO + B&T review the workflow.py traceback in agent_logs."
+        )
+
+
+def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
+    """>=200-char per-run telemetry so CRO sweeps + morning brief see real work.
+
+    Critical surfacing: enrolled_tag_failed > 0 is the leak signal — those
+    contacts hit _enroll_contact() but the GHL PUT to add 'sequence-active'
+    failed, so they'll show up as 'new' on the next run (in-memory _enrolled
+    is per-process). 29 stuck contacts as of 2026-06-27 traced to this exact
+    silent-failure path.
+    """
+    leak_warning = (
+        ""
+        if tally["enrolled_tag_failed"] == 0
+        else f"\n  ⚠️ LEAK SIGNAL: {tally['enrolled_tag_failed']} contacts enrolled in-memory but GHL tag PUT failed — these will re-appear as 'new' next run."
+    )
+    per_vert = tally["per_vertical"]
+    vert_line = "  ".join(f"{k}: {v}" for k, v in sorted(per_vert.items())) or "(none)"
+    return (
+        f"RANDY RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
+        f"  Prospects found (tyler-prospect-* tagged, no sequence-active): {tally['prospects_found']}\n"
+        f"  Enrollment attempts: {tally['enrolled_attempted']}\n"
+        f"    Confirmed (GHL tag landed): {tally['enrolled_tag_confirmed']}\n"
+        f"    Failed (in-memory only — will leak): {tally['enrolled_tag_failed']}"
+        f"{leak_warning}\n"
+        f"  Sequence messages sent: {tally['messages_sent_confirmed']}\n"
+        f"  Hot leads flagged: {tally['hot_leads_flagged']}\n"
+        f"  Per-vertical: {vert_line}\n"
+        f"  Errors during run: {tally['errors']}\n"
+        f"  Source: GHL AIPG location (still on GHL — Twenty migration pending).\n"
+        f"  Iron rules: ICP-specific copy, no pricing, written to OWNER."
+    )
 
 
 def _find_new_prospects() -> list:
@@ -84,8 +156,20 @@ def _find_new_prospects() -> list:
     return new_contacts
 
 
-def _enroll_contact(contact: dict):
-    """Immediately enroll a contact into their ICP sequence."""
+def _enroll_contact(contact: dict) -> bool:
+    """Immediately enroll a contact into their ICP sequence.
+
+    Returns True if the GHL sequence-active tag was successfully PUT (contact
+    enrolled durably). Returns False if the in-memory enrollment succeeded
+    but the GHL tag PUT failed — in that case the contact will re-appear as
+    'new' on the next run (the LEAK that surfaced as 29 stuck contacts per
+    CRO RED flag 2026-06-27T21:45Z).
+
+    Prior version called requests.put(...) with NO response check, so any
+    GHL failure (rate limit, auth expiry, schema change) silently dropped the
+    enrollment. Fixed here: PUT result checked, status logged, return value
+    differentiates durable vs in-memory-only enrollment.
+    """
     cid = contact.get("id")
     vertical = contact.get("_vertical")
     name = f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
@@ -97,16 +181,34 @@ def _enroll_contact(contact: dict):
         "contact": contact,
     }
 
-    # Add sequence-active tag
+    # Add sequence-active tag in GHL. If this fails, we have an in-memory leak.
+    tag_durable = False
     if _ghl_key():
         url = f"{GHL_BASE}/contacts/{cid}"
-        current_tags = contact.get("tags", [])
-        current_tags.append("sequence-active")
-        requests.put(url, headers=_ghl_headers(), json={"tags": current_tags})
+        current_tags = list(contact.get("tags", []))
+        if "sequence-active" not in current_tags:
+            current_tags.append("sequence-active")
+        try:
+            resp = requests.put(url, headers=_ghl_headers(), json={"tags": current_tags}, timeout=15)
+            if resp.status_code in (200, 201, 204):
+                tag_durable = True
+            else:
+                log_error(
+                    "ai_phone_guy",
+                    f"LEAK: GHL tag PUT failed for {cid} ({name}) status={resp.status_code} body={resp.text[:200]} — contact enrolled in-memory only, will re-appear next run"
+                )
+        except Exception as e:
+            log_error(
+                "ai_phone_guy",
+                f"LEAK: GHL tag PUT raised for {cid} ({name}): {e} — contact enrolled in-memory only, will re-appear next run"
+            )
+    else:
+        # No GHL key = dry-run path; treat as durable so dry-runs don't mark leak
+        tag_durable = True
 
     _stats["enrolled"] += 1
-    log_enrollment("ai_phone_guy", cid, name, f"sequence-{vertical}")
-    log_info("ai_phone_guy", f"ENROLLED: {name} → {vertical} sequence")
+    log_enrollment("ai_phone_guy", cid, name, f"sequence-{vertical}" + ("" if tag_durable else " [TAG-FAILED]"))
+    log_info("ai_phone_guy", f"ENROLLED: {name} → {vertical} sequence" + ("" if tag_durable else " (in-memory only)"))
 
     # Queue Day 0 message — will send when the vertical's send window opens
     schedule = SEND_SCHEDULE.get(vertical, {})
@@ -114,6 +216,8 @@ def _enroll_contact(contact: dict):
         _send_sequence_step(cid, 0)
     else:
         log_info("ai_phone_guy", f"QUEUED: {name} Day 0 — waiting for {vertical} send window ({schedule.get('day', '?')} {schedule.get('hour', '?')}:{schedule.get('minute', 0):02d} CST)")
+
+    return tag_durable
 
 
 def _process_sequences():
