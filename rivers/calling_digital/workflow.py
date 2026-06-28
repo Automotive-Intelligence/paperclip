@@ -197,51 +197,129 @@ def _run_pit_wall():
 
 
 def _find_new_contacts() -> list:
-    """Find new contacts in Attio that haven't been enrolled."""
-    if not _attio_key():
-        log_info("calling_digital", "[DRY RUN] No ATTIO_API_KEY — skipping")
+    """Find new contacts in Twenty WD that haven't been enrolled.
+
+    R1b 2026-06-28: replaces the Attio reader (Attio retired 2026-06-12 per
+    PR #82). Reads tools/twenty.py for the WD workspace, paginates the People
+    list, de-dupes against the seen-ids state file. Returns contact dicts in
+    the same shape the rest of the workflow expects.
+
+    Twenty's People object has no 'vertical' field today — that semantic
+    lives downstream in scoring.py. Records here are loaded with
+    vertical='unknown' so the territory ladder still computes correctly
+    (location-based) and the vertical-mix tally surfaces 'other'. When a
+    proper vertical custom-field lands in Twenty WD, _vertical_from_twenty()
+    below is the one place to update.
+    """
+    try:
+        from tools.twenty import _workspace_config, _headers, _REQUEST_TIMEOUT, twenty_ready
+    except ImportError as e:
+        log_error("calling_digital", f"tools.twenty not importable: {e}")
+        return []
+
+    if not twenty_ready("callingdigital"):
+        log_info("calling_digital", "[DRY RUN] Twenty WD workspace not configured — skipping")
+        return []
+
+    try:
+        base_url, api_key = _workspace_config("callingdigital")
+    except ValueError as e:
+        log_error("calling_digital", f"Twenty WD config error: {e}")
         return []
 
     contacts = []
     current_ids = set()
     seen_ids = set(_state.get("seen_ids", []))
-    for vertical_tag, meta in VERTICAL_MAP.items():
-        try:
-            url = f"{ATTIO_BASE}/objects/people/records/query"
-            # Query the AVO custom 'vertical' single-select attribute
-            # (created via OwnerPhones import — replaces the old 'tags' query
-            # which returned 400 because People object has no 'tags' attribute)
-            payload = {
-                "filter": {"vertical": {"$eq": vertical_tag}},
-                "limit": 100,
-            }
-            resp = requests.post(url, headers=_attio_headers(), json=payload)
-            if resp.status_code == 200:
-                records = resp.json().get("data", [])
-                for r in records:
-                    rid = r.get("id", {}).get("record_id", "")
-                    if rid:
-                        current_ids.add(rid)
-                    if rid and rid not in _enrolled and rid not in seen_ids:
-                        attrs = r.get("values", {})
-                        contact = _parse_attio_record(attrs, vertical_tag, meta)
-                        contact["id"] = rid
-                        contact["_raw"] = r
-                        contacts.append(contact)
-            else:
-                log_error("calling_digital", f"Attio query failed for {vertical_tag}: {resp.status_code} {resp.text[:200]}")
-        except Exception as e:
-            log_error("calling_digital", f"Attio query error for {vertical_tag}: {e}")
+
+    # Twenty pages via order_by + cursor. For a Phase-1 fix, pull the most
+    # recently-updated 200 people, which captures all activity in a busy day
+    # for a single brand workspace. Page size can lift in a follow-up.
+    try:
+        resp = requests.get(
+            f"{base_url}/rest/people",
+            headers=_headers(api_key),
+            params={"limit": 200, "order_by": "createdAt[DescNullsLast]"},
+            timeout=_REQUEST_TIMEOUT,
+        )
+    except Exception as e:
+        log_error("calling_digital", f"Twenty WD query raised: {e}")
+        return []
+
+    if resp.status_code != 200:
+        log_error(
+            "calling_digital",
+            f"Twenty WD query failed: {resp.status_code} body={resp.text[:200]}"
+        )
+        return []
+
+    people = (resp.json().get("data") or {}).get("people") or []
+    for person in people:
+        pid = person.get("id") or ""
+        if pid:
+            current_ids.add(pid)
+        if pid and pid not in _enrolled and pid not in seen_ids:
+            contact = _parse_twenty_person(person)
+            contact["id"] = pid
+            contact["_raw"] = person
+            contacts.append(contact)
 
     if not _state.get("initialized_at"):
         _state["initialized_at"] = datetime.now().isoformat()
         _state["seen_ids"] = sorted(current_ids)
         _save_state(_state)
-        log_info("calling_digital", f"Workflow baseline seeded with {len(current_ids)} existing Attio contacts; only net-new contacts will enroll going forward")
+        log_info(
+            "calling_digital",
+            f"Workflow baseline seeded with {len(current_ids)} existing Twenty WD contacts; "
+            "only net-new contacts will enroll going forward"
+        )
         return []
 
-    log_info("calling_digital", f"Found {len(contacts)} new contacts")
+    log_info("calling_digital", f"Found {len(contacts)} new Twenty WD contacts")
     return contacts
+
+
+def _vertical_from_twenty(person: dict) -> str:
+    """Twenty People has no vertical field today. Infer from job title where
+    we can; default to 'unknown' so scoring still completes. When a real
+    vertical custom-field lands, this is the one switch to flip.
+    """
+    title = (person.get("jobTitle") or "").lower()
+    if any(k in title for k in ("med spa", "medspa", "aesthetic")):
+        return "med-spa"
+    if any(k in title for k in ("attorney", "lawyer", "injury", "pi law", "personal injury")):
+        return "pi-law"
+    if any(k in title for k in ("realtor", "real estate", "broker")):
+        return "real-estate"
+    if any(k in title for k in ("builder", "construction", "custom home")):
+        return "home-builder"
+    return "unknown"
+
+
+def _parse_twenty_person(person: dict) -> dict:
+    """Twenty REST → contact dict matching the rest of the workflow's expectations."""
+    name_obj = person.get("name") or {}
+    emails_obj = person.get("emails") or {}
+    phones_obj = person.get("phones") or {}
+
+    vertical = _vertical_from_twenty(person)
+    return {
+        "firstName": name_obj.get("firstName", "") or "",
+        "lastName": name_obj.get("lastName", "") or "",
+        "email": emails_obj.get("primaryEmail", "") or "",
+        "phone": phones_obj.get("primaryPhoneNumber", "") or "",
+        "businessName": person.get("companyId", "") or "",
+        # Twenty People doesn't carry city/state directly today — those live
+        # on the linked Company. R1b ships address-blank; the territory
+        # ladder will score these as 'national' until R1c joins Company data.
+        "city": "",
+        "state": "",
+        "vertical": vertical,
+        "industry": vertical,
+        "revenue": 0,
+        "ai_interest": False,
+        "referred_by_client": False,
+        "content_engaged": False,
+    }
 
 
 def _parse_attio_record(attrs: dict, vertical: str, meta: dict) -> dict:
@@ -349,7 +427,15 @@ def _process_sequences():
 
 
 def _send_sequence_step(contact_id: str, step_day: int):
-    """Send a specific sequence step."""
+    """Send a specific sequence step.
+
+    R1b 2026-06-28: Loops integration not wired yet — was Attio (retired
+    2026-06-12). Until R1c lands Loops, this no-ops with an explicit log
+    AND advances last_step so the contact doesn't loop on the same step.
+    Critically: does NOT increment _stats["messages_sent"] — that counter
+    is the truth surface for CRO + morning brief; lying with a fake +1
+    while the send path is dead is worse than logging a clean no-op.
+    """
     if contact_id not in _enrolled:
         return
 
@@ -364,13 +450,18 @@ def _send_sequence_step(contact_id: str, step_day: int):
 
     rendered = render_message(step, contact)
     name = f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
+    subject = rendered.get("subject", "")
 
-    _send_attio_email(contact_id, contact.get("email", ""), rendered.get("subject", ""), rendered["body"])
-
+    # No-op until Loops wire (R1c). Advance step so the contact moves through
+    # the sequence on the next run even though we haven't sent anything.
+    log_info(
+        "calling_digital",
+        f"[SEND-PATH-PENDING] Track {track} Day {step_day} to {name} ({subject!r}): "
+        "Loops integration not wired yet — contact advanced in pipeline, NOT sent."
+    )
     data["last_step"] = step_day
-    _stats["messages_sent"] += 1
-    log_sequence_event("calling_digital", contact_id, "email_sent", f"track{track}_day{step_day}")
-    log_info("calling_digital", f"SENT Track {track} Day {step_day} to {name}")
+    # Intentional: do NOT increment _stats["messages_sent"]. The tally is
+    # truth-surface; spurious +1s here would mask the missing-send-path gap.
 
 
 def _send_attio_email(contact_id: str, to_email: str, subject: str, body: str):
