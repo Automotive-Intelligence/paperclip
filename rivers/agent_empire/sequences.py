@@ -45,7 +45,7 @@ def _extract_build_topics() -> list:
             "title": "I Built 5 AI Businesses in One Codebase — Here's the Architecture",
             "type": "video",
             "outline": "Walk through the Project Paperclip monorepo. 5 rivers, named agents, CRM integrations. Show the real code.",
-            "show_notes": "Project Paperclip overview. 5 rivers: AI Phone Guy, Calling Digital, Automotive Intelligence, Agent Empire, CustomerAdvocate.",
+            "show_notes": "Project Paperclip overview. 5 rivers: AI Phone Guy, Worship Digital, Automotive Intelligence, Agent Empire, CustomerAdvocate.",
             "thumbnail": "5 AI BUSINESSES | 1 CODEBASE",
         },
         {
@@ -80,7 +80,7 @@ def _extract_build_topics() -> list:
             "title": "From $0 to $15K MRR — The 90-Day AI Empire Plan",
             "type": "video",
             "outline": "Break down revenue targets across all 5 rivers. Show the math. Show the pipeline.",
-            "show_notes": "Revenue targets: AI Phone Guy, Calling Digital retainers, Automotive audits, Agent Empire memberships + sponsors.",
+            "show_notes": "Revenue targets: AI Phone Guy, Worship Digital retainers, Automotive audits, Agent Empire memberships + sponsors.",
             "thumbnail": "$15K MRR IN 90 DAYS",
         },
         {

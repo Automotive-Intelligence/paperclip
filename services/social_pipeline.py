@@ -11,7 +11,7 @@ from tools.zernio import publish_content_piece_to_zernio, upload_media_to_zernio
 
 BRAND_THEME = {
     "callingdigital": {
-        "name": "Calling Digital",
+        "name": "Worship Digital",
         "bg": (13, 32, 22),
         "accent": (57, 211, 140),
         "text": (240, 255, 248),

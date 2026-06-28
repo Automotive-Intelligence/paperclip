@@ -235,7 +235,7 @@ def create_zernio_profile(name: str, description: str = "") -> Dict[str, Any]:
     Create a new Zernio profile to group social accounts.
     
     Args:
-        name: Profile name (e.g., "The AI Phone Guy", "Calling Digital")
+        name: Profile name (e.g., "The AI Phone Guy", "Worship Digital")
         description: Optional profile description
         
     Returns:

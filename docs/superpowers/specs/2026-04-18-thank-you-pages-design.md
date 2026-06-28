@@ -6,7 +6,7 @@
 
 ## Problem
 
-Three businesses (Automotive Intelligence, Calling Digital, AI Phone Guy) all book sales meetings via calendar links (Calendly or GHL calendar). After booking, prospects land on the default Calendly/GHL confirmation page — generic, brandless, and missing the chance to set expectations before the call.
+Three businesses (Automotive Intelligence, Worship Digital, AI Phone Guy) all book sales meetings via calendar links (Calendly or GHL calendar). After booking, prospects land on the default Calendly/GHL confirmation page — generic, brandless, and missing the chance to set expectations before the call.
 
 Goal: replace the default confirmation with a branded "You're booked" page per business, modeled after the LeadHaste thank you page. Prospects should arrive at the sales call with clear expectations and confidence they're not wasting their time.
 
@@ -26,7 +26,7 @@ One lean, shared template deployed as a single Vite + React + Tailwind app on Ra
 | Business | Subdomain | Calendar |
 |---|---|---|
 | Automotive Intelligence | `book.automotiveintelligence.io` | Calendly (free) |
-| Calling Digital | `book.calling.digital` | Calendly (free) |
+| Worship Digital | `book.calling.digital` | Calendly (free) |
 | AI Phone Guy | `book.aiphoneguy.ai` | GHL calendar (supports redirect) |
 
 ## Page Structure
@@ -48,7 +48,7 @@ No CTA, no form, no upsell. Just clarity and confidence.
 2. **We map your AI opportunity** — On the call, we walk through where AI actually moves the needle: showroom capture, service follow-up, lost-lead recovery. No fluff.
 3. **You leave with a plan** — Fit or not, you walk away with an AI readiness scorecard and 3 plays you can run this quarter.
 
-### Calling Digital
+### Worship Digital
 1. **We audit your competitors** — Before the call, we map what your top 3 competitors are running for outbound and paid — subject lines, offers, ad copy.
 2. **We map the gap** — On the call, we show the specific plays they're running that you're not, and what it'll take to flip that.
 3. **You leave with a battle plan** — Fit or not, you leave with a one-page competitive brief you can run with this week.
@@ -69,7 +69,7 @@ No CTA, no form, no upsell. Just clarity and confidence.
 ### Hostname routing logic
 ```
 book.automotiveintelligence.io  → Automotive Intelligence config
-book.calling.digital            → Calling Digital config
+book.calling.digital            → Worship Digital config
 book.aiphoneguy.ai              → AI Phone Guy config
 <anything else>                 → Default to a simple "select business" index
                                   (dev/preview use — shows all 3 for testing)
@@ -89,7 +89,7 @@ book.aiphoneguy.ai              → AI Phone Guy config
 - **Font:** Inter (Tailwind default) or system sans-serif
 - **Accent color per business:**
   - Automotive Intelligence: blue (matches existing brand)
-  - Calling Digital: slate/charcoal (professional, matches calling.digital)
+  - Worship Digital: slate/charcoal (professional, matches calling.digital)
   - AI Phone Guy: brighter / phone-vibes accent (cyan or teal)
 - **Layout:** centered, single column, ~640px max width, generous whitespace
 - **Checkmark:** green circle with white check SVG

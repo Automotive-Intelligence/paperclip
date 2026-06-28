@@ -155,7 +155,7 @@ def publish_content_to_ghost(content_item: dict) -> dict:
             f"{_ghost_env_name(business_key, 'GHOST_ADMIN_API_KEY')} in Railway."
         )
 
-    title = (content_item.get("title") or "Calling Digital Update").strip()
+    title = (content_item.get("title") or "Worship Digital Update").strip()
     body = (content_item.get("body") or "").strip()
     cta = (content_item.get("cta") or "").strip()
     meta_description = (content_item.get("meta_description") or "").strip()

@@ -2,7 +2,7 @@
 
 Wraps Buffer's modern GraphQL API (https://api.buffer.com/graphql) so Internal
 Marketing agents can draft and schedule social posts to client channels under
-the Calling Digital team account.
+the Worship Digital team account.
 
 Buffer model:
   - One team account = one BUFFER_API_KEY (Bearer auth)
@@ -11,7 +11,7 @@ Buffer model:
   - Each Channel has id, service (platform), descriptor (handle), name
   - Posts target ONE channel per createPost call (channelId is singular)
 
-For Calling Digital's agency model: all client channels live under one team
+For Worship Digital's agency model: all client channels live under one team
 plan, segregated logically by business_key. The mapping config in
 config/buffer_channels.json defines which Buffer channel IDs belong to which
 client. Multi-channel posting = call createPost N times, one per channel.

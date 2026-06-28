@@ -1,6 +1,6 @@
 # Marcus CD Outreach — 4 Vertical-Specific Sequences (v2)
 
-**For: Calling Digital · Sender: Michael Rodriguez via connected Gmail**
+**For: Worship Digital · Sender: Michael Rodriguez via connected Gmail**
 **Updated: 2026-04-13 — Rebuilt after merge tag incident**
 **Enrichment: Verified Tavily facts with source URLs — no LLM hallucinations**
 
@@ -57,7 +57,7 @@ looks correct in the editor preview but fails at send time.
 
 ---
 
-## What Calling Digital actually sells
+## What Worship Digital actually sells
 
 **Digital marketing services:** website builds, social media management, SEO/AEO, paid ads, email marketing, content strategy, brand development.
 
@@ -65,7 +65,7 @@ looks correct in the editor preview but fails at send time.
 
 **The bundle play:** Sell digital marketing first to build trust. AI consulting comes later on the call, not in the email.
 
-**IRON RULE: No pricing in any email. No mention of AI receptionist or Sophie. Those are AI Phone Guy products, not Calling Digital.**
+**IRON RULE: No pricing in any email. No mention of AI receptionist or Sophie. Those are AI Phone Guy products, not Worship Digital.**
 
 ---
 
@@ -120,7 +120,7 @@ I have a few ideas specific to {{company.name}}. Worth 15 minutes this week?
 Here's my calendar if it's easier: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -143,7 +143,7 @@ The gap between a med spa that's "doing fine" and one that's fully booked usuall
 Curious whether that resonates with what you're seeing at {{company.name}}.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -167,7 +167,7 @@ Not because the ads were magic. Because the system behind them actually worked.
 If you're spending anything on digital at {{company.name}} and you're not sure what's converting, that's exactly the kind of thing I look at.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -191,7 +191,7 @@ Appreciate your time either way.
 If the timing is ever right: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ---
@@ -223,7 +223,7 @@ That's not a legal problem — it's a digital marketing problem. SEO, Google Bus
 I have a few observations specific to {{company.name}}. Worth 15 minutes this week?
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -246,7 +246,7 @@ The firms investing in SEO and paid search right now aren't doing it because the
 Worth a conversation about where {{company.name}} stands on search visibility?
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -270,7 +270,7 @@ Within 90 days, inbound from digital sources went from 2 consultations a month t
 If {{company.name}} is thinking about building a digital pipeline alongside referrals, that's exactly the kind of project we take on.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -294,7 +294,7 @@ Appreciate your time.
 If the timing is ever right: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ---
@@ -326,7 +326,7 @@ In a market where buyers start their search online, that's not a minor gap. It's
 I have a few thoughts specific to {{company.name}}. Worth 15 minutes?
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -351,7 +351,7 @@ None of that is complicated. But most agents aren't doing it because they're foc
 Curious if that resonates with how things work at {{company.name}}.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -375,7 +375,7 @@ Within 90 days, organic inbound inquiries outpaced their Zillow spend — and th
 If {{company.name}} is interested in owning your pipeline instead of renting it, that's the kind of thing I'd want to talk about.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -399,7 +399,7 @@ Appreciate your time.
 If the timing is ever right: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ---
@@ -435,7 +435,7 @@ I have a few observations specific to {{company.name}}. Worth 15 minutes?
 Here's my calendar if it's easier: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ### Step 2 — Day 3
@@ -458,7 +458,7 @@ The builders investing in digital right now aren't doing it because referrals dr
 Worth a conversation about where {{company.name}} stands online?
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -482,7 +482,7 @@ Within 6 months, 30% of their pipeline came from inbound digital — qualified b
 If {{company.name}} is interested in building that second channel, that's exactly what I'd want to talk about.
 
 — Michael Rodriguez
-Calling Digital
+Worship Digital
 Book a time: https://calendly.com/calling-michael/strategy-session
 ```
 
@@ -506,7 +506,7 @@ Appreciate your time.
 If the timing is ever right: https://calendly.com/calling-michael/strategy-session
 
 — Michael Rodriguez
-Calling Digital · michael@calling.digital
+Worship Digital · michael@calling.digital
 ```
 
 ---

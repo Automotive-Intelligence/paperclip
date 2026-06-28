@@ -1,5 +1,5 @@
 # AVO — AI Business Operating System
-# River: Calling Digital
+# River: Worship Digital
 # Built live for Agent Empire Skool community
 # Salesdroid — April 2026
 # North Star: $15,000 MRR

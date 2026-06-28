@@ -32,7 +32,7 @@ def generate_changelog():
 
 ## Contacts Enrolled This Week
 - AI Phone Guy (Randy): {stats.get('apg_enrolled', 0)}
-- Calling Digital (Brenda): {stats.get('cd_enrolled', 0)}
+- Worship Digital (Brenda): {stats.get('cd_enrolled', 0)}
 - Automotive Intelligence (Darrell): {stats.get('ai_enrolled', 0)}
 - Agent Empire (Tammy): {stats.get('ae_welcomed', 0)} new members
 

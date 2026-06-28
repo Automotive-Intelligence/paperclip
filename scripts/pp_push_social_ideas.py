@@ -50,7 +50,7 @@ try:
 except ImportError:
     pass
 
-# The single P&P / Calling Digital team Buffer organization.
+# The single P&P / Worship Digital team Buffer organization.
 # Look it up via: buffer_list_organizations() (tools/buffer.py)
 ORG_ID = "69ed6e4bb3eb4d0e37ba2f6a"
 

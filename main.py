@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     log_info("main", "=" * 60)
     log_info("main", "PROJECT PAPERCLIP — EMPIRE ONLINE")
     log_info("main", "=" * 60)
-    log_info("main", "Rivers: AI Phone Guy | Calling Digital | Automotive Intelligence | Agent Empire | CustomerAdvocate")
+    log_info("main", "Rivers: AI Phone Guy | Worship Digital | Automotive Intelligence | Agent Empire | CustomerAdvocate")
     log_info("main", "Agents: Randy | Brenda | Darrell | Tammy | Wade | Debra | Clint | Sherry")
     log_info("main", "=" * 60)
 
@@ -82,7 +82,7 @@ async def rivers():
     return {
         "rivers": [
             {"name": "AI Phone Guy", "crm": "GoHighLevel", "agent": "Randy", "schedule": "every 4 hours"},
-            {"name": "Calling Digital", "crm": "Attio", "agent": "Brenda", "schedule": "every 2 hours"},
+            {"name": "Worship Digital", "crm": "Attio", "agent": "Brenda", "schedule": "every 2 hours"},
             {"name": "Automotive Intelligence", "crm": "HubSpot", "agent": "Darrell", "schedule": "every 1 hour"},
             {"name": "Agent Empire", "platform": "Skool", "agents": ["Tammy", "Wade", "Debra"], "schedule": "Tammy 6hr / Wade Mon 9am"},
             {"name": "CustomerAdvocate", "components": ["VERA", "AATA", "The Exchange"], "agents": ["Clint", "Sherry"]},

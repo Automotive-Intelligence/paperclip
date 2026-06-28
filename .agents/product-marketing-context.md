@@ -12,7 +12,7 @@ This platform operates **three businesses** under a shared AI-powered agent syst
 - **Differentiator**: Hyper-local focus on DFW suburbs (Aubrey, Celina, Prosper, Pilot Point, Little Elm)
 - **Voice**: Educational, relatable, plain-language. No jargon.
 
-### 2. Calling Digital
+### 2. Worship Digital
 - **Product**: Digital marketing agency + AI implementation consulting
 - **Market**: Dallas-area SMBs needing websites, social media, and AI solutions
 - **Model**: Website/social retainer → AI Phone Guy bundle upsell → AI consulting (Nova)

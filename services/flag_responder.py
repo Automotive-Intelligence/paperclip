@@ -39,6 +39,7 @@ from pathlib import Path
 import requests
 import yaml
 
+from config.principles import foundation_header
 from services.current_time import current_time_block
 from services.database import execute_query, fetch_all
 from services.flag_router import FlagBlock, Seat, _fetch_telemetry_path
@@ -94,7 +95,12 @@ def _authority_for(seat_name: str) -> dict:
 
 
 def _load_persona_prompt(seat_name: str) -> str:
-    """Read the persona prompt for this seat. Returns "" if unknown."""
+    """Read the persona prompt for this seat. Returns "" if unknown.
+
+    The servant-leader foundation (config/principles.py) is prepended to the
+    persona text so it shapes the model's reasoning before the seat's
+    role-specific identity — same chokepoint discipline as the APE executor.
+    """
     slug = _SEAT_TO_SLUG.get(seat_name)
     if not slug:
         return ""
@@ -102,7 +108,7 @@ def _load_persona_prompt(seat_name: str) -> str:
     if not path.exists():
         logger.warning("[flag_responder] persona file missing: %s", path)
         return ""
-    return path.read_text()
+    return f"{foundation_header()}\n{path.read_text()}"
 
 
 # ── persona_runs audit table ───────────────────────────────────────────────

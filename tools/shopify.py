@@ -8,7 +8,7 @@ Per-tenant credential resolution (matches tools/outbound_email pattern):
   SHOPIFY_SHOP_<BUSINESSKEY>           e.g. paperandpurpose (no .myshopify.com)
   SHOPIFY_ADMIN_TOKEN_<BUSINESSKEY>    private app / custom app token
 
-For Calling Digital agency setup: each client business_key gets its own token.
+For Worship Digital agency setup: each client business_key gets its own token.
 The CD agency Klaviyo / Shopify partner status lives outside this module.
 
 Tools exposed:

@@ -3,7 +3,7 @@
 These hit Buffer live — run via:
   doppler run -- python -m unittest tests.test_buffer_tools
 
-Paper & Purpose / Calling Digital team Buffer account.
+Paper & Purpose / Worship Digital team Buffer account.
 Real channel + organization IDs (3 P&P channels).
 """
 
@@ -19,7 +19,7 @@ from tools.buffer import (
     buffer_list_posts,
 )
 
-# Known Buffer state for the Calling Digital team account.
+# Known Buffer state for the Worship Digital team account.
 PP_ORG_ID = "69ed6e4bb3eb4d0e37ba2f6a"
 PP_CHANNELS = [
     "6a205be0c687a22dd4584d1f",

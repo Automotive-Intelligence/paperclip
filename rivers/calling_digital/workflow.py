@@ -1,4 +1,4 @@
-"""Brenda — RevOps Agent for Calling Digital (Attio).
+"""Brenda — RevOps Agent for Worship Digital (Attio).
 
 Monitors Attio for new contacts from OwnerPhones CSV imports.
 Scores contacts, assigns Track A or B, fires email sequences.
@@ -111,7 +111,7 @@ def _run_pit_wall():
         leads = pull_instantly_leads(api_key, campaign_id)
         if not leads:
             return
-        result = build_race_report("Brenda", "Calling Digital", leads)
+        result = build_race_report("Brenda", "Worship Digital", leads)
         log_info("calling_digital", f"[Brenda PitWall]\n{result['report']}")
     except Exception as e:
         log_error("calling_digital", f"Brenda pit wall failed: {e}")

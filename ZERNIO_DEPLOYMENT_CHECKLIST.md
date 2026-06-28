@@ -61,8 +61,8 @@ For each business in Paperclip, create a profile:
 - [ ] Description: "AI receptionist marketing for local service businesses"
 - [ ] Note profile ID: `prof_xxxxx`
 
-#### Calling Digital
-- [ ] Profile name: "Calling Digital"
+#### Worship Digital
+- [ ] Profile name: "Worship Digital"
 - [ ] Description: "Digital marketing agency for SMBs"
 - [ ] Note profile ID: `prof_xxxxx`
 
@@ -80,7 +80,7 @@ For **The AI Phone Guy** profile, connect:
 - [ ] Facebook (reach)
 - [ ] Google Business (local)
 
-For **Calling Digital** profile:
+For **Worship Digital** profile:
 - [ ] LinkedIn (agency positioning)
 - [ ] Twitter/X (industry updates)
 - [ ] Instagram (portfolio)
@@ -186,7 +186,7 @@ curl -X POST "http://localhost:8000/content/publish/zernio/aiphoneguy?limit=5" \
   ```
   [Zernio] Initialized with 3 profile(s)
   [Zernio] Profile 'The AI Phone Guy': 6 account(s)
-  [Zernio] Profile 'Calling Digital': 4 account(s)
+  [Zernio] Profile 'Worship Digital': 4 account(s)
   [Zernio] Profile 'Automotive Intelligence': 5 account(s)
   ```
 - [ ] Run `verify_zernio_setup.py` in production environment

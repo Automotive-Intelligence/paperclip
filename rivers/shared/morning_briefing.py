@@ -58,13 +58,13 @@ AGENT_CATALOG = {
     "randy": ("AI Phone Guy", "RevOps"),
     "joshua": ("AI Phone Guy", "RevOps / Pit Wall"),
 
-    # Calling Digital
-    "marcus": ("Calling Digital", "Sales"),
-    "dek": ("Calling Digital", "CEO"),
-    "sofia": ("Calling Digital", "Marketing"),
-    "carlos": ("Calling Digital", "Content"),
-    "nova": ("Calling Digital", "Intelligence"),
-    "brenda": ("Calling Digital", "RevOps"),
+    # Worship Digital
+    "marcus": ("Worship Digital", "Sales"),
+    "dek": ("Worship Digital", "CEO"),
+    "sofia": ("Worship Digital", "Marketing"),
+    "carlos": ("Worship Digital", "Content"),
+    "nova": ("Worship Digital", "Intelligence"),
+    "brenda": ("Worship Digital", "RevOps"),
 
     # Automotive Intelligence
     "ryan_data": ("Automotive Intelligence", "Sales"),
@@ -598,7 +598,7 @@ def compose_briefing_html(
 
     # ── Agents by business ──
     agents_html = ""
-    for business in ["AI Phone Guy", "Calling Digital", "Automotive Intelligence",
+    for business in ["AI Phone Guy", "Worship Digital", "Automotive Intelligence",
                      "Customer Advocate", "Agent Empire", "Executive"]:
         agents_in_biz = [a for a, (b, _) in AGENT_CATALOG.items() if b == business]
         if agents_in_biz:

@@ -12,7 +12,7 @@ All outreach email fires through the connected CRM per business:
   Outreach sequences built and managed in GHL
   Workflows trigger automatically when prospect is added with correct tag
 
-- Calling Digital → Attio CRM
+- Worship Digital → Attio CRM
   Outreach managed through Attio sequences
   Prospects pushed to Attio by Marcus agent
 

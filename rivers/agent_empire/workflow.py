@@ -450,7 +450,7 @@ footer{padding:40px 0;border-top:1px solid #1a1a1a;text-align:center;font-size:0
 <h2>The Five Rivers</h2>
 <div class="rivers">
 <div class="river-card"><h3>The AI Phone Guy</h3><p>AI receptionist for local service businesses. DFW 380 Corridor.</p><div class="agents">Alex &middot; Tyler &middot; Zoe &middot; Jennifer &middot; Randy</div></div>
-<div class="river-card"><h3>Calling Digital</h3><p>AI implementation consultancy for SMBs in Dallas.</p><div class="agents">Dek &middot; Marcus &middot; Sofia &middot; Carlos &middot; Nova &middot; Brenda</div></div>
+<div class="river-card"><h3>Worship Digital</h3><p>AI implementation consultancy for SMBs in Dallas.</p><div class="agents">Dek &middot; Marcus &middot; Sofia &middot; Carlos &middot; Nova &middot; Brenda</div></div>
 <div class="river-card"><h3>Automotive Intelligence</h3><p>AI consulting for car dealerships. 20 years on your side of the desk.</p><div class="agents">Michael Meta &middot; Chase &middot; Atlas &middot; Ryan &middot; Phoenix &middot; Darrell</div></div>
 <div class="river-card"><h3>Agent Empire</h3><p>Build-in-public community. Skool + YouTube + Ghost.</p><div class="agents">Debra &middot; Wade &middot; Tammy &middot; Sterling</div></div>
 <div class="river-card"><h3>CustomerAdvocate</h3><p>AI that represents the car buyer, not the dealer. VERA + AATA.</p><div class="agents">Clint &middot; Sherry</div></div>

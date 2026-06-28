@@ -182,7 +182,7 @@ tyler = _load_agent_symbol("agents.aiphoneguy.tyler", "tyler")
 zoe = _load_agent_symbol("agents.aiphoneguy.zoe", "zoe")
 jennifer = _load_agent_symbol("agents.aiphoneguy.jennifer", "jennifer")
 
-# Calling Digital
+# Worship Digital
 dek = _load_agent_symbol("agents.callingdigital.dek", "dek")
 marcus = _load_agent_symbol("agents.callingdigital.marcus", "marcus")
 sofia = _load_agent_symbol("agents.callingdigital.sofia", "sofia")
@@ -729,7 +729,7 @@ AGENTS = {
     "zoe": zoe,
     "jennifer": jennifer,
     "randy": randy,
-    # Calling Digital
+    # Worship Digital
     "dek": dek,
     "marcus": marcus,
     "sofia": sofia,
@@ -787,7 +787,7 @@ BUSINESSES = {
         "agents": ["alex", "tyler", "zoe", "jennifer", "randy"],
     },
     "callingdigital": {
-        "name": "Calling Digital",
+        "name": "Worship Digital",
         "agents": ["dek", "marcus", "sofia", "carlos", "nova", "brenda"],
     },
     "autointelligence": {
@@ -1615,12 +1615,12 @@ def _normalize_content_pieces(pieces: List[Dict[str, Any]], business_key: str) -
 
         if business_key == "callingdigital":
             # Nova is an internal operator, not the public-facing brand.
-            body = body.replace("Nova AI Consulting", "Calling Digital")
-            body = body.replace("Nova AI", "Calling Digital")
-            cta = cta.replace("Nova AI Consulting", "Calling Digital")
-            cta = cta.replace("Nova AI", "Calling Digital")
-            title = title.replace("Nova AI Consulting", "Calling Digital")
-            title = title.replace("Nova AI", "Calling Digital")
+            body = body.replace("Nova AI Consulting", "Worship Digital")
+            body = body.replace("Nova AI", "Worship Digital")
+            cta = cta.replace("Nova AI Consulting", "Worship Digital")
+            cta = cta.replace("Nova AI", "Worship Digital")
+            title = title.replace("Nova AI Consulting", "Worship Digital")
+            title = title.replace("Nova AI", "Worship Digital")
 
         if cta_url:
             for placeholder in ("[Link]", "[link]", "(link)", "(Link)"):
@@ -1923,7 +1923,7 @@ def run_dek_daily_briefing():
         kpi_context = _build_ceo_kpi_context("callingdigital")
         task = Task(
             description=(
-                "Create a CEO OPERATING BRIEF for today for Calling Digital. "
+                "Create a CEO OPERATING BRIEF for today for Worship Digital. "
                 "Focus on execution, revenue, team accountability, customer outcomes, and pipeline growth. "
                 "Do NOT produce an industry-news briefing unless it directly affects today's execution plan. "
                 "Use the internal KPI snapshot below as the source of truth for metrics and trends. "
@@ -2202,7 +2202,7 @@ def _run_marcus_crew(vertical_override: str | None = None):
             f"TODAY'S REGION: {region_name.upper()} ({region_states})\n\n"
             f"Find {plural_label} in {region_states} that are experiencing TRIGGER EVENTS — "
             f"moments of change that create buying urgency for digital marketing services. "
-            f"You are prospecting for Calling Digital, a digital marketing agency.\n\n"
+            f"You are prospecting for Worship Digital, a digital marketing agency.\n\n"
             f"TRIGGER EVENTS TO HUNT FOR:\n"
             f"- New location opening or expansion\n"
             f"- Leadership change or new hire announcement\n"
@@ -2553,7 +2553,7 @@ CALLING_DIGITAL_ANCHOR_RULES = [
     ("social media management for small businesses", "https://www.calling.digital/social-media-marketing-and-management-services"),
     ("marketing reporting and data aggregation", "https://www.calling.digital/data-aggregation"),
     ("book a strategy session", "https://calendly.com/calling-michael/strategy-session"),
-    ("contact Calling Digital", "https://www.calling.digital/contact-us"),
+    ("contact Worship Digital", "https://www.calling.digital/contact-us"),
 ]
 
 CALLING_DIGITAL_BLOG_LENGTH_GUIDANCE = (
@@ -2590,8 +2590,8 @@ def run_sofia_content():
                 "Search for trending topics in digital marketing, AI for business, Dallas business news, "
                 "and small-business buyer questions that lead to service inquiries. "
                 "Search for what other marketing agencies are publishing and what content is performing well. "
-                "Create a revenue-focused Calling Digital content package for today. "
-                "Public-facing content must use the Calling Digital brand name, never Nova AI Consulting. "
+                "Create a revenue-focused Worship Digital content package for today. "
+                "Public-facing content must use the Worship Digital brand name, never Nova AI Consulting. "
                 "Do not use placeholder links like [Link] or [link]. Use concrete CTA destinations only. "
                 "Prioritize buyer-intent topics Dallas and North Texas SMB owners actually search for before hiring an agency: "
                 "website redesign cost, lead generation, SEO for local businesses, ads ROI, CRM follow-up, and AI automation for SMBs. "
@@ -2603,7 +2603,7 @@ def run_sofia_content():
                 "and explain why that topic is likely to drive a booked call instead of vanity traffic. "
                 "Every blog/article must include 2-3 precise internal links and use meaningful anchor text. Approved anchor rules:\n"
                 f"{_format_calling_digital_anchor_rules()}\n"
-                f"Conversion CTAs must point to either https://www.calling.digital/contact-us or {booking_link_cd} unless a more precise Calling Digital page is clearly better. "
+                f"Conversion CTAs must point to either https://www.calling.digital/contact-us or {booking_link_cd} unless a more precise Worship Digital page is clearly better. "
                 "Avoid generic trend roundups unless they are anchored to a local SMB buying problem and a specific service outcome. "
                 "Use blog frames that convert: cost breakdown, mistakes to avoid, checklist, local case study, service comparison, audit framework, or ROI explainer. "
                 f"{CALLING_DIGITAL_BLOG_LENGTH_GUIDANCE} "
@@ -2612,7 +2612,7 @@ def run_sofia_content():
                 "suggested meta description, recommended word-count target, 5-8 section outline, 2-3 internal links with anchor text, one primary CTA, one secondary CTA, and the full article body. "
                 "The blog body must be complete and publication-ready, with a strong introduction, scannable subheads, concrete examples, FAQ-style clarity where useful, "
                 "and a direct conversion section near the end. "
-                "After the full blog draft, provide one consideration-stage asset idea, one conversion-stage asset idea, one AI education piece idea for the Calling Digital AI services pipeline, "
+                "After the full blog draft, provide one consideration-stage asset idea, one conversion-stage asset idea, one AI education piece idea for the Worship Digital AI services pipeline, "
                 "and one ready-to-publish social post that promotes the blog."
             ),
             expected_output=(
@@ -2620,8 +2620,8 @@ def run_sofia_content():
                 "search intent, target geography, meta description, target word count, internal links with anchor text, CTA plan, and complete article body. "
                 "(2) one consideration-stage content asset idea. "
                 "(3) one conversion-stage content asset idea. "
-                "(4) one AI education piece idea for the Calling Digital AI services pipeline. "
-                "(5) one social post ready to publish for Calling Digital that promotes the blog."
+                "(4) one AI education piece idea for the Worship Digital AI services pipeline. "
+                "(5) one social post ready to publish for Worship Digital that promotes the blog."
             ),
             agent=sofia,
         )
@@ -2679,7 +2679,7 @@ def run_chase_content():
 
 # ── Ghost Drain ── 9:20 CST (runs after all content agents queue) ────────────
 def run_ghost_drain_callingdigital():
-    """Drain queued blog content to Ghost CMS for Calling Digital. Runs daily at 9:20 CST."""
+    """Drain queued blog content to Ghost CMS for Worship Digital. Runs daily at 9:20 CST."""
     try:
         if not ghost_publish_ready("callingdigital"):
             logging.warning("[Scheduler] Ghost drain skipped — callingdigital not configured.")
@@ -2774,7 +2774,7 @@ def run_carlos_retention():
                 "and account management. Search for common reasons small businesses cancel marketing "
                 "retainers and what successful agencies do to prevent it. "
                 "Identify upsell triggers — what service results indicate a client is ready for "
-                "AI consulting or additional Calling Digital services. "
+                "AI consulting or additional Worship Digital services. "
                 "Develop 3 proactive talking points for client check-ins today: "
                 "one celebrating measurable results, one proactively addressing a potential concern, "
                 "one positioning the AI consulting conversation."
@@ -2809,14 +2809,14 @@ def run_nova_intelligence():
                 "Search for AI tools, platforms, and updates released or announced this week "
                 "relevant to small and mid-size businesses: automation tools, AI assistants, "
                 "workflow optimization, customer service AI, and marketing AI. "
-                "Identify 3 specific implementation opportunities for Calling Digital's SMB clients: "
+                "Identify 3 specific implementation opportunities for Worship Digital's SMB clients: "
                 "which tool, which type of client it's best for, what problem it solves, "
-                "and how Calling Digital can deliver it as a billable service."
+                "and how Worship Digital can deliver it as a billable service."
             ),
             expected_output=(
                 "Weekly AI intelligence report: (1) Top 5 AI tool releases or updates relevant to SMBs. "
                 "(2) 3 implementation opportunities with tool, client profile, problem solved, and service approach. "
-                "(3) One AI trend that should inform Calling Digital's consulting offer this week."
+                "(3) One AI trend that should inform Worship Digital's consulting offer this week."
             ),
             agent=nova,
         )
@@ -3101,7 +3101,7 @@ scheduler.add_job(_avo_sched_chase, CronTrigger(hour=9, minute=4, timezone=CST),
 
 # Client Success — 9:30, 9:32
 scheduler.add_job(run_ghost_drain_callingdigital, CronTrigger(hour=9, minute=20, timezone=CST),
-    id="ghost_drain_callingdigital", name="Ghost Blog Drain — Calling Digital",
+    id="ghost_drain_callingdigital", name="Ghost Blog Drain — Worship Digital",
     replace_existing=True, misfire_grace_time=3600)
 
 # Client Success — 9:30, 9:32 [AVO wrapped]
@@ -3831,7 +3831,7 @@ logging.basicConfig(
 app = FastAPI(
     title="Paperclip Multi-Agent Revenue Engine",
     description=(
-        "AI-native revenue platform powering The AI Phone Guy, Calling Digital, "
+        "AI-native revenue platform powering The AI Phone Guy, Worship Digital, "
         "and Automotive Intelligence. Agents prospect, email, track pipeline, "
         "queue content, and execute retention — autonomously."
     ),
@@ -4462,7 +4462,7 @@ async def publish_content_to_ghost_endpoint(
     limit: int = 5,
     authorization: Optional[str] = Header(None),
 ):
-    """Publish queued blog/site content for a Ghost-backed business such as Calling Digital."""
+    """Publish queued blog/site content for a Ghost-backed business such as Worship Digital."""
     validate_key(authorization)
     business_key = (business_key or "").strip().lower()
     if not business_key:
@@ -4634,7 +4634,7 @@ async def sales_pipeline(
 
         businesses = {
             "aiphoneguy": {"name": "The AI Phone Guy", "agents": ["tyler"], "deal_value": 482},
-            "callingdigital": {"name": "Calling Digital", "agents": ["marcus"], "deal_value": 2500},
+            "callingdigital": {"name": "Worship Digital", "agents": ["marcus"], "deal_value": 2500},
             "autointelligence": {"name": "Automotive Intelligence", "agents": ["ryan_data"], "deal_value": 2500},
         }
 
@@ -4850,10 +4850,10 @@ async def test_creative_pipeline(
             "agent": "sofia",
             "agent_name": "Sofia",
             "role": "Head of Content & Creative",
-            "brand": "Calling Digital",
+            "brand": "Worship Digital",
             "test_content": (
                 "Small businesses in Dallas are growing 2x faster with the right digital strategy. "
-                "SEO, ads, AI automation — Calling Digital builds growth systems that actually work. "
+                "SEO, ads, AI automation — Worship Digital builds growth systems that actually work. "
                 "Let's talk about your goals."
             ),
             "test_headline": "Growth Systems for Serious Owners",
@@ -5771,7 +5771,7 @@ async def get_agents_status():
         {"name": "Tyler", "type": "Sales", "phone_guy": True},
         {"name": "Zoe", "type": "Marketing", "phone_guy": True},
         {"name": "Jennifer", "type": "Retention", "phone_guy": True},
-        # Calling Digital
+        # Worship Digital
         {"name": "Dek", "type": "CEO", "calling_digital": True},
         {"name": "Marcus", "type": "Sales", "calling_digital": True},
         {"name": "Sofia", "type": "Marketing", "calling_digital": True},
@@ -6755,7 +6755,7 @@ async def pitwall_ops_dashboard():
                     "crm": "GoHighLevel",
                 },
                 "callingdigital": {
-                    "name": "Calling Digital",
+                    "name": "Worship Digital",
                     "sales_agent": "marcus",
                     "crm": "Attio",
                 },
@@ -6905,7 +6905,7 @@ async def paperclip_rivers():
     return {
         "rivers": [
             {"name": "AI Phone Guy", "crm": "GoHighLevel", "agents": ["Alex", "Tyler", "Zoe", "Jennifer", "Randy"], "revops": "Randy", "schedule": "Randy every 4h"},
-            {"name": "Calling Digital", "crm": "Attio", "agents": ["Dek", "Marcus", "Sofia", "Carlos", "Nova", "Brenda"], "revops": "Brenda", "schedule": "Brenda every 2h"},
+            {"name": "Worship Digital", "crm": "Attio", "agents": ["Dek", "Marcus", "Sofia", "Carlos", "Nova", "Brenda"], "revops": "Brenda", "schedule": "Brenda every 2h"},
             {"name": "Automotive Intelligence", "crm": "HubSpot", "agents": ["Michael Meta", "Chase", "Atlas", "Ryan", "Phoenix", "Darrell"], "revops": "Darrell", "schedule": "Darrell every 1h"},
             {"name": "Agent Empire", "platform": "Skool", "agents": ["Debra", "Wade", "Tammy", "Sterling"], "schedule": "Debra Mon 6am / Wade Mon 9am / Tammy 6hr / Sterling daily 7am"},
             {"name": "CustomerAdvocate", "platform": "Internal", "agents": ["Clint", "Sherry"], "components": ["VERA", "AATA", "The Exchange"], "schedule": "Clint 10am / Sherry 11am daily"},

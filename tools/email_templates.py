@@ -18,9 +18,9 @@ _BUSINESS_BRANDING = {
         "cta_label": "Worth a quick look?",
     },
     "callingdigital": {
-        "display_name": "Calling Digital",
+        "display_name": "Worship Digital",
         "tagline": "Digital growth with AI execution",
-        "signature": "Calling Digital Team",
+        "signature": "Worship Digital Team",
         "cta_label": "Open to a quick audit?",
     },
     "autointelligence": {

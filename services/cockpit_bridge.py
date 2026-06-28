@@ -8,7 +8,7 @@ WHY THIS EXISTS
 ---------------
 Michael Rodriguez runs four autonomous businesses (Rivers) plus the
 CustomerAdvocate build, with 24 CrewAI agents handling execution across
-AI Phone Guy, Calling Digital, Automotive Intelligence, Agent Empire, and
+AI Phone Guy, Worship Digital, Automotive Intelligence, Agent Empire, and
 CustomerAdvocate. The goal is a fully hands-free autonomous revenue system
 where Michael can direct agent work from anywhere — including from the
 dealership floor — without opening a laptop.
@@ -51,7 +51,7 @@ AGENT ACCOUNTABILITY ROSTER (24 CrewAI agents + axiom)
 ------------------------------------------------------
 AI Phone Guy:            Alex (CEO), Zoe (Marketing), Tyler (Sales),
                          Jennifer (CS), Randy (RevOps), Joshua (Pit Wall)
-Calling Digital:         Dek (CEO), Sofia (Content), Marcus (Sales),
+Worship Digital:         Dek (CEO), Sofia (Content), Marcus (Sales),
                          Carlos (CS), Nova (Implementation), Brenda (RevOps)
 Automotive Intelligence: Michael Meta (CEO), Chase (Marketing),
                          Ryan Data (Sales), Phoenix (Implementation),
@@ -76,7 +76,7 @@ content and reasons about which agent is accountable based on:
   - Ambiguity (surfaced via confidence score, reasoning text)
 
 Pit Wall flags route to the CEO of the most relevant business line:
-  AI Phone Guy -> Alex, Calling Digital -> Dek,
+  AI Phone Guy -> Alex, Worship Digital -> Dek,
   Automotive Intelligence -> Michael Meta, Agent Empire -> Wade.
 When Pit Wall flags are cross-river or strategic-meta, they route to Axiom.
 
@@ -167,16 +167,16 @@ AGENT_ROSTER: List[Dict[str, Any]] = [
     {"name": "jennifer",    "river": "aiphoneguy",       "role": "Head of Client Success at The AI Phone Guy",          "is_ceo": False},
     {"name": "randy",       "river": "aiphoneguy",       "role": "RevOps (GoHighLevel workflow architect) at The AI Phone Guy", "is_ceo": False},
     {"name": "joshua",      "river": "aiphoneguy",       "role": "Pit Wall RevOps race engineer — reads Instantly campaign telemetry for Tyler", "is_ceo": False},
-    # Calling Digital
-    {"name": "dek",         "river": "callingdigital",   "role": "CEO of Calling Digital",                              "is_ceo": True},
-    {"name": "sofia",       "river": "callingdigital",   "role": "Head of Content and Creative at Calling Digital",     "is_ceo": False},
-    {"name": "marcus",      "river": "callingdigital",   "role": "Senior SDR and pipeline builder at Calling Digital",  "is_ceo": False},
-    {"name": "carlos",      "river": "callingdigital",   "role": "Head of Client Success at Calling Digital",           "is_ceo": False},
+    # Worship Digital
+    {"name": "dek",         "river": "callingdigital",   "role": "CEO of Worship Digital",                              "is_ceo": True},
+    {"name": "sofia",       "river": "callingdigital",   "role": "Head of Content and Creative at Worship Digital",     "is_ceo": False},
+    {"name": "marcus",      "river": "callingdigital",   "role": "Senior SDR and pipeline builder at Worship Digital",  "is_ceo": False},
+    {"name": "carlos",      "river": "callingdigital",   "role": "Head of Client Success at Worship Digital",           "is_ceo": False},
     # nova (CD AI Implementation Director) removed from routing 2026-05-19 to
     # free the "nova" namespace for Customer Advocate's NOVA buyer agent.
     # Agent code remains in agents/callingdigital/nova.py and can be re-wired
     # if CD activates an Implementation Director again.
-    {"name": "brenda",      "river": "callingdigital",   "role": "RevOps (Attio workflow architect) at Calling Digital","is_ceo": False},
+    {"name": "brenda",      "river": "callingdigital",   "role": "RevOps (Attio workflow architect) at Worship Digital","is_ceo": False},
     # Automotive Intelligence
     {"name": "michael_meta","river": "autointelligence", "role": "CEO of Automotive Intelligence",                      "is_ceo": True},
     {"name": "chase",       "river": "autointelligence", "role": "Head of Marketing at Automotive Intelligence",        "is_ceo": False},
@@ -526,7 +526,7 @@ def _routing_system_prompt() -> str:
         f"- {river}: {ceo}" for river, ceo in RIVER_CEO.items()
     )
 
-    return f"""You are the routing intelligence for AVO Cockpit. You receive a handoff flag written by Michael (operator of AI Phone Guy, Calling Digital, Automotive Intelligence, Agent Empire, and the CustomerAdvocate build) and you assign it to the ONE accountable agent in Paperclip who should own the outcome.
+    return f"""You are the routing intelligence for AVO Cockpit. You receive a handoff flag written by Michael (operator of AI Phone Guy, Worship Digital, Automotive Intelligence, Agent Empire, and the CustomerAdvocate build) and you assign it to the ONE accountable agent in Paperclip who should own the outcome.
 
 This is an obedience system, not a task queue. Flags route to specific named agents. When a flag lands with an agent, that agent owns the outcome; deadline misses surface as execution gaps. Be willing to commit to a name.
 
@@ -539,7 +539,7 @@ Per-river CEOs (used when the flag is Pit Wall / strategic / cross-river, or whe
 How to reason:
 1. Identify the business line. Look for client names, product names, keywords. Map:
    - "AI Phone Guy", "AIPG", "theaiphoneguy.ai", outbound-call automation -> aiphoneguy
-   - "Calling Digital", "CD", "CD client", monthly GA reports for small biz, Worden Welding, Garrett (Worden), Ryan Velazquez, Book'd -> callingdigital
+   - "Worship Digital", "CD", "CD client", monthly GA reports for small biz, Worden Welding, Garrett (Worden), Ryan Velazquez, Book'd -> callingdigital
    - "Automotive Intelligence", "AI Intel", dealer/dealership work, HubSpot dealer briefs -> autointelligence
    - "Agent Empire", "AE", "Skool", YouTube episodes, sponsor outreach, community -> agent_empire
    - VERA, AATA, consumer-buyer agent, "The Architect" protocol -> customer_advocate

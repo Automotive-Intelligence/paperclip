@@ -2,7 +2,7 @@
 
 **Audit Date**: 2026-03-17
 **Auditor**: Marketing Skills Framework (33 skills applied)
-**Scope**: Zoe (AI Phone Guy), Sofia (Calling Digital), Chase (Automotive Intelligence)
+**Scope**: Zoe (AI Phone Guy), Sofia (Worship Digital), Chase (Automotive Intelligence)
 
 ---
 
@@ -70,7 +70,7 @@ All three marketing agents have strong personas and clear funnel ownership, but 
 
 ---
 
-## Business 2: Calling Digital (Sofia + Marcus + Carlos)
+## Business 2: Worship Digital (Sofia + Marcus + Carlos)
 
 ### What's Working
 - 50 pieces/month content target is ambitious and measurable
@@ -124,9 +124,9 @@ All three marketing agents have strong personas and clear funnel ownership, but 
 - Create structured save offers (pause, downgrade, switch services)
 
 #### 7. No Competitor Positioning (Skill: `competitor-alternatives`)
-**Gap**: No "Calling Digital vs. other agencies" content for consideration stage.
+**Gap**: No "Worship Digital vs. other agencies" content for consideration stage.
 **Fix**: Create comparison content:
-- "Calling Digital vs. Freelancers" — why an agency with AI capabilities wins
+- "Worship Digital vs. Freelancers" — why an agency with AI capabilities wins
 - "Full-Service Agency vs. Point Solutions" — the bundle advantage
 - SEO-targeted "[City] digital marketing agency" comparison pages
 
@@ -227,7 +227,7 @@ All three marketing agents have strong personas and clear funnel ownership, but 
 
 ## Priority Matrix
 
-| Priority | AI Phone Guy | Calling Digital | Automotive Intelligence |
+| Priority | AI Phone Guy | Worship Digital | Automotive Intelligence |
 |----------|-------------|----------------|------------------------|
 | **P0 — Now** | Lead magnets + email sequences | Content repurposing system | Cold email optimization |
 | **P1 — This Month** | Landing page CRO | Lead magnets + email sequences | Newsletter sequences + lead magnets |
@@ -238,7 +238,7 @@ All three marketing agents have strong personas and clear funnel ownership, but 
 
 ## Skills Coverage Map
 
-| Skill | AI Phone Guy | Calling Digital | Auto Intelligence |
+| Skill | AI Phone Guy | Worship Digital | Auto Intelligence |
 |-------|:-----------:|:--------------:|:-----------------:|
 | cold-email | Tyler sequences | Marcus outreach | Ryan Data sequences |
 | email-sequence | Nurture + onboard | Nurture + AI drip | Newsletter + welcome |

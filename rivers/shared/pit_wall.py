@@ -1,7 +1,7 @@
 """Shared Pit Wall — F1 Race Analytics for all RevOps agents.
 
 Used by Joshua (AI Phone Guy), Darrell (Automotive Intelligence),
-and Brenda (Calling Digital) to monitor their respective email
+and Brenda (Worship Digital) to monitor their respective email
 campaigns and produce Race Reports with grid positions.
 
 Each agent calls run_pit_wall() with their campaign config.
