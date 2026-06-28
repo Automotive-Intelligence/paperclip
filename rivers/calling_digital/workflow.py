@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error, log_hot_lead
 from core.notifier import notify_hot_lead
 from core.hours import is_within_send_window, is_email_hours
-from rivers.calling_digital.scoring import score_contact, assign_track
+from rivers.calling_digital.scoring import score_contact, assign_track, territory_label
 from rivers.calling_digital.sequences import get_track_sequence, render_message
 
 ATTIO_BASE = "https://api.attio.com/v2"
@@ -82,12 +82,46 @@ def _mark_seen(contact_id: str):
 
 
 def brenda_run():
-    """Main loop — called by scheduler every 2 hours."""
+    """Main loop — called by scheduler every 2 hours.
+
+    Returns a structured per-run summary string (>=200 chars) so the post-run
+    hook in app.py persists it as raw_output instead of the heartbeat fallback.
+    Killing the heartbeat is a hard CRO requirement — without it the morning
+    briefing + CRO sweeps can't see what Brenda actually did (CRO RED flag
+    2026-06-27T21:45Z).
+    """
+    started_at = datetime.now()
     log_info("calling_digital", "=== BRENDA RUN START ===")
+    tally = {
+        "scored": 0,
+        "track_a": 0,
+        "track_b": 0,
+        "territory": {"380_corridor": 0, "greater_dfw": 0, "tx_outside": 0, "national": 0},
+        "vertical": {"med-spa": 0, "pi-law": 0, "real-estate": 0, "home-builder": 0, "other": 0},
+        "enrolled": 0,
+        "messages_sent": 0,
+        "hot_leads_flagged": 0,
+        "errors": 0,
+        "skipped_unscored": 0,
+    }
     try:
         new_contacts = _find_new_contacts()
         for contact in new_contacts:
-            _score_and_enroll(contact)
+            try:
+                tier = territory_label(contact)
+                vert = (contact.get("vertical") or "other").lower()
+                tally["territory"][tier] = tally["territory"].get(tier, 0) + 1
+                tally["vertical"][vert if vert in tally["vertical"] else "other"] += 1
+                tally["scored"] += 1
+                score = score_contact(contact)
+                if assign_track(score) == "B":
+                    tally["track_b"] += 1
+                else:
+                    tally["track_a"] += 1
+                _score_and_enroll(contact)
+            except Exception as e:
+                tally["errors"] += 1
+                log_error("calling_digital", f"Per-contact processing failed: {e}")
 
         _process_sequences()
         _check_hot_leads()
@@ -95,9 +129,54 @@ def brenda_run():
         # Pit wall — monitor Marcus's Instantly campaign telemetry (if configured)
         _run_pit_wall()
 
+        tally["enrolled"] = _stats["enrolled"]
+        tally["messages_sent"] = _stats["messages_sent"]
+        tally["hot_leads_flagged"] = _stats["hot_leads"]
+        duration_sec = (datetime.now() - started_at).total_seconds()
         log_info("calling_digital", f"=== BRENDA RUN COMPLETE === Enrolled: {_stats['enrolled']} | Messages: {_stats['messages_sent']}")
+
+        summary = _format_run_summary(tally, duration_sec, started_at)
+        return summary
     except Exception as e:
         log_error("calling_digital", f"Brenda run failed: {e}")
+        return (
+            f"BRENDA RUN FAILED — {started_at.isoformat()}\n"
+            f"  Error: {e}\n"
+            f"  Tallies before failure: {tally}\n"
+            f"  Action: CRO + B&T review the workflow.py traceback in agent_logs."
+        )
+
+
+def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
+    """Compose the >=200-char per-run summary that CRO + morning briefing read.
+
+    Format is stable so downstream parsers don't break each time we tune a
+    field. Section order: header, scored breakdown, territory ladder,
+    vertical mix, enrollment + send tally, escalations, run duration.
+    """
+    terr = tally["territory"]
+    vert = tally["vertical"]
+    return (
+        f"BRENDA RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
+        f"  Scored: {tally['scored']} contacts\n"
+        f"    Track A (cold, <7): {tally['track_a']}\n"
+        f"    Track B (warm, >=7): {tally['track_b']}\n"
+        f"  Territory ladder:\n"
+        f"    +3 380 Corridor: {terr.get('380_corridor', 0)}\n"
+        f"    +2 Greater DFW : {terr.get('greater_dfw', 0)}\n"
+        f"    +1 TX outside  : {terr.get('tx_outside', 0)}\n"
+        f"    +0 National    : {terr.get('national', 0)}\n"
+        f"  Vertical mix:\n"
+        f"    med-spa: {vert.get('med-spa', 0)}  pi-law: {vert.get('pi-law', 0)}  "
+        f"real-estate: {vert.get('real-estate', 0)}  home-builder: {vert.get('home-builder', 0)}  "
+        f"other: {vert.get('other', 0)}\n"
+        f"  Loops enrollments fired: {tally['enrolled']}\n"
+        f"  Sequence messages sent : {tally['messages_sent']}\n"
+        f"  Hot leads flagged to Marcus: {tally['hot_leads_flagged']}\n"
+        f"  Errors during run: {tally['errors']}\n"
+        f"  Source: Twenty WD workspace (Attio retired 2026-06-12).\n"
+        f"  Iron rules: pricing never mentioned, copy written to OWNER, ICP-specific."
+    )
 
 
 def _run_pit_wall():
