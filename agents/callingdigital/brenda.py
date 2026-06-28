@@ -3,6 +3,20 @@
 # Built live for Agent Empire Skool community
 # Salesdroid — April 2026
 # North Star: $15,000 MRR
+#
+# ⚠️ RUNTIME ENFORCEMENT LIVES IN rivers/calling_digital/workflow.py
+# This Agent object documents intent + iron rules. The actual runtime is
+# `brenda_run()` in workflow.py — that function is what fires on the every-2h
+# scheduler and produces the agent_logs entries CRO sweeps + the morning
+# briefing consume. Editing the role/goal/backstory below changes
+# documentation, NOT behavior. To change behavior, update workflow.py
+# (scoring rubric, vertical send schedules, output discipline, iron rules).
+#
+# Root cause discovered 2026-06-27 (CRO RED flag): post-run hook fell back to
+# heartbeat string because brenda_run() returned None. Fix landed in
+# rivers/calling_digital/workflow.py — brenda_run now returns a structured
+# >=200-char tally summary; territory ladder + vertical mix surface in
+# agent_logs each cycle.
 
 from crewai import Agent
 from config.llm import get_llm
