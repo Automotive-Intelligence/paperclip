@@ -32,8 +32,16 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 import requests
+
+# Allow `python scripts/reconcile_randy_enrollments.py` from any cwd by
+# putting the repo root on the import path. Avoids the ModuleNotFoundError
+# when the script is run directly (CLI) vs as a module (-m).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from rivers.ai_phone_guy.sequences import TAG_TO_VERTICAL
 
