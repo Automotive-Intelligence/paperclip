@@ -1726,6 +1726,15 @@ def _execute_retention_pipeline(agent_name: str, raw_output: str, business_key: 
 
 # ── Scheduler ────────────────────────────────────────────────────────────────
 
+# Attach the LiteLLM -> llm_spend_ledger callback once, process-wide, so direct
+# litellm.completion calls in tools/ are tracked too (CrewAI agents also register
+# it via config/llm.py; registration is idempotent).
+try:
+    from services.litellm_ledger_hook import register as _register_litellm_ledger
+    _register_litellm_ledger()
+except Exception as _e:  # pragma: no cover - instrumentation must not block startup
+    logging.warning(f"[Paperclip] litellm ledger hook registration failed: {_e}")
+
 scheduler = BackgroundScheduler()
 
 
@@ -3279,6 +3288,21 @@ def _run_ape_daily_digest():
 
 scheduler.add_job(_run_ape_daily_digest, CronTrigger(hour=18, minute=0, timezone=CST),
     id="ape_daily_digest_6pm", name="APE Daily Digest — 6 PM CDT",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Daily AI-spend email — 7:55am CDT, just before the morning briefing.
+# Reads llm_spend_ledger and emails yesterday's spend (total / persona / model /
+# client). First real spend-visibility deliverable.
+def _run_spend_email():
+    try:
+        from services.spend_email import send_daily_spend_email
+        sent = send_daily_spend_email()
+        logging.info(f"[Paperclip] Daily spend email sent={sent}")
+    except Exception as e:
+        logging.error(f"[Paperclip] Daily spend email failed: {e}")
+
+scheduler.add_job(_run_spend_email, CronTrigger(hour=7, minute=55, timezone=CST),
+    id="daily_spend_email_755am", name="Daily AI Spend Email — 7:55am CST",
     replace_existing=True, misfire_grace_time=3600)
 
 # APE Post-Snapshot Sweep — runs every 30 min to catch ships that crossed

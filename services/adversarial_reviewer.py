@@ -123,7 +123,9 @@ class AdversarialReviewer:
     def __init__(self) -> None:
         self.client = Anthropic()
 
-    def review(self, flag_content: str, audit_envelope: Dict[str, Any]) -> ReviewerVerdict:
+    def review(
+        self, flag_content: str, audit_envelope: Dict[str, Any], persona: Optional[str] = None
+    ) -> ReviewerVerdict:
         user_msg = (
             "Original flag content:\n---\n"
             f"{flag_content}\n---\n\n"
@@ -140,6 +142,8 @@ class AdversarialReviewer:
                 messages=[{"role": "user", "content": user_msg}],
             )
             text = response.content[0].text if response.content else ""
+            from services.llm_ledger import record_from_response
+            record_from_response(response, persona=persona, surface="reviewer")
         except Exception as e:
             logger.exception("[ape:reviewer] session failed: %s", e)
             return ReviewerVerdict(

@@ -19,11 +19,21 @@ import sys
 from crewai import LLM
 from config.runtime import resolve_llm_model_and_key
 
+def _ensure_spend_tracking():
+    """Attach the LiteLLM -> llm_spend_ledger callback (idempotent, non-fatal)."""
+    try:
+        from services.litellm_ledger_hook import register
+        register()
+    except Exception:
+        pass
+
+
 def get_llm():
     """
     Returns an LLM instance via LiteLLM.
     Provider/model are configurable via environment variables to support low-cost routing.
     """
+    _ensure_spend_tracking()
     model_name, api_key = resolve_llm_model_and_key()
 
     # Don't crash at import time; surface warning in logs/dashboard.
@@ -46,6 +56,7 @@ def get_llm_research():
     1M context (vs 64K), better at tool use and open-ended reasoning.
     Falls back to the default LLM if OpenRouter key isn't set.
     """
+    _ensure_spend_tracking()
     api_key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
     if not api_key:
         return get_llm()
