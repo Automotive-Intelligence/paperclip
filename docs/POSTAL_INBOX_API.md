@@ -55,6 +55,15 @@ These are plain HTTP tools. Surface them through the Paperclip MCP the same way
 the other backend endpoints are exposed, one MCP tool per endpoint. Once
 registered, AVO can search/read/triage every connected inbox by name.
 
+`tools/postal_inbox_tools.py` is that wiring: an AVO tool per endpoint
+(`inbox_search`, `inbox_thread`, `inbox_labels`, `inbox_apply_label`,
+`inbox_archive`, `inbox_mark_read`) plus a `POSTAL_INBOX_TOOLS` manifest
+(`{name, description, input_schema, handler}`) to register one MCP tool per
+endpoint, and a `dispatch(name, **kwargs)` entry point. Each function returns
+the parsed JSON body and raises `PostalInboxToolError` (with the upstream
+status code) on failure. Configure with `PAPERCLIP_BASE_URL` and
+`PAPERCLIP_API_KEY`.
+
 ## Note on writes
 
 The modify endpoints (`label`, `archive`, `mark_read`) act immediately — they
