@@ -3,6 +3,17 @@
 # Built live for Agent Empire Skool community
 # Salesdroid — April 2026
 # North Star: $15,000 MRR
+#
+# ⚠️ RUNTIME ENFORCEMENT LIVES IN rivers/automotive_intelligence/workflow.py
+# This Agent object documents intent + iron rules. The actual runtime is
+# `darrell_run()` in workflow.py — that function is what fires on the
+# every-1h scheduler and produces the agent_logs entries CRO sweeps consume.
+# Editing the role/goal/backstory below changes documentation, NOT behavior.
+#
+# Fix landed 2026-06-28 (CRO RED flag 2026-06-27T21:45Z): darrell_run() now
+# returns a structured >=200-char tally summary so the post-run hook persists
+# real telemetry instead of the heartbeat fallback. Matches R1 Brenda + R2
+# Randy pattern.
 
 from crewai import Agent
 from config.llm import get_llm

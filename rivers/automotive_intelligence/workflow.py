@@ -32,12 +32,33 @@ _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0, "deals_created": 0}
 
 
 def darrell_run():
-    """Main loop — called by scheduler every 1 hour."""
+    """Main loop — called by scheduler every 1 hour.
+
+    Returns a structured per-run summary string (>=200 chars) so the post-run
+    hook in app.py persists it as raw_output instead of the heartbeat fallback.
+    CRO RED flag 2026-06-27T21:45Z: heartbeat-only logs masked Darrell's
+    actual surface. Matches R1 Brenda + R2 Randy pattern.
+    """
+    started_at = datetime.now()
     log_info("automotive_intelligence", "=== DARRELL RUN START ===")
+    tally = {
+        "verified_dealers_found": 0,
+        "enrolled_attempted": 0,
+        "deals_created": 0,
+        "messages_sent": 0,
+        "hot_leads_flagged": 0,
+        "errors": 0,
+    }
     try:
         dealers = _find_verified_dealers()
+        tally["verified_dealers_found"] = len(dealers)
         for contact in dealers:
-            _enroll_dealer(contact)
+            try:
+                tally["enrolled_attempted"] += 1
+                _enroll_dealer(contact)
+            except Exception as e:
+                tally["errors"] += 1
+                log_error("automotive_intelligence", f"Per-dealer enrollment failed: {e}")
 
         _process_sequences()
         _check_hot_leads()
@@ -45,9 +66,36 @@ def darrell_run():
         # Pit wall — monitor Ryan Data's Instantly campaign telemetry
         _run_pit_wall()
 
+        tally["deals_created"] = _stats["deals_created"]
+        tally["messages_sent"] = _stats["messages_sent"]
+        tally["hot_leads_flagged"] = _stats["hot_leads"]
+        duration_sec = (datetime.now() - started_at).total_seconds()
         log_info("automotive_intelligence", f"=== DARRELL RUN COMPLETE === Enrolled: {_stats['enrolled']} | Deals: {_stats['deals_created']}")
+        return _format_run_summary(tally, duration_sec, started_at)
     except Exception as e:
         log_error("automotive_intelligence", f"Darrell run failed: {e}")
+        return (
+            f"DARRELL RUN FAILED — {started_at.isoformat()}\n"
+            f"  Error: {e}\n"
+            f"  Tallies before failure: {tally}\n"
+            f"  Action: CRO + B&T review the workflow.py traceback."
+        )
+
+
+def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
+    """>=200-char per-run telemetry — matches R1/R2 pattern so the brief +
+    CRO sweep parse all three RevOps agents identically."""
+    return (
+        f"DARRELL RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
+        f"  Verified dealer-decision-makers found: {tally['verified_dealers_found']}\n"
+        f"  Enrollment attempts: {tally['enrolled_attempted']}\n"
+        f"  HubSpot deals created this run: {tally['deals_created']}\n"
+        f"  Sequence messages sent: {tally['messages_sent']}\n"
+        f"  Hot leads flagged (3+ opens): {tally['hot_leads_flagged']}\n"
+        f"  Errors during run: {tally['errors']}\n"
+        f"  Source: HubSpot (AvI on HubSpot until Twenty AvI migration completes).\n"
+        f"  Iron rules: dealer-decision-makers only, no over-targeting GMs at sub-100-car stores."
+    )
 
 
 def _run_pit_wall():
