@@ -3767,6 +3767,21 @@ async def lifespan(app: FastAPI):
             f"[DB] Startup init failed — app will run without Postgres: {e}"
         )
 
+    # ── Auto-apply any pending SQL migrations. Idempotent — already-applied
+    # files (recorded in schema_migrations) are skipped; new files run once
+    # then get a ledger row. CREATE TABLE IF NOT EXISTS style migrations mean
+    # the first run across pre-runner migrations no-ops cleanly. Failures log
+    # but don't crash startup.
+    try:
+        from services.migration_runner import apply_pending
+        migration_summary = apply_pending()
+        if migration_summary.get("applied"):
+            logging.info(f"[Migrations] applied: {migration_summary['applied']}")
+        if migration_summary.get("errors"):
+            logging.error(f"[Migrations] errors: {migration_summary['errors']}")
+    except Exception as e:
+        logging.warning(f"[Migrations] runner failed: {e}")
+
     # ── Revenue tracker init
     try:
         init_revenue_tracker(_db, CST)
