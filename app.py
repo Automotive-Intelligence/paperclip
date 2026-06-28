@@ -4066,11 +4066,18 @@ def _run_startup_bootstrap():
     except Exception as e:
         logging.warning(f"[Zernio] Init failed — social publishing via Zernio disabled: {e}")
 
-    # ── Project Paperclip Rivers — 5 rivers, all agents
+    # ── Project Paperclip Rivers — RevOps boot-time kicks
     try:
-        from rivers.automotive_intelligence.cleanup import run_cleanup
-        cleanup_result = run_cleanup()
-        logging.info(f"[Paperclip] HubSpot cleanup: {cleanup_result}")
+        # rivers/automotive_intelligence/cleanup.run_cleanup intentionally
+        # SKIPPED at boot. It talks to HubSpot, which was retired
+        # 2026-06-27 (PR #82). Every container restart was kicking off a
+        # ~6min loop that issued ~690 contact-update PATCH calls; HubSpot
+        # returned 400 on every one (and would have been Attio-style
+        # billing exposure if it'd actually worked), spamming Railway
+        # logs and burning bandwidth. PR #110 had this skip; it was lost
+        # in a parallel merge with #109 and the line came back. Re-skip
+        # surgically here. Job + file kept in place for git-blame; safe
+        # to delete in a follow-up sweep.
 
         try:
             from rivers.ai_phone_guy.workflow import randy_run
