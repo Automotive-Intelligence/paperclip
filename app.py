@@ -3343,6 +3343,49 @@ scheduler.add_job(_run_wd_crm_push_responder, IntervalTrigger(minutes=15, timezo
     id="wd_crm_push_responder_15m", name="WD CRM-push Reply Responder — Every 15min",
     replace_existing=True, misfire_grace_time=600)
 
+# Persona Cron Loop Phase B — KPI metrics collector.
+# Walks scorecards, dispatches each KPI to its connector, writes kpi_snapshots
+# rows. Personas read snapshots in Phase C. Cadence buckets fire offset 15min
+# before persona wakes so the snapshot is fresh when read.
+# Plan: docs/superpowers/plans/2026-06-26-persona-cron-loop-phase-b-metrics-collector.md
+def _run_metrics_collector(cadence: str):
+    try:
+        from services.metrics_collector import run as _collector_run
+        summary = _collector_run(cadence)
+        logging.info(f"[Paperclip] metrics_collector({cadence}): {summary}")
+    except Exception as e:
+        logging.error(f"[Paperclip] metrics_collector({cadence}) failed: {e}")
+
+# Hourly KPIs (CRO time-sensitive, B&T agent_error_rate, token burn).
+scheduler.add_job(lambda: _run_metrics_collector("hourly"),
+    CronTrigger(minute=15, timezone=CST),
+    id="metrics_collector_hourly", name="KPI Collector — Hourly",
+    replace_existing=True, misfire_grace_time=300)
+
+# Every-4h KPIs (B&T uptime checks during business hours).
+scheduler.add_job(lambda: _run_metrics_collector("every_4h"),
+    CronTrigger(hour="6,10,14,18,22", minute=15, timezone=CST),
+    id="metrics_collector_every_4h", name="KPI Collector — Every 4h",
+    replace_existing=True, misfire_grace_time=600)
+
+# Daily KPIs (most marketing + operations KPIs).
+scheduler.add_job(lambda: _run_metrics_collector("daily"),
+    CronTrigger(hour=6, minute=0, timezone=CST),
+    id="metrics_collector_daily", name="KPI Collector — Daily 6 AM",
+    replace_existing=True, misfire_grace_time=1800)
+
+# Weekly KPIs (trend metrics — Monday 5:30 AM).
+scheduler.add_job(lambda: _run_metrics_collector("weekly"),
+    CronTrigger(day_of_week="mon", hour=5, minute=30, timezone=CST),
+    id="metrics_collector_weekly", name="KPI Collector — Weekly (Mon 5:30 AM)",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Monthly KPIs (MRR, podcast episodes, churn — 1st of month 5 AM).
+scheduler.add_job(lambda: _run_metrics_collector("monthly"),
+    CronTrigger(day=1, hour=5, minute=0, timezone=CST),
+    id="metrics_collector_monthly", name="KPI Collector — Monthly (1st 5 AM)",
+    replace_existing=True, misfire_grace_time=7200)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",

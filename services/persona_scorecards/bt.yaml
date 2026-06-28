@@ -38,7 +38,7 @@ kpis:
 
   - name: api_uptime_per_service
     display: "Uptime per critical service (Paperclip, AVO, Cockpit, Twenty WD, Twenty AvI, Loops, GHL)"
-    source: cto_daily_sweep + railway_status
+    source: cto_daily_sweep
     target: 99.9                # %
     target_unit: "%"
     threshold_yellow: 99
@@ -62,7 +62,7 @@ kpis:
 
   - name: time_to_resolution_flagged_issues
     display: "Median hours from flag posted to flag closed (across all personas)"
-    source: agent_handoffs
+    source: postgres_agent_logs
     target: 24                  # hours
     target_unit: "hours (median)"
     threshold_yellow: 48
