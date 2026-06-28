@@ -4828,6 +4828,27 @@ async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
     return JSONResponse(content=result)
 
 
+@app.get("/admin/scoreboard/aipg")
+async def aipg_scoreboard_get(
+    days: int = 7,
+    authorization: Optional[str] = Header(None),
+):
+    """AIPG funnel scoreboard JSON for the trailing N days (default 7).
+
+    Surfaces Tyler outreach (runs + push status counts), Zoe nurture activity,
+    GHL appointment + deal-won counts, and a computed close rate. Where data
+    isn't yet wired (Zoe reply tracking, founder-offer take-rate), `notes`
+    explains what needs to land for the field to populate.
+
+    Per Pit Wall flag #5 (2026-06-15).
+    """
+    validate_key(authorization)
+    from services.aipg_scoreboard import build_aipg_scoreboard
+    days_clamped = max(1, min(int(days), 90))
+    board = await asyncio.to_thread(build_aipg_scoreboard, days_clamped)
+    return JSONResponse(content=board.to_dict())
+
+
 @app.post("/admin/run-now")
 async def run_now(
     scope: str = "sales",
