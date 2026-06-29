@@ -82,12 +82,37 @@ def _mark_seen(contact_id: str):
 
 
 def brenda_run():
-    """Main loop — called by scheduler every 2 hours."""
+    """Main loop — called by scheduler every 2 hours via _avo_wrap_run.
+
+    Returns a structured per-run summary string (>=200 chars). _avo_wrap_run in
+    app.py persists this return value to agent_logs; returning None (the prior
+    behavior) fell back to the ~55-char heartbeat, which is why the morning
+    brief + CRO sweeps could never see Brenda's real surface.
+
+    RETIRED-CRM NOTE: Calling Digital / Worship Digital's CRM substrate is Attio
+    (api.attio.com), retired 2026-06-12. _find_new_contacts() now NO-OPS the
+    live Attio query rather than hammering a retired API; the summary states the
+    migration is pending so the gap is visible instead of silent.
+    """
+    started_at = datetime.now()
     log_info("calling_digital", "=== BRENDA RUN START ===")
+    tally = {
+        "new_contacts": 0,
+        "enrolled": 0,
+        "messages_sent": 0,
+        "hot_leads_flagged": 0,
+        "errors": 0,
+        "crm_substrate": "attio (RETIRED 2026-06-12) — read path neutralized, Twenty migration pending",
+    }
     try:
         new_contacts = _find_new_contacts()
+        tally["new_contacts"] = len(new_contacts)
         for contact in new_contacts:
-            _score_and_enroll(contact)
+            try:
+                _score_and_enroll(contact)
+            except Exception as e:
+                tally["errors"] += 1
+                log_error("calling_digital", f"Per-contact enrollment failed: {e}")
 
         _process_sequences()
         _check_hot_leads()
@@ -95,9 +120,34 @@ def brenda_run():
         # Pit wall — monitor Marcus's Instantly campaign telemetry (if configured)
         _run_pit_wall()
 
+        tally["enrolled"] = _stats["enrolled"]
+        tally["messages_sent"] = _stats["messages_sent"]
+        tally["hot_leads_flagged"] = _stats["hot_leads"]
+        duration_sec = (datetime.now() - started_at).total_seconds()
         log_info("calling_digital", f"=== BRENDA RUN COMPLETE === Enrolled: {_stats['enrolled']} | Messages: {_stats['messages_sent']}")
+        return _format_run_summary(tally, duration_sec, started_at)
     except Exception as e:
         log_error("calling_digital", f"Brenda run failed: {e}")
+        return (
+            f"BRENDA RUN FAILED — {started_at.isoformat()}\n"
+            f"  Error: {e}\n"
+            f"  Tallies before failure: {tally}\n"
+            f"  Action: CRO + B&T review the workflow.py traceback in agent_logs."
+        )
+
+
+def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
+    """>=200-char per-run telemetry CRO sweeps + morning brief read."""
+    return (
+        f"BRENDA RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
+        f"  New contacts this cycle: {tally['new_contacts']}\n"
+        f"  Enrolled (cumulative this process): {tally['enrolled']}\n"
+        f"  Sequence messages sent (cumulative this process): {tally['messages_sent']}\n"
+        f"  Hot leads flagged to Marcus: {tally['hot_leads_flagged']}\n"
+        f"  Errors during run: {tally['errors']}\n"
+        f"  CRM substrate: {tally['crm_substrate']}\n"
+        f"  Iron rules: pricing never mentioned, copy written to OWNER, ICP-specific."
+    )
 
 
 def _run_pit_wall():
@@ -118,7 +168,25 @@ def _run_pit_wall():
 
 
 def _find_new_contacts() -> list:
-    """Find new contacts in Attio that haven't been enrolled."""
+    """Find new contacts in the CRM that haven't been enrolled.
+
+    RETIRED-CRM GUARD: Attio (api.attio.com) was retired 2026-06-12. This read
+    path is neutralized so the scheduler stops issuing queries against a retired
+    API every 2h. The function returns [] (no enrollment) until the Worship
+    Digital workspace is wired to its live substrate (Twenty). This is a
+    deliberate, visible no-op — brenda_run()'s summary reports the pending
+    migration so the gap is never silent. Do NOT re-point this at Attio.
+    """
+    log_info(
+        "calling_digital",
+        "[RETIRED-CRM] Attio read path neutralized (retired 2026-06-12) — "
+        "no new contacts pulled; Twenty WD migration pending"
+    )
+    return []
+
+    # --- Dead Attio path retained below for migration reference only ----------
+    # The early return above means none of this executes. Kept so the Twenty
+    # migration can see the exact shape the rest of the workflow expects.
     if not _attio_key():
         log_info("calling_digital", "[DRY RUN] No ATTIO_API_KEY — skipping")
         return []

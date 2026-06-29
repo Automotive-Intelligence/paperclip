@@ -32,12 +32,38 @@ _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0, "deals_created": 0}
 
 
 def darrell_run():
-    """Main loop — called by scheduler every 1 hour."""
+    """Main loop — called by scheduler every 1 hour via _avo_wrap_run.
+
+    Returns a structured per-run summary string (>=200 chars). _avo_wrap_run in
+    app.py persists this return value to agent_logs; returning None (the prior
+    behavior) fell back to the ~55-char heartbeat, masking Darrell's surface
+    from the morning brief + CRO sweeps.
+
+    RETIRED-CRM NOTE: Automotive Intelligence's CRM substrate here is HubSpot
+    (api.hubapi.com), which is being retired. _find_verified_dealers() now
+    NO-OPS the live HubSpot search rather than POSTing to a retiring API every
+    hour; the summary states the migration is pending so the gap is visible.
+    """
+    started_at = datetime.now()
     log_info("automotive_intelligence", "=== DARRELL RUN START ===")
+    tally = {
+        "verified_dealers_found": 0,
+        "enrolled": 0,
+        "deals_created": 0,
+        "messages_sent": 0,
+        "hot_leads_flagged": 0,
+        "errors": 0,
+        "crm_substrate": "hubspot (RETIRING) — read path neutralized, Twenty AvI migration pending",
+    }
     try:
         dealers = _find_verified_dealers()
+        tally["verified_dealers_found"] = len(dealers)
         for contact in dealers:
-            _enroll_dealer(contact)
+            try:
+                _enroll_dealer(contact)
+            except Exception as e:
+                tally["errors"] += 1
+                log_error("automotive_intelligence", f"Per-dealer enrollment failed: {e}")
 
         _process_sequences()
         _check_hot_leads()
@@ -45,9 +71,36 @@ def darrell_run():
         # Pit wall — monitor Ryan Data's Instantly campaign telemetry
         _run_pit_wall()
 
+        tally["enrolled"] = _stats["enrolled"]
+        tally["deals_created"] = _stats["deals_created"]
+        tally["messages_sent"] = _stats["messages_sent"]
+        tally["hot_leads_flagged"] = _stats["hot_leads"]
+        duration_sec = (datetime.now() - started_at).total_seconds()
         log_info("automotive_intelligence", f"=== DARRELL RUN COMPLETE === Enrolled: {_stats['enrolled']} | Deals: {_stats['deals_created']}")
+        return _format_run_summary(tally, duration_sec, started_at)
     except Exception as e:
         log_error("automotive_intelligence", f"Darrell run failed: {e}")
+        return (
+            f"DARRELL RUN FAILED — {started_at.isoformat()}\n"
+            f"  Error: {e}\n"
+            f"  Tallies before failure: {tally}\n"
+            f"  Action: CRO + B&T review the workflow.py traceback in agent_logs."
+        )
+
+
+def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
+    """>=200-char per-run telemetry CRO sweeps + morning brief read."""
+    return (
+        f"DARRELL RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
+        f"  Verified dealer-decision-makers found: {tally['verified_dealers_found']}\n"
+        f"  Enrolled (cumulative this process): {tally['enrolled']}\n"
+        f"  Deals created (cumulative this process): {tally['deals_created']}\n"
+        f"  Sequence messages sent (cumulative this process): {tally['messages_sent']}\n"
+        f"  Hot leads flagged (3+ opens): {tally['hot_leads_flagged']}\n"
+        f"  Errors during run: {tally['errors']}\n"
+        f"  CRM substrate: {tally['crm_substrate']}\n"
+        f"  Iron rules: dealer-decision-makers only, no over-targeting GMs at sub-100-car stores."
+    )
 
 
 def _run_pit_wall():
@@ -68,7 +121,23 @@ def _run_pit_wall():
 
 
 def _find_verified_dealers() -> list:
-    """Find contacts classified as Dealership Decision Maker not yet enrolled."""
+    """Find contacts classified as Dealership Decision Maker not yet enrolled.
+
+    RETIRED-CRM GUARD: HubSpot (api.hubapi.com) is being retired. This read path
+    is neutralized so the scheduler stops issuing search POSTs against a
+    retiring API every hour. Returns [] (no enrollment) until the AvI workspace
+    is wired to its live substrate (Twenty). Deliberate, visible no-op —
+    darrell_run()'s summary reports the pending migration. Do NOT re-point this
+    at HubSpot.
+    """
+    log_info(
+        "automotive_intelligence",
+        "[RETIRED-CRM] HubSpot read path neutralized (retiring) — "
+        "no dealers pulled; Twenty AvI migration pending"
+    )
+    return []
+
+    # --- Dead HubSpot path retained below for migration reference only --------
     if not _hs_key():
         log_info("automotive_intelligence", "[DRY RUN] No HUBSPOT_API_KEY — skipping")
         return []
