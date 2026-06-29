@@ -84,6 +84,14 @@ AGENT_CATALOG = {
     "tammy_ae": ("Agent Empire", "Community"),
     "debra": ("Agent Empire", "Content"),
 
+    # Book'd
+    "marshall": ("Book'd", "CEO"),
+    "cole": ("Book'd", "Sales"),
+    "hayes": ("Book'd", "RevOps"),
+    "sutton": ("Book'd", "Marketing"),
+    "quinn": ("Book'd", "Customer Success"),
+    "reid": ("Book'd", "Intelligence"),
+
     # Executive
     "axiom": ("Executive", "CEO"),
     # coo_agent retired from dashboard 2026-06-24 — CRO chat absorbs the
