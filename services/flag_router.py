@@ -714,6 +714,7 @@ def route_files(
 
 
 _DIGEST_TRACKED_FILES = [
+    "team_principal_state.md",
     "revenue_state.md", "client_situations.md", "content_pipeline.md",
     "brand_rules.md", "sales_pipeline.md", "client_campaigns.md",
     "cmo_state.md", "infrastructure_state.md", "strategic_calls.md",
