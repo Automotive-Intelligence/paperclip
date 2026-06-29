@@ -528,6 +528,7 @@ def compose_briefing_html(
     tyler: Dict[str, Any],
     ryan: Dict[str, Any],
     revenue: Dict[str, Any] = None,
+    client_campaigns: Dict[str, Dict[str, Any]] = None,
 ) -> str:
     """Compose a structured HTML briefing."""
     today = datetime.now().strftime("%A, %B %d %Y")
@@ -579,8 +580,12 @@ def compose_briefing_html(
         )
 
     # ── BOX BOX alerts (prominently displayed) ──
+    # Unified across owned + client campaigns since these are all action items.
     box_box_html = ""
     all_boxes = tyler.get("box_box", []) + ryan.get("box_box", [])
+    if client_campaigns:
+        for _name, _data in client_campaigns.items():
+            all_boxes += _data.get("box_box", [])
     if all_boxes:
         rows = "".join(
             f"<tr><td style='padding:6px 10px;'><b>{b['company']}</b></td>"
@@ -618,7 +623,7 @@ def compose_briefing_html(
         )
 
     campaign_html = (
-        f"<h2 style='margin-top:24px;'>📧 Instantly Campaigns</h2>"
+        f"<h2 style='margin-top:24px;'>📧 Instantly Campaigns <span style='font-size:13px;color:#666;font-weight:normal;'>(main business lines)</span></h2>"
         f"<table style='border-collapse:collapse;width:100%;font-size:13px;"
         f"border:1px solid #ddd;'>"
         f"<tr style='background:#f5f5f5;'>"
@@ -633,6 +638,26 @@ def compose_briefing_html(
         f"{_campaign_row('Ryan Data — Automotive Intelligence', ryan)}"
         f"</table>"
     )
+
+    # ── Client campaigns table (separate from main business lines) ──
+    client_html = ""
+    if client_campaigns:
+        client_rows = "".join(_campaign_row(name, data) for name, data in client_campaigns.items())
+        client_html = (
+            f"<h2 style='margin-top:24px;'>📦 Client Campaigns <span style='font-size:13px;color:#666;font-weight:normal;'>(billable client work, not main business lines)</span></h2>"
+            f"<table style='border-collapse:collapse;width:100%;font-size:13px;"
+            f"border:1px solid #ddd;'>"
+            f"<tr style='background:#fff8e1;'>"
+            f"<th style='padding:8px 12px;text-align:left;'>Campaign</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>Status</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>Leads</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>Sent 24h</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>Opens</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>Replies</th>"
+            f"<th style='padding:8px 12px;text-align:left;'>DNF</th></tr>"
+            f"{client_rows}"
+            f"</table>"
+        )
 
     # ── Full HTML ──
     return f"""<!DOCTYPE html>
@@ -658,6 +683,8 @@ color:#333;max-width:720px;margin:0 auto;padding:20px;">
 
 {campaign_html}
 
+{client_html}
+
 <h2 style="margin-top:24px;">🤖 Agent Activity (last 24h)</h2>
 <div style="color:#666;font-size:12px;margin-bottom:10px;">
 Green ✓ = ran. Red ⚠ = silent (didn't run in last 24h — may need investigation).
@@ -667,7 +694,7 @@ Green ✓ = ran. Red ⚠ = silent (didn't run in last 24h — may need investiga
 <hr style="margin:30px 0;border:none;border-top:1px solid #ddd;">
 <div style="color:#888;font-size:12px;">
 Generated automatically by Paperclip morning briefing. Runs every day at 8am CDT.<br>
-Revenue section (CRO) added 2026-06-24. Twenty pipeline pull wires in next.<br>
+Revenue section (CRO) added 2026-06-24. Client Campaigns section (P&P) added 2026-06-29.<br>
 To change recipient, timing, or content: edit rivers/shared/morning_briefing.py<br>
 </div>
 </body></html>"""
@@ -762,8 +789,26 @@ def morning_briefing_run() -> dict:
     # Pull CRO revenue layer (stub until Twenty workspaces wire in)
     revenue = pull_revenue_pipeline_summary()
 
+    # Pull client-campaign telemetry (separate from main business lines above).
+    # Paper & Purpose launches 2026-06-29 (Miriam Rubio, MSA + 10% rev-share).
+    # Defaults to known campaign IDs so brief works on first deploy; Railway env
+    # vars override if/when IDs change.
+    pp_api_key = os.getenv("INSTANTLY_API_KEY_PAPERANDPURPOSE", "").strip()
+    client_campaigns: Dict[str, Dict[str, Any]] = {}
+    if pp_api_key:
+        pp_icp_a_id = os.getenv("INSTANTLY_CAMPAIGN_PP_ICP_A",
+                                "68e7bb87-4e1a-4c97-9200-0b4783373ec3").strip()
+        pp_icp_b_id = os.getenv("INSTANTLY_CAMPAIGN_PP_ICP_B",
+                                "03dd93e3-56ab-4b52-81f2-0dc1fcda6dd4").strip()
+        client_campaigns["P&P — ICP-A Returning Woman"] = pull_instantly_campaign_summary(
+            pp_api_key, pp_icp_a_id,
+        )
+        client_campaigns["P&P — ICP-B Christian Girly"] = pull_instantly_campaign_summary(
+            pp_api_key, pp_icp_b_id,
+        )
+
     # Compose briefing
-    html = compose_briefing_html(activity, tyler, ryan, revenue)
+    html = compose_briefing_html(activity, tyler, ryan, revenue, client_campaigns)
 
     # Compose subject
     total_sent = tyler.get("sent_24h", 0) + ryan.get("sent_24h", 0)
@@ -772,7 +817,12 @@ def morning_briefing_run() -> dict:
     rev_suffix = ""
     if revenue.get("wired"):
         rev_suffix = f", {revenue.get('bookings_24h', 0)} bookings, {revenue.get('closed_24h', 0)} closed"
-    subject = f"☀️ Morning Briefing — {total_sent} sent, {total_replies} replies, {total_boxes} BOX BOX{rev_suffix}"
+    client_suffix = ""
+    if client_campaigns:
+        client_sent = sum(c.get("sent_24h", 0) for c in client_campaigns.values())
+        client_replies = sum(c.get("replies_24h", 0) for c in client_campaigns.values())
+        client_suffix = f" [client: {client_sent} sent / {client_replies} replies]"
+    subject = f"☀️ Morning Briefing — {total_sent} sent, {total_replies} replies, {total_boxes} BOX BOX{rev_suffix}{client_suffix}"
 
     # SMS headline
     sms_headline = (
@@ -795,6 +845,9 @@ def morning_briefing_run() -> dict:
         "revenue_wired": revenue.get("wired", False),
         "revenue_bookings_24h": revenue.get("bookings_24h", 0),
         "revenue_closed_24h": revenue.get("closed_24h", 0),
+        "client_campaigns_count": len(client_campaigns),
+        "client_sent_24h": sum(c.get("sent_24h", 0) for c in client_campaigns.values()),
+        "client_replies_24h": sum(c.get("replies_24h", 0) for c in client_campaigns.values()),
     }
     logger.info(f"[Briefing] Complete: {result}")
     return result
