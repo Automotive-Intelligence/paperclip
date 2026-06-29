@@ -93,7 +93,8 @@ def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
         f"  Sequence messages sent: {tally['messages_sent']}\n"
         f"  Hot leads flagged (3+ opens): {tally['hot_leads_flagged']}\n"
         f"  Errors during run: {tally['errors']}\n"
-        f"  Source: HubSpot (AvI on HubSpot until Twenty AvI migration completes).\n"
+        f"  Source: HubSpot read path NEUTRALIZED ([RETIRED-CRM] guard) — "
+        f"0 dealers until Twenty AvI migration lands (known residual gap).\n"
         f"  Iron rules: dealer-decision-makers only, no over-targeting GMs at sub-100-car stores."
     )
 
@@ -116,7 +117,24 @@ def _run_pit_wall():
 
 
 def _find_verified_dealers() -> list:
-    """Find contacts classified as Dealership Decision Maker not yet enrolled."""
+    """Find contacts classified as Dealership Decision Maker not yet enrolled.
+
+    RETIRED-CRM GUARD: HubSpot (api.hubapi.com) is being retired and AvI is not
+    yet wired to its live substrate (Twenty). This read path is neutralized so
+    the scheduler stops issuing search POSTs against a retiring API every hour.
+    Returns [] (no enrollment) until the AvI workspace is migrated to Twenty.
+    Deliberate, visible no-op — darrell_run() will report 0 dealers and Darrell
+    won't enroll until migration lands (known residual gap). Do NOT re-point
+    this at HubSpot.
+    """
+    log_info(
+        "automotive_intelligence",
+        "[RETIRED-CRM] HubSpot read path neutralized (retiring) — "
+        "no dealers pulled; Twenty AvI migration pending"
+    )
+    return []
+
+    # --- Dead HubSpot path retained below for migration reference only --------
     if not _hs_key():
         log_info("automotive_intelligence", "[DRY RUN] No HUBSPOT_API_KEY — skipping")
         return []
