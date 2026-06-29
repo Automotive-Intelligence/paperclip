@@ -63,9 +63,9 @@ BRAND_PROMPT_STYLES = {
         "Corporate but approachable. "
     ),
     "autointelligence": (
-        "Automotive dealership technology aesthetic. "
-        "Blue accent tones (#47A1FF). Sleek, data-driven visuals. "
-        "Professional automotive imagery. "
+        "Automotive AI consulting aesthetic. Dark near-black palette (#0a0c10) "
+        "with teal-cyan accent tones (#2dd4bf). Sleek, data-driven, premium console visuals. "
+        "Real grounded automotive imagery, not sci-fi, not neon. "
     ),
     "aiphoneguy": (
         "Warm, energetic small-business aesthetic. "
