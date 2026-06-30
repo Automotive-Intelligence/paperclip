@@ -97,6 +97,18 @@ AGENT_CATALOG = {
     # coo_agent retired from dashboard 2026-06-24 — CRO chat absorbs the
     # agent-accountability function. Underlying scheduled job + cockpit
     # consumer still wired in app.py; B&T migration to follow.
+
+    # CRO GTM/Outreach Pod (seats stood up 2026-06-30 per
+    # marketing_deliverables/cro_gtm_pod_fleet_spec_2026-06-30.md).
+    # Cross-brand pod parallel to the marketing studio (Iris + IM agents);
+    # Apex gates revenue artifacts before ship, Quill authors, Echo triages
+    # warm replies, Bridge runs demo-to-close playbooks (per-brand), Verity
+    # reads conversion telemetry + recommends tests.
+    "apex":   ("GTM Pod", "Director"),
+    "quill":  ("GTM Pod", "Copywriter"),
+    "echo":   ("GTM Pod", "Reply Strategist"),
+    "bridge": ("GTM Pod", "Closer Playbook"),
+    "verity": ("GTM Pod", "Conversion Analyst"),
 }
 
 
