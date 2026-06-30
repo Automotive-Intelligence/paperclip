@@ -99,15 +99,15 @@ def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
     """>=200-char per-run telemetry so CRO sweeps + morning brief see real work.
 
     Critical surfacing: enrolled_tag_failed > 0 is the leak signal — those
-    contacts hit _enroll_contact() but the GHL PUT to add 'sequence-active'
-    failed, so they'll show up as 'new' on the next run (in-memory _enrolled
-    is per-process). 29 stuck contacts as of 2026-06-27 traced to this exact
-    silent-failure path.
+    contacts hit _enroll_contact() but the GHL add-tag POST to write
+    'sequence-active' failed, so they'll show up as 'new' on the next run
+    (in-memory _enrolled is per-process). 29 stuck contacts as of 2026-06-27
+    traced to this exact silent-failure path.
     """
     leak_warning = (
         ""
         if tally["enrolled_tag_failed"] == 0
-        else f"\n  ⚠️ LEAK SIGNAL: {tally['enrolled_tag_failed']} contacts enrolled in-memory but GHL tag PUT failed — these will re-appear as 'new' next run."
+        else f"\n  LEAK SIGNAL: {tally['enrolled_tag_failed']} contacts enrolled in-memory but GHL add-tag POST failed — these will re-appear as 'new' next run."
     )
     per_vert = tally["per_vertical"]
     vert_line = "  ".join(f"{k}: {v}" for k, v in sorted(per_vert.items())) or "(none)"
@@ -159,16 +159,24 @@ def _find_new_prospects() -> list:
 def _enroll_contact(contact: dict) -> bool:
     """Immediately enroll a contact into their ICP sequence.
 
-    Returns True if the GHL sequence-active tag was successfully PUT (contact
-    enrolled durably). Returns False if the in-memory enrollment succeeded
-    but the GHL tag PUT failed — in that case the contact will re-appear as
-    'new' on the next run (the LEAK that surfaced as 29 stuck contacts per
-    CRO RED flag 2026-06-27T21:45Z).
+    Returns True if the GHL 'sequence-active' tag was durably written (contact
+    enrolled durably, or a dry-run with no GHL key). Returns False if the
+    in-memory enrollment succeeded but the GHL tag write failed — in that case
+    the contact will re-appear as 'new' on the next run (the LEAK that surfaced
+    as 29 stuck contacts per CRO RED flag 2026-06-27T21:45Z).
 
-    Prior version called requests.put(...) with NO response check, so any
-    GHL failure (rate limit, auth expiry, schema change) silently dropped the
-    enrollment. Fixed here: PUT result checked, status logged, return value
-    differentiates durable vs in-memory-only enrollment.
+    ROOT CAUSE of the 29-contact "ZERO enrollment tags" leak: the prior code
+    did requests.put(f"{GHL_BASE}/contacts/{cid}", json={"tags": ...}) with NO
+    response check. Two compounding defects:
+      1. Wrong endpoint. The LeadConnector v2 API does NOT mutate tags through
+         the contact-Update endpoint (PUT /contacts/{id}); a tags-only body is
+         silently ignored. Tags must be added via the dedicated Add-Tags
+         endpoint POST /contacts/{id}/tags — the same pattern Joshua's
+         pit_wall.py already uses successfully (pit_wall.py ~lines 53/57).
+      2. No status check. Even when the call failed, enrollment was treated as
+         done, so the contact was marked enrolled in-memory and never retried.
+    Both are fixed here: dedicated Add-Tags endpoint + status check + truthful
+    durable return. No in-place mutation of the source contact's tags.
     """
     cid = contact.get("id")
     vertical = contact.get("_vertical")
@@ -181,26 +189,26 @@ def _enroll_contact(contact: dict) -> bool:
         "contact": contact,
     }
 
-    # Add sequence-active tag in GHL. If this fails, we have an in-memory leak.
+    # Add the sequence-active tag in GHL via the dedicated Add-Tags endpoint.
+    # If this fails, we have an in-memory leak.
     tag_durable = False
     if _ghl_key():
-        url = f"{GHL_BASE}/contacts/{cid}"
-        current_tags = list(contact.get("tags", []))
-        if "sequence-active" not in current_tags:
-            current_tags.append("sequence-active")
+        url = f"{GHL_BASE}/contacts/{cid}/tags"
         try:
-            resp = requests.put(url, headers=_ghl_headers(), json={"tags": current_tags}, timeout=15)
+            resp = requests.post(
+                url, headers=_ghl_headers(), json={"tags": ["sequence-active"]}, timeout=15
+            )
             if resp.status_code in (200, 201, 204):
                 tag_durable = True
             else:
                 log_error(
                     "ai_phone_guy",
-                    f"LEAK: GHL tag PUT failed for {cid} ({name}) status={resp.status_code} body={resp.text[:200]} — contact enrolled in-memory only, will re-appear next run"
+                    f"LEAK: GHL add-tag POST failed for {cid} ({name}) status={resp.status_code} body={resp.text[:200]} — contact enrolled in-memory only, will re-appear next run"
                 )
         except Exception as e:
             log_error(
                 "ai_phone_guy",
-                f"LEAK: GHL tag PUT raised for {cid} ({name}): {e} — contact enrolled in-memory only, will re-appear next run"
+                f"LEAK: GHL add-tag POST raised for {cid} ({name}): {e} — contact enrolled in-memory only, will re-appear next run"
             )
     else:
         # No GHL key = dry-run path; treat as durable so dry-runs don't mark leak
