@@ -8243,11 +8243,24 @@ class ZernioPublishRequest(BaseModel):
 
 
 class ImageGenerateRequest(BaseModel):
+    """Image generation via the persona bridge.
+
+    Routes through tools/fal_image.py (fal.ai Nano Banana family) — Iris's
+    mastered stack, NOT Replicate FLUX. Per the CMO visual-generation
+    overhaul (file 93). Two tiers per prompt-economy: Flash for prototype,
+    Pro for hero/finals. Reference images are the fidelity/consistency lever.
+    """
     prompt: str
     business_key: str = ""
     platform: str = "default"
     aspect_ratio: str = ""
-    num_outputs: int = 1
+    # Iris's consistency lever — passes references directly into Nano Banana.
+    # `source_image_url` = single image-to-image source (fidelity).
+    # `reference_image_urls` = brand reference library (Pro blends up to 14).
+    source_image_url: Optional[str] = None
+    reference_image_urls: Optional[List[str]] = None
+    # Pro tier (Gemini 3 Pro Image) for hero/finals. Default = Flash (cheap).
+    pro: bool = False
 
 
 @app.post("/social/zernio/draft")
@@ -8282,16 +8295,40 @@ async def social_image_generate(
     req: ImageGenerateRequest,
     authorization: Optional[str] = Header(None),
 ):
+    """Generate brand-on imagery via fal.ai Nano Banana (Iris's mastered stack).
+
+    Per the CMO visual-generation overhaul (file 93): Nano Banana via fal.ai is
+    Iris's primary image path. Flash for prototype, Pro for hero/finals. Reference
+    images are the consistency lever — pass `source_image_url` for image-to-image
+    fidelity and/or `reference_image_urls` for brand-library blending.
+
+    Replicate FLUX is intentionally NOT used here — kept available via
+    tools/image_gen.generate_image for legacy callers but not exposed to the
+    persona bridge (Iris hasn't mastered it; output drifts off-brand).
+    """
     validate_key(authorization)
-    from tools.image_gen import generate_image
+    from tools.fal_image import generate_nano_banana_image, fal_image_ready
+    if not fal_image_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="FAL_KEY not configured on this service. Set it in Doppler (paperclip/prd).",
+        )
     try:
-        return generate_image(
+        result = generate_nano_banana_image(
             prompt=req.prompt,
             business_key=req.business_key,
             platform=req.platform,
             aspect_ratio=req.aspect_ratio,
-            num_outputs=req.num_outputs,
+            source_image_url=req.source_image_url,
+            reference_image_urls=req.reference_image_urls,
+            pro=req.pro,
         )
+        # fal_image returns a dict on success or an error string on failure.
+        if isinstance(result, str):
+            raise HTTPException(status_code=502, detail=f"fal.ai error: {result}")
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise _social_http_error(e)
 
