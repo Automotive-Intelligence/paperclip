@@ -8223,6 +8223,25 @@ class ZernioDraftRequest(BaseModel):
     media_urls: Optional[List[str]] = None
 
 
+class ZernioPublishRequest(BaseModel):
+    """Live-publish request — REQUIRES gate_passed=True (4-gate check).
+
+    The CMO autonomy loop runs the 4 gates (hero-metrics / voice / claims /
+    mechanics) before content is allowed to leave the draft state. The persona
+    bridge passes through that explicit pass — anything missing the flag is
+    refused at the endpoint, defense-in-depth with the gate function itself.
+    """
+    content: str
+    platforms: List[str]
+    account_ids: Optional[List[str]] = None
+    media_urls: Optional[List[str]] = None
+    publish_now: bool = True
+    scheduled_for: Optional[str] = None  # ISO 8601 if scheduling
+    timezone: str = "America/Chicago"
+    gate_passed: bool = False
+    business_key: str = ""  # AvI/WD/AIPG/BAE/Book'd/PP for telemetry
+
+
 class ImageGenerateRequest(BaseModel):
     prompt: str
     business_key: str = ""
@@ -8273,6 +8292,131 @@ async def social_image_generate(
             aspect_ratio=req.aspect_ratio,
             num_outputs=req.num_outputs,
         )
+    except Exception as e:
+        raise _social_http_error(e)
+
+
+@app.post("/social/zernio/publish")
+async def social_zernio_publish(
+    req: ZernioPublishRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Live-publish a post to Zernio (15-platform poster). Hard-gated.
+
+    Per the CMO operating system + file 81 blueprint: publish requires the
+    4-gate check (hero-metrics / voice / claims / mechanics) to have passed
+    BEFORE this endpoint fires. The persona signals that pass via
+    `gate_passed=true`; we refuse anything without it.
+
+    The persona prompt (see avo-slack/personas/*) instructs every IM seat to
+    run the gates before flipping gate_passed. CMO Daily inspects what
+    actually shipped, so any abuse is observable post-hoc.
+    """
+    validate_key(authorization)
+    if not req.gate_passed:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "publish refused: gate_passed=false. Run the 4-gate check "
+                "(hero-metrics / voice / claims / mechanics) per the CMO "
+                "operating system, then re-call with gate_passed=true. "
+                "Drafts can be created freely via /social/zernio/draft."
+            ),
+        )
+    from tools.zernio import publish_to_zernio
+    try:
+        result = publish_to_zernio(
+            content=req.content,
+            platforms=req.platforms,
+            account_ids=req.account_ids,
+            scheduled_for=req.scheduled_for,
+            media_urls=req.media_urls,
+            publish_now=req.publish_now and not req.scheduled_for,
+            timezone=req.timezone,
+        )
+        logging.info(
+            "[Zernio] PUBLISHED via persona bridge: brand=%s platforms=%s id=%s",
+            req.business_key or "unspecified",
+            req.platforms,
+            (result or {}).get("_id", "?"),
+        )
+        return result
+    except Exception as e:
+        raise _social_http_error(e)
+
+
+@app.post("/social/zernio/schedule")
+async def social_zernio_schedule(
+    req: ZernioPublishRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Schedule a Zernio post for a specific future time. Hard-gated identically
+    to /publish — the 4-gate check applies whether the post fires now or at
+    9 AM Friday. `scheduled_for` (ISO 8601) is required; `publish_now` is
+    forced false."""
+    validate_key(authorization)
+    if not req.gate_passed:
+        raise HTTPException(
+            status_code=403,
+            detail="schedule refused: gate_passed=false. Same 4-gate requirement as /publish.",
+        )
+    if not req.scheduled_for:
+        raise HTTPException(
+            status_code=400,
+            detail="scheduled_for (ISO 8601) is required for /schedule. Use /publish for now-posting.",
+        )
+    from tools.zernio import publish_to_zernio
+    try:
+        result = publish_to_zernio(
+            content=req.content,
+            platforms=req.platforms,
+            account_ids=req.account_ids,
+            scheduled_for=req.scheduled_for,
+            media_urls=req.media_urls,
+            publish_now=False,
+            timezone=req.timezone,
+        )
+        logging.info(
+            "[Zernio] SCHEDULED via persona bridge: brand=%s platforms=%s when=%s id=%s",
+            req.business_key or "unspecified",
+            req.platforms,
+            req.scheduled_for,
+            (result or {}).get("_id", "?"),
+        )
+        return result
+    except Exception as e:
+        raise _social_http_error(e)
+
+
+@app.get("/social/zernio/brand-channels")
+async def social_zernio_brand_channels(authorization: Optional[str] = Header(None)):
+    """Per-brand channel inventory — surfaces which platforms are connected
+    for each Zernio profile so personas (and the CMO morning brief) know
+    where they CAN publish before drafting. Closes the "confirm per-brand
+    channels" item from the CMO KEYSTONE flag (cmo_state.md 2026-06-29)."""
+    validate_key(authorization)
+    from tools.zernio import get_zernio_profiles, list_zernio_accounts
+    try:
+        profiles = get_zernio_profiles()
+        inventory: List[Dict[str, Any]] = []
+        for p in profiles:
+            try:
+                accounts = list_zernio_accounts(p.get("_id"))
+                inventory.append({
+                    "profile_id": p.get("_id"),
+                    "profile_name": p.get("name", ""),
+                    "platforms": sorted({a.get("platform", "?") for a in accounts}),
+                    "account_count": len(accounts),
+                })
+            except Exception as inner:
+                inventory.append({
+                    "profile_id": p.get("_id"),
+                    "profile_name": p.get("name", ""),
+                    "platforms": [],
+                    "account_count": 0,
+                    "error": str(inner),
+                })
+        return {"brands": inventory, "total_profiles": len(profiles)}
     except Exception as e:
         raise _social_http_error(e)
 
