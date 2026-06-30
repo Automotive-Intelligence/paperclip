@@ -305,6 +305,96 @@ def foundation_header() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Foundation Bible — the marketing-canon index
+#
+# Per CMO flag (cmo_state.md 2026-06-28T03:55:00Z): "wire the Foundation Bible
+# into the load path so every marketing seat ALWAYS uses our standing
+# standards, not by memory." Same injection pattern as foundation_header()
+# above — composed into marketing persona system prompts at load time.
+#
+# Source of truth: avo-telemetry/marketing_deliverables/00_FOUNDATION_BIBLE.md.
+# At runtime we attempt three paths so this works in dev (local clone of
+# avo-telemetry) and prod (Railway, no avo-telemetry mount):
+#   1. $FOUNDATION_BIBLE_PATH env var if set
+#   2. ~/avo-telemetry/marketing_deliverables/00_FOUNDATION_BIBLE.md (dev)
+#   3. Vendored copy at config/foundation_bible.md (prod, kept in sync by hand)
+#
+# Non-marketing personas (Pit Wall, Build & Tech, Revenue & Sales, etc.) do
+# NOT get the bible injected — the flag specifically scopes this to marketing
+# seats. Callers gate by persona name (see services/persona_prompts/__init__.py
+# and avo-slack/app.py).
+# ---------------------------------------------------------------------------
+
+# Persona names that get the Foundation Bible injected. Lower-cased; matched
+# against the persona's slug / filename stem. Keep in sync with the marketing
+# subset of avo-slack/channels.yaml.
+MARKETING_FOUNDATION_BIBLE_PERSONAS: frozenset[str] = frozenset({
+    "cmo",
+    "marketing_internal",
+    "marketing-internal",
+    "client_marketing_garage",
+    "client-marketing-garage",
+    "iris",  # Iris's seat when it lands; currently a Claude.ai persona
+})
+
+
+def _load_foundation_bible_text() -> str:
+    """Resolve + read the Foundation Bible content. Returns '' if unreachable.
+
+    Tries (in order): env override → dev path → vendored adjacent copy. The
+    empty-on-failure return is intentional: missing bible should never crash a
+    persona session, just degrade the standing-standards injection.
+    """
+    import os
+    from pathlib import Path
+
+    candidates = []
+    env_path = (os.environ.get("FOUNDATION_BIBLE_PATH") or "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(
+        Path.home() / "avo-telemetry" / "marketing_deliverables" / "00_FOUNDATION_BIBLE.md"
+    )
+    candidates.append(Path(__file__).parent / "foundation_bible.md")
+
+    for path in candidates:
+        try:
+            return path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            continue
+    return ""
+
+
+def foundation_bible_header(persona_name: str = "") -> str:
+    """Return the Foundation Bible prepended to marketing persona system prompts.
+
+    Returns '' for non-marketing personas OR when the bible file can't be read.
+    The bible itself is wrapped in a clear delimiter so the LLM knows it's
+    standing-standards canon, distinct from the persona-specific instructions
+    that follow it.
+
+    Args:
+      persona_name: Lower-cased persona slug. Used to gate injection to
+                    marketing seats only (per the CMO flag's scope).
+    """
+    if persona_name.lower().replace("_", "-") not in {
+        n.replace("_", "-") for n in MARKETING_FOUNDATION_BIBLE_PERSONAS
+    }:
+        return ""
+    body = _load_foundation_bible_text()
+    if not body:
+        return ""
+    return (
+        "FOUNDATION BIBLE — STANDING MARKETING STANDARDS (canon)\n"
+        "=======================================================\n"
+        "The single index of every marketing standard + operating rule. "
+        "Every line below is canon. Work within it; if a standard is not "
+        "here, it is not canon yet (add it via the CMO flag protocol).\n\n"
+        f"{body.strip()}\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Moral Gate — callable from agent task logic and pipeline decision points
 # ---------------------------------------------------------------------------
 

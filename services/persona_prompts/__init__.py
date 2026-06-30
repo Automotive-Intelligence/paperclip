@@ -12,7 +12,7 @@ tool not in the allowlist in the SDK tool definitions it passes.
 
 from pathlib import Path
 
-from config.principles import foundation_header
+from config.principles import foundation_header, foundation_bible_header
 
 _PROMPTS_DIR = Path(__file__).parent
 
@@ -23,11 +23,19 @@ def load_persona_prompt(persona: str) -> str:
     The servant-leader foundation (config/principles.py) is prepended so it
     lives in the model's reasoning context *before* the persona's role-specific
     instructions — the foundation runs first, not as a backstop.
+
+    Marketing personas (cmo, marketing_internal, client_marketing_garage, iris)
+    also get the Foundation Bible injected between the servant-leader header
+    and the persona prompt — per CMO flag (cmo_state.md 2026-06-28T03:55:00Z).
+    Non-marketing personas get an empty string back from foundation_bible_header
+    so this is a no-op for them.
     """
     path = _PROMPTS_DIR / f"{persona.lower()}.md"
     if not path.exists():
         raise FileNotFoundError(f"No prompt for persona '{persona}' at {path}")
-    return f"{foundation_header()}\n{path.read_text(encoding='utf-8')}"
+    bible = foundation_bible_header(persona)
+    bible_block = f"\n---\n\n{bible}\n---\n" if bible else "\n"
+    return f"{foundation_header()}{bible_block}{path.read_text(encoding='utf-8')}"
 
 
 def load_persona_tools(persona: str) -> list[str]:
