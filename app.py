@@ -387,6 +387,26 @@ def init_db():
     except DatabaseError as e:
         logging.error(f"[DB] crm_push_logs table init failed: {e}")
 
+    # ── Randy enrollment state (AI Phone Guy) ────────────────────────────
+    # Durable replacement for the in-memory _enrolled dict that reset on every
+    # restart and made Randy re-process already-enrolled contacts as "new".
+    try:
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS randy_enrollments (
+                contact_id   TEXT        PRIMARY KEY,
+                vertical     TEXT        NOT NULL,
+                last_step    INTEGER     NOT NULL DEFAULT -1,
+                contact      TEXT        NOT NULL DEFAULT '{}',
+                enrolled_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_randy_enrollments_vertical
+                ON randy_enrollments (vertical);
+        """)
+        logging.info("[DB] randy_enrollments table ready.")
+    except DatabaseError as e:
+        logging.error(f"[DB] randy_enrollments table init failed: {e}")
+
     # ── AVO Intelligence Layer tables ─────────────────────────────────────
     try:
         execute_query("""

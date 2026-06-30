@@ -134,7 +134,71 @@ SEQUENCES = {
     ],
 }
 
-# Tag → vertical mapping
+# The single tag Tyler stamps on every cold-pushed AIPG prospect. Tyler's
+# cold push (tools/ghl.py create_contact) writes:  tyler-prospect + cold-email
+# + aiphoneguy + {industry}.  There is NO compound `tyler-prospect-plumber` tag
+# in live data — Randy used to search those compound keys and matched NOBODY.
+# Randy now selects on this bare tag and derives the vertical from the separate
+# industry tag (see INDUSTRY_TAG_TO_VERTICAL).
+TYLER_PROSPECT_TAG = "tyler-prospect"
+
+# Industry-tag → sequence-vertical map.
+#
+# Built from the ACTUAL tag vocabulary on the 179 live AIPG GHL contacts
+# (locationId ZoxVB4ibMZZ2lZ5QpXep), probed read-only 2026-06-29. Distinct
+# industry tags carried by tyler-prospect contacts and their live counts:
+#   plumbing (45), plumber (41), roofing (35), hvac (27), dental (17),
+#   personal-injury-law (2), plumbing/hvac (2), hvac/plumbing (1)
+# `plumbing` and `plumber` are disjoint sets (no contact carries both) — both
+# are the plumbing vertical. The combined `plumbing/hvac` / `hvac/plumbing`
+# tags (3 contacts) are mapped to the first-named trade. Mapping TARGETS are the
+# existing vertical names Randy's SEQUENCES expect (plumber/hvac/roofer/dental/
+# lawyer) — those are unchanged.
+INDUSTRY_TAG_TO_VERTICAL = {
+    "plumbing": "plumber",
+    "plumber": "plumber",
+    "plumbing/hvac": "plumber",
+    "roofing": "roofer",
+    "roofer": "roofer",
+    "hvac": "hvac",
+    "hvac/plumbing": "hvac",
+    "dental": "dental",
+    "personal-injury-law": "lawyer",
+    "lawyer": "lawyer",
+}
+
+# Tags that are NEVER an industry signal (so they're skipped when deriving the
+# vertical from a contact's tag set). Everything Tyler/the pipeline stamps that
+# isn't the trade.
+NON_INDUSTRY_TAGS = frozenset({
+    TYLER_PROSPECT_TAG, "cold-email", "aiphoneguy", "ai-phone-guy",
+    "sequence-active", "sequence-complete", "csv-import", "dfw",
+    "marcus-prospect", "callingdigital", "do-not-contact", "fabricated-pre-fix",
+    "email-engaged", "clicked-demo-link", "replied", "intent-shown",
+})
+
+
+def vertical_for_tags(tags: list) -> str:
+    """Derive a sequence vertical from a contact's full tag set.
+
+    Returns the mapped vertical, or "" if no recognized industry tag is present
+    (e.g. a stray med-spa / real-estate tag with no AIPG sequence). Case- and
+    whitespace-insensitive.
+    """
+    normalized = [str(t).strip().lower() for t in (tags or [])]
+    for t in normalized:
+        if t in NON_INDUSTRY_TAGS:
+            continue
+        vert = INDUSTRY_TAG_TO_VERTICAL.get(t)
+        if vert:
+            return vert
+    return ""
+
+
+# Backwards-compat: the old compound-key map is retained ONLY so existing
+# imports (e.g. scripts/reconcile_randy_enrollments.py) don't break. It is no
+# longer how Randy finds prospects — it matched zero live contacts. New code
+# should use TYLER_PROSPECT_TAG + vertical_for_tags().
 TAG_TO_VERTICAL = {
     "tyler-prospect-plumber": "plumber",
     "tyler-prospect-hvac": "hvac",

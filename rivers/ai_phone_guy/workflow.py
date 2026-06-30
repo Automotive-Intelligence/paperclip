@@ -12,7 +12,15 @@ import requests
 from datetime import datetime, timedelta
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error
 from core.hours import is_within_send_window
-from rivers.ai_phone_guy.sequences import TAG_TO_VERTICAL, get_sequence, render_message, BOOKING_LINK, SEND_SCHEDULE
+from rivers.ai_phone_guy.sequences import (
+    TYLER_PROSPECT_TAG,
+    vertical_for_tags,
+    get_sequence,
+    render_message,
+    BOOKING_LINK,
+    SEND_SCHEDULE,
+)
+from rivers.ai_phone_guy import enrollment_store
 from rivers.ai_phone_guy.hot_leads import check_for_hot_leads
 
 GHL_BASE = "https://services.leadconnectorhq.com"
@@ -29,8 +37,12 @@ def _ghl_location() -> str:
 def _ghl_headers() -> dict:
     return {"Authorization": f"Bearer {_ghl_key()}", "Version": "2021-07-28", "Content-Type": "application/json"}
 
-# In-memory tracking (persists while process runs)
-_enrolled = {}  # contact_id -> {vertical, enrolled_at, last_step}
+# Per-process working cache of enrollments. Durable source of truth is the
+# randy_enrollments table via enrollment_store; this dict is just a hot cache
+# populated from the store at the start of each run so sequence processing
+# inside a single run stays fast. It is NOT the enrollment-state authority —
+# that's the DB, so enrollments survive a restart (the bug PR #121 left open).
+_enrolled = {}  # contact_id -> {vertical, enrolled_at, last_step, contact}
 _stats = {"enrolled": 0, "hot_leads": 0, "messages_sent": 0}
 
 
@@ -57,7 +69,13 @@ def randy_run():
         "per_vertical": {},
     }
     try:
-        # Step 1: Find new contacts with tyler-prospect-* tags
+        # Step 0: Hydrate the per-process cache from durable storage so a freshly
+        # restarted process knows who's already enrolled (otherwise everyone
+        # looks "new" again — the resetting-dict bug).
+        _enrolled.clear()
+        _enrolled.update(enrollment_store.all_enrollments())
+
+        # Step 1: Find new contacts with the bare tyler-prospect tag
         new_contacts = _find_new_prospects()
         tally["prospects_found"] = len(new_contacts)
         for contact in new_contacts:
@@ -128,30 +146,83 @@ def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
 
 
 def _find_new_prospects() -> list:
-    """Find contacts with tyler-prospect-* tags that aren't yet enrolled."""
+    """Find contacts carrying Tyler's bare `tyler-prospect` tag that aren't yet enrolled.
+
+    Tyler stamps `tyler-prospect` + `cold-email` + `aiphoneguy` + a SEPARATE
+    industry tag (e.g. `plumbing`, `roofing`, `dental`, `personal-injury-law`).
+    There is no compound `tyler-prospect-plumber` tag in live data — searching
+    those matched zero contacts (the 0-enrollment bug). We search the bare tag
+    and derive the vertical from the contact's industry tag.
+
+    Skips contacts that already carry `sequence-active` (enrolled in GHL) or are
+    already recorded in the durable enrollment store (survives restarts), and
+    skips contacts with no recognized industry tag (no AIPG sequence to fire).
+    """
     if not _ghl_key():
         log_info("ai_phone_guy", "[DRY RUN] No GHL_API_KEY — skipping prospect scan")
         return []
 
     new_contacts = []
-    for tag, vertical in TAG_TO_VERTICAL.items():
-        url = f"{GHL_BASE}/contacts/"
-        params = {"locationId": _ghl_location(), "query": tag, "limit": 100}
+    no_vertical = 0
+    seen_ids = set()
+
+    # Page through all tyler-prospect contacts (GHL caps page size at 100).
+    url = f"{GHL_BASE}/contacts/"
+    params = {"locationId": _ghl_location(), "query": TYLER_PROSPECT_TAG, "limit": 100}
+    page_guard = 0
+    while True:
+        page_guard += 1
+        if page_guard > 50:  # safety: never loop forever
+            break
         try:
             resp = requests.get(url, headers=_ghl_headers(), params=params)
-            if resp.status_code == 200:
-                contacts = resp.json().get("contacts", [])
-                for c in contacts:
-                    cid = c.get("id")
-                    tags = c.get("tags", [])
-                    if tag in tags and "sequence-active" not in tags and cid not in _enrolled:
-                        c["_vertical"] = vertical
-                        new_contacts.append(c)
-            else:
-                log_error("ai_phone_guy", f"GHL search failed for {tag}: {resp.status_code}")
         except Exception as e:
-            log_error("ai_phone_guy", f"GHL search error for {tag}: {e}")
+            log_error("ai_phone_guy", f"GHL search error for {TYLER_PROSPECT_TAG}: {e}")
+            break
+        if resp.status_code != 200:
+            log_error("ai_phone_guy", f"GHL search failed for {TYLER_PROSPECT_TAG}: {resp.status_code}")
+            break
 
+        body = resp.json()
+        contacts = body.get("contacts", [])
+        if not contacts:
+            break
+
+        for c in contacts:
+            cid = c.get("id")
+            if not cid or cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+            tags = [str(t).strip().lower() for t in (c.get("tags", []) or [])]
+            if TYLER_PROSPECT_TAG not in tags:
+                continue
+            if "sequence-active" in tags:
+                continue
+            if cid in _enrolled or enrollment_store.is_enrolled(cid):
+                continue
+            vertical = vertical_for_tags(tags)
+            if not vertical:
+                no_vertical += 1
+                continue
+            c["_vertical"] = vertical
+            new_contacts.append(c)
+
+        # Advance pagination using GHL's meta cursor, if present.
+        meta = body.get("meta", {}) or {}
+        start_after = meta.get("startAfter")
+        start_after_id = meta.get("startAfterId")
+        if not start_after_id or len(contacts) < params["limit"]:
+            break
+        params = {
+            "locationId": _ghl_location(),
+            "query": TYLER_PROSPECT_TAG,
+            "limit": 100,
+            "startAfter": start_after,
+            "startAfterId": start_after_id,
+        }
+
+    if no_vertical:
+        log_info("ai_phone_guy", f"Skipped {no_vertical} tyler-prospect contacts with no recognized industry tag")
     log_info("ai_phone_guy", f"Found {len(new_contacts)} new prospects")
     return new_contacts
 
@@ -188,6 +259,9 @@ def _enroll_contact(contact: dict) -> bool:
         "last_step": -1,
         "contact": contact,
     }
+    # Persist durably so this contact is NOT re-processed as "new" after a
+    # restart/redeploy (the resetting-dict bug). Idempotent upsert.
+    enrollment_store.record_enrollment(cid, vertical, contact, last_step=-1)
 
     # Add the sequence-active tag in GHL via the dedicated Add-Tags endpoint.
     # If this fails, we have an in-memory leak.
@@ -282,6 +356,7 @@ def _send_sequence_step(contact_id: str, step_day: int):
         _send_ghl_email(contact_id, rendered.get("subject", ""), rendered["body"])
 
     data["last_step"] = step_day
+    enrollment_store.update_last_step(contact_id, step_day)
     _stats["messages_sent"] += 1
     log_sequence_event("ai_phone_guy", contact_id, f"{channel}_sent", f"day_{step_day}")
     log_info("ai_phone_guy", f"SENT Day {step_day} {channel} to {name} ({vertical})")
