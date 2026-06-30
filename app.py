@@ -3415,6 +3415,53 @@ def _run_sterling():
         logging.error(f"[Paperclip] Sterling scheduled run failed: {e}")
 
 
+# ── Book'd fleet (6 agents — brand parity, ahead of ~2026-07-06 mailbox warmup) ─
+# Per bookd_agent_fleet_spec_2026-06-24.md. Stack: Twenty (Book'd workspace) +
+# Instantly (meetbookd.com / powerbookd.com); NEVER bookd.cx primary. Run
+# functions live in rivers/bookd/workflow.py so these app.py edits stay thin.
+def _run_marshall():
+    try:
+        from rivers.bookd.workflow import marshall_run
+        _avo_wrap_run("marshall", "bookd", marshall_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Marshall scheduled run failed: {e}")
+
+def _run_cole():
+    try:
+        from rivers.bookd.workflow import cole_run
+        _avo_wrap_run("cole", "bookd", cole_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Cole scheduled run failed: {e}")
+
+def _run_hayes():
+    try:
+        from rivers.bookd.workflow import hayes_run
+        _avo_wrap_run("hayes", "bookd", hayes_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Hayes scheduled run failed: {e}")
+
+def _run_sutton():
+    try:
+        from rivers.bookd.workflow import sutton_run
+        _avo_wrap_run("sutton", "bookd", sutton_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Sutton scheduled run failed: {e}")
+
+def _run_quinn():
+    try:
+        from rivers.bookd.workflow import quinn_run
+        _avo_wrap_run("quinn", "bookd", quinn_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Quinn scheduled run failed: {e}")
+
+def _run_reid():
+    try:
+        from rivers.bookd.workflow import reid_run
+        _avo_wrap_run("reid", "bookd", reid_run)
+    except Exception as e:
+        logging.error(f"[Paperclip] Reid scheduled run failed: {e}")
+
+
 # Randy (GHL RevOps): every 4 hours
 scheduler.add_job(_run_randy, IntervalTrigger(hours=4, timezone=CST),
     id="randy_revops_4h", name="Randy RevOps (GHL) — Every 4h",
@@ -3433,6 +3480,49 @@ scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
 # Joshua (Pit Wall — AI Phone Guy): every 2 hours
 scheduler.add_job(_run_joshua, IntervalTrigger(hours=2, timezone=CST),
     id="joshua_pitwall_2h", name="Joshua Pit Wall (Instantly) — Every 2h",
+    replace_existing=True, misfire_grace_time=3600)
+
+# ── Book'd fleet schedule (per bookd_agent_fleet_spec_2026-06-24.md §1) ────────
+# Marshall (CEO): weekly, Monday 8:06 CST (after the other CEO briefs at 8:00-8:04).
+scheduler.add_job(_run_marshall, CronTrigger(day_of_week="mon", hour=8, minute=6, timezone=CST),
+    id="marshall_weekly_brief", name="Marshall Weekly Principal Brief (Book'd) — Mon 8:06",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Cole (Sales): daily + interval — same business-hours + overnight windows as
+# the other sales agents (8:36 offset to avoid colliding with Tyler/Marcus/Ryan).
+# Outbound stays HELD-for-warmup inside Cole's own gates until ~2026-07-06.
+for hour in SALES_HOURS:
+    scheduler.add_job(
+        _run_cole,
+        CronTrigger(hour=hour, minute=36, timezone=CST),
+        id=f"cole_outbound_{hour}36",
+        name=f"Cole Outbound (Book'd) {hour}:36",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+
+# Hayes (RevOps): hourly during business hours (8-18 CST), 2x after-hours (0, 4).
+for hour in (0, 4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18):
+    scheduler.add_job(
+        _run_hayes,
+        CronTrigger(hour=hour, minute=50, timezone=CST),
+        id=f"hayes_revops_{hour}50",
+        name=f"Hayes RevOps (Book'd) {hour}:50",
+        replace_existing=True, misfire_grace_time=3600,
+    )
+
+# Sutton (Marketing): daily 9:06 CST (alongside the other marketing agents).
+scheduler.add_job(_run_sutton, CronTrigger(hour=9, minute=6, timezone=CST),
+    id="sutton_daily_marketing", name="Sutton Daily Marketing (Book'd)",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Quinn (Customer Success): daily 9:34 CST (alongside the other CS agents).
+scheduler.add_job(_run_quinn, CronTrigger(hour=9, minute=34, timezone=CST),
+    id="quinn_daily_cs", name="Quinn Daily Customer Success (Book'd)",
+    replace_existing=True, misfire_grace_time=3600)
+
+# Reid (Intelligence): daily 10:06 CST (alongside the other intelligence agents).
+scheduler.add_job(_run_reid, CronTrigger(hour=10, minute=6, timezone=CST),
+    id="reid_daily_intel", name="Reid Daily Intelligence (Book'd)",
     replace_existing=True, misfire_grace_time=3600)
 
 # Morning Briefing — daily 8am CDT email + SMS to Michael

@@ -48,12 +48,14 @@ EXPECTED_AGENTS = [
     "tammy_ae", "sterling",
     # CustomerAdvocate
     "clint", "sherry",
+    # Book'd (daily — marshall is weekly, see WEEKLY_AGENTS)
+    "cole", "hayes", "sutton", "quinn", "reid",
     # CEO Orchestration
     "axiom",
 ]
 
 # Weekly agents — checked separately, not daily
-WEEKLY_AGENTS = ["wade_ae", "debra"]
+WEEKLY_AGENTS = ["wade_ae", "debra", "marshall"]
 
 SALES_AGENTS = ["tyler", "marcus", "ryan_data"]
 
@@ -68,6 +70,8 @@ AGENT_BUSINESS_MAP = {
     "debra": "agentempire", "wade_ae": "agentempire", "tammy_ae": "agentempire",
     "sterling": "agentempire",
     "clint": "customeradvocate", "sherry": "customeradvocate",
+    "marshall": "bookd", "cole": "bookd", "hayes": "bookd",
+    "sutton": "bookd", "quinn": "bookd", "reid": "bookd",
     "axiom": "ceo",
 }
 
