@@ -84,6 +84,10 @@ class FindNewProspectsTagContractTests(unittest.TestCase):
             "id": "c-plumb",
             "firstName": "Pat",
             "lastName": "Doe",
+            # A reachable phone so the data-quality guardrails (2026-07-01) keep
+            # this contact enrollable; this test is about the TAG contract, not
+            # data quality, so we ensure a valid contact method is present.
+            "phone": "+19725550142",
             "tags": ["tyler-prospect", "plumbing", "cold-email"],
         }
         mock_get.return_value = _resp(200, {"contacts": [contact], "meta": {}})
@@ -102,14 +106,16 @@ class FindNewProspectsTagContractTests(unittest.TestCase):
     def test_old_compound_only_matching_no_longer_strands(self, mock_get):
         # (b) A population of bare-tagged contacts (no compound tag anywhere) —
         # the old code matched 0 of these. The fix matches all with a known trade.
+        # Each carries a reachable phone so the 2026-07-01 data-quality
+        # guardrails keep them enrollable; this test asserts the TAG contract.
         contacts = [
-            {"id": "p1", "tags": ["tyler-prospect", "plumbing", "cold-email"]},
-            {"id": "r1", "tags": ["tyler-prospect", "roofing", "cold-email"]},
-            {"id": "h1", "tags": ["tyler-prospect", "hvac", "cold-email"]},
-            {"id": "d1", "tags": ["tyler-prospect", "dental", "cold-email"]},
-            {"id": "l1", "tags": ["tyler-prospect", "personal-injury-law", "cold-email"]},
+            {"id": "p1", "phone": "+19725550101", "tags": ["tyler-prospect", "plumbing", "cold-email"]},
+            {"id": "r1", "phone": "+14695550102", "tags": ["tyler-prospect", "roofing", "cold-email"]},
+            {"id": "h1", "phone": "+19405550103", "tags": ["tyler-prospect", "hvac", "cold-email"]},
+            {"id": "d1", "phone": "+12145550104", "tags": ["tyler-prospect", "dental", "cold-email"]},
+            {"id": "l1", "phone": "+18175550105", "tags": ["tyler-prospect", "personal-injury-law", "cold-email"]},
             # No recognized trade — correctly skipped (not stranded as an error).
-            {"id": "x1", "tags": ["tyler-prospect", "cold-email", "dfw"]},
+            {"id": "x1", "phone": "+19725550106", "tags": ["tyler-prospect", "cold-email", "dfw"]},
         ]
         mock_get.return_value = _resp(200, {"contacts": contacts, "meta": {}})
 

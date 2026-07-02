@@ -22,6 +22,7 @@ from rivers.ai_phone_guy.sequences import (
 )
 from rivers.ai_phone_guy import enrollment_store
 from rivers.ai_phone_guy.hot_leads import check_for_hot_leads
+from rivers.ai_phone_guy import data_quality as dq
 
 GHL_BASE = "https://services.leadconnectorhq.com"
 
@@ -67,6 +68,16 @@ def randy_run():
         "hot_leads_flagged": 0,
         "errors": 0,
         "per_vertical": {},
+        # Data-quality guardrails (Boardroom send-blocker fix, 2026-07-01).
+        # Everything screened out is COUNTED here with a reason, never silently
+        # dropped. See rivers/ai_phone_guy/data_quality.py.
+        "screened_total": 0,
+        "routed_email": 0,
+        "routed_sms": 0,
+        "no_reachable_channel_excluded": 0,
+        "dupes_dropped": 0,
+        "bad_phone_flagged": 0,
+        "names_cleaned": 0,
     }
     try:
         # Step 0: Hydrate the per-process cache from durable storage so a freshly
@@ -75,8 +86,9 @@ def randy_run():
         _enrolled.clear()
         _enrolled.update(enrollment_store.all_enrollments())
 
-        # Step 1: Find new contacts with the bare tyler-prospect tag
-        new_contacts = _find_new_prospects()
+        # Step 1: Find new contacts with the bare tyler-prospect tag, screened
+        # through the data-quality + channel-routing guardrails.
+        new_contacts = _find_new_prospects(tally)
         tally["prospects_found"] = len(new_contacts)
         for contact in new_contacts:
             try:
@@ -132,6 +144,13 @@ def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
     return (
         f"RANDY RUN — {started_at.isoformat()} ({duration_sec:.1f}s)\n"
         f"  Prospects found (tyler-prospect-* tagged, no sequence-active): {tally['prospects_found']}\n"
+        f"  Data-quality guardrails (screened {tally.get('screened_total', 0)}):\n"
+        f"    Routed to EMAIL lane (validated business email): {tally.get('routed_email', 0)}\n"
+        f"    Routed to SMS/CALL lane (phone-first / no business email): {tally.get('routed_sms', 0)}\n"
+        f"    Excluded (no reachable channel): {tally.get('no_reachable_channel_excluded', 0)}\n"
+        f"    Duplicates dropped: {tally.get('dupes_dropped', 0)}\n"
+        f"    Invalid phones flagged: {tally.get('bad_phone_flagged', 0)}\n"
+        f"    Company-in-name fields cleaned: {tally.get('names_cleaned', 0)}\n"
         f"  Enrollment attempts: {tally['enrolled_attempted']}\n"
         f"    Confirmed (GHL tag landed): {tally['enrolled_tag_confirmed']}\n"
         f"    Failed (in-memory only — will leak): {tally['enrolled_tag_failed']}"
@@ -145,7 +164,7 @@ def _format_run_summary(tally: dict, duration_sec: float, started_at) -> str:
     )
 
 
-def _find_new_prospects() -> list:
+def _find_new_prospects(tally: dict = None) -> list:
     """Find contacts carrying Tyler's bare `tyler-prospect` tag that aren't yet enrolled.
 
     Tyler stamps `tyler-prospect` + `cold-email` + `aiphoneguy` + a SEPARATE
@@ -157,7 +176,22 @@ def _find_new_prospects() -> list:
     Skips contacts that already carry `sequence-active` (enrolled in GHL) or are
     already recorded in the durable enrollment store (survives restarts), and
     skips contacts with no recognized industry tag (no AIPG sequence to fire).
+
+    DATA-QUALITY GUARDRAILS (Boardroom send-blocker fix, 2026-07-01): every
+    candidate that passes the tag/vertical checks is then screened through
+    `data_quality.screen_contact` + de-duplicated. The screen cleans
+    company-in-name fields, flags invalid phones, and ROUTES the contact to the
+    email lane (has a validated business email) or the SMS/CALL lane
+    (phone-first / no business email — the channel that matches AIPG's product).
+    Contacts with no reachable channel are excluded. Everything screened out or
+    rerouted is counted in `tally` with a reason — nothing vanishes silently.
     """
+    if tally is None:
+        tally = {}
+
+    def _bump(key, n=1):
+        tally[key] = tally.get(key, 0) + n
+
     if not _ghl_key():
         log_info("ai_phone_guy", "[DRY RUN] No GHL_API_KEY — skipping prospect scan")
         return []
@@ -165,6 +199,7 @@ def _find_new_prospects() -> list:
     new_contacts = []
     no_vertical = 0
     seen_ids = set()
+    dedup_seen = set()  # normalized company|email|phone keys for cross-contact dedup
 
     # Page through all tyler-prospect contacts (GHL caps page size at 100).
     url = f"{GHL_BASE}/contacts/"
@@ -204,8 +239,60 @@ def _find_new_prospects() -> list:
             if not vertical:
                 no_vertical += 1
                 continue
-            c["_vertical"] = vertical
-            new_contacts.append(c)
+
+            # --- Data-quality + channel-routing guardrails -------------------
+            # Dedup FIRST (cheap, cross-contact) so we don't screen/log a record
+            # we're going to drop anyway.
+            key = dq.dedup_key(c)
+            if key in dedup_seen:
+                _bump("dupes_dropped")
+                log_info(
+                    "ai_phone_guy",
+                    f"DEDUP: dropped duplicate {c.get('companyName') or cid} (key={key})",
+                )
+                continue
+            dedup_seen.add(key)
+
+            screen = dq.screen_contact(c)
+            _bump("screened_total")
+            if screen["name_cleaned"]:
+                _bump("names_cleaned")
+            if screen["bad_phone"]:
+                _bump("bad_phone_flagged")
+
+            channel = screen["channel"]
+            contact = screen["contact"]
+            contact["_vertical"] = vertical
+            name = contact.get("companyName") or cid
+            reason_str = "; ".join(screen["reasons"]) or "clean"
+
+            if channel == dq.CHANNEL_EXCLUDED:
+                # No reachable channel — excluded from ALL enrollment, but
+                # logged with the reason so it doesn't vanish.
+                _bump("no_reachable_channel_excluded")
+                log_info(
+                    "ai_phone_guy",
+                    f"EXCLUDED (no reachable channel): {name} [{vertical}] — {reason_str}",
+                )
+                continue
+
+            if channel == dq.CHANNEL_SMS:
+                # Phone-first / no business email -> SMS/CALL lane (matches
+                # AIPG's product). Tagged for the future call-lane to consume;
+                # the EMAIL steps of its sequence are suppressed at send time.
+                _bump("routed_sms")
+                log_info(
+                    "ai_phone_guy",
+                    f"ROUTE→SMS: {name} [{vertical}] tag={contact['_lane_tag']} — {reason_str}",
+                )
+            else:  # CHANNEL_EMAIL
+                _bump("routed_email")
+                log_info(
+                    "ai_phone_guy",
+                    f"ROUTE→EMAIL: {name} [{vertical}] tag={contact['_lane_tag']}",
+                )
+
+            new_contacts.append(contact)
 
         # Advance pagination using GHL's meta cursor, if present.
         meta = body.get("meta", {}) or {}
@@ -252,16 +339,22 @@ def _enroll_contact(contact: dict) -> bool:
     cid = contact.get("id")
     vertical = contact.get("_vertical")
     name = f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
+    # Channel the guardrails routed this contact to (email vs sms/call lane).
+    # Falls back to whatever the sequence dictates only if unscreened (e.g. a
+    # direct _enroll_contact call in a test); screened contacts always carry it.
+    channel = contact.get("_channel") or dq.route_channel(contact)
+    contact.setdefault("_channel", channel)
 
     _enrolled[cid] = {
         "vertical": vertical,
+        "channel": channel,
         "enrolled_at": datetime.now(),
         "last_step": -1,
         "contact": contact,
     }
     # Persist durably so this contact is NOT re-processed as "new" after a
     # restart/redeploy (the resetting-dict bug). Idempotent upsert.
-    enrollment_store.record_enrollment(cid, vertical, contact, last_step=-1)
+    enrollment_store.record_enrollment(cid, vertical, contact, last_step=-1, channel=channel)
 
     # Add the sequence-active tag in GHL via the dedicated Add-Tags endpoint.
     # If this fails, we have an in-memory leak.
@@ -349,6 +442,22 @@ def _send_sequence_step(contact_id: str, step_day: int):
 
     channel = rendered.get("channel", "sms")
     name = f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
+
+    # Enrich-or-exclude on email, enforced at the send boundary: a contact routed
+    # to the SMS/CALL lane (no validated business email) must NEVER be sent an
+    # EMAIL step, even though its ICP sequence interleaves email steps. The email
+    # step is skipped (the send cursor still advances so the sequence progresses
+    # to the next SMS step) and logged, so no email leaves for a no-email contact.
+    lane = data.get("channel") or contact.get("_channel")
+    if channel == "email" and lane == dq.CHANNEL_SMS:
+        data["last_step"] = step_day
+        enrollment_store.update_last_step(contact_id, step_day)
+        log_sequence_event("ai_phone_guy", contact_id, "email_step_skipped_sms_lane", f"day_{step_day}")
+        log_info(
+            "ai_phone_guy",
+            f"SKIP Day {step_day} EMAIL for {name} ({vertical}) — SMS/CALL lane, no business email",
+        )
+        return
 
     if channel == "sms":
         _send_ghl_sms(contact_id, rendered["body"])
