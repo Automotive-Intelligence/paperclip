@@ -61,11 +61,16 @@ def _ensure_table() -> None:
             vertical     TEXT        NOT NULL,
             last_step    INTEGER     NOT NULL DEFAULT -1,
             contact      TEXT        NOT NULL DEFAULT '{}',
+            channel      TEXT        NOT NULL DEFAULT 'email',
             enrolled_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS idx_randy_enrollments_vertical
             ON randy_enrollments (vertical);
+        -- Backfill the channel column on tables created before the
+        -- data-quality/channel-routing guardrails (2026-07-01). Idempotent.
+        ALTER TABLE randy_enrollments
+            ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email';
         """
     )
     _table_ready = True
@@ -89,10 +94,17 @@ def is_enrolled(contact_id: str) -> bool:
         return contact_id in _memory_fallback
 
 
-def record_enrollment(contact_id: str, vertical: str, contact: dict, last_step: int = -1) -> None:
-    """Persist an enrollment. Upsert so re-enrollment attempts are idempotent."""
+def record_enrollment(contact_id: str, vertical: str, contact: dict, last_step: int = -1,
+                      channel: str = "email") -> None:
+    """Persist an enrollment. Upsert so re-enrollment attempts are idempotent.
+
+    ``channel`` is the routed outreach lane ("email" | "sms") so the send loop
+    still knows, after a restart, to suppress EMAIL steps for SMS/CALL-lane
+    (no-business-email) contacts.
+    """
     _memory_fallback[contact_id] = {
         "vertical": vertical,
+        "channel": channel,
         "enrolled_at": datetime.now(),
         "last_step": last_step,
         "contact": contact,
@@ -103,14 +115,15 @@ def record_enrollment(contact_id: str, vertical: str, contact: dict, last_step: 
         _ensure_table()
         execute_query(
             """
-            INSERT INTO randy_enrollments (contact_id, vertical, last_step, contact)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO randy_enrollments (contact_id, vertical, last_step, contact, channel)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (contact_id) DO UPDATE
                 SET vertical = EXCLUDED.vertical,
                     contact  = EXCLUDED.contact,
+                    channel  = EXCLUDED.channel,
                     updated_at = NOW()
             """,
-            (contact_id, vertical, last_step, json.dumps(contact or {})),
+            (contact_id, vertical, last_step, json.dumps(contact or {}), channel),
         )
     except DatabaseError as e:
         logger.error("[randy_enrollments] record_enrollment DB error for %s: %s", contact_id, e)
@@ -143,20 +156,21 @@ def all_enrollments() -> Dict[str, dict]:
     try:
         _ensure_table()
         rows = fetch_all(
-            "SELECT contact_id, vertical, last_step, contact, enrolled_at FROM randy_enrollments"
+            "SELECT contact_id, vertical, last_step, contact, enrolled_at, channel FROM randy_enrollments"
         )
     except DatabaseError as e:
         logger.error("[randy_enrollments] all_enrollments DB error: %s", e)
         return dict(_memory_fallback)
 
     out: Dict[str, dict] = {}
-    for contact_id, vertical, last_step, contact_json, enrolled_at in rows:
+    for contact_id, vertical, last_step, contact_json, enrolled_at, channel in rows:
         try:
             contact = json.loads(contact_json) if contact_json else {}
         except (TypeError, ValueError):
             contact = {}
         out[contact_id] = {
             "vertical": vertical,
+            "channel": channel or "email",
             "last_step": last_step if last_step is not None else -1,
             "contact": contact,
             "enrolled_at": enrolled_at if isinstance(enrolled_at, datetime) else datetime.now(),
