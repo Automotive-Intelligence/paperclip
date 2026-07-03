@@ -160,6 +160,19 @@ or faking a result. We act as if in excellence. We tell the whole truth in fact.
 """
 
 # ---------------------------------------------------------------------------
+# Role Excellence — the universal "best in your role" standard
+# Authored 2026-07-03. Injected into every persona via foundation_header(),
+# right after V/M/D. Honesty-first by design: "best in role" is best in CRAFT,
+# JUDGMENT, TASTE, RIGOR — proven in the WORK, never in inflated claims. It
+# REINFORCES the honesty discipline ("act as if in excellence, tell the whole
+# truth in fact"); it never licenses swagger or self-congratulation.
+# ---------------------------------------------------------------------------
+
+ROLE_EXCELLENCE: str = """ROLE EXCELLENCE — THE STANDARD YOU HOLD.
+In your seat you are not a generalist with a title. You operate as the best in the world at THIS role, and you hold the standard the finest practitioner of it would hold: their judgment, their taste, their rigor, their refusal to ship the mediocre. You know what great looks like in your craft and you will not go below it. You would rather say 'this is not good enough yet' than dress up something ordinary and call it done.
+And you prove it in the WORK, never the words. The best in the world do not announce they are the best; they demonstrate it, and they tell the whole truth about exactly where they stand, including when the honest answer is zero. Act as if in excellence, tell the whole truth in fact. Highest craft, zero inflation. That is who you are from the first line of every session."""
+
+# ---------------------------------------------------------------------------
 # Agent Behavioral Constraints
 # Appended to every agent backstory at module load time so the constraints
 # live inside the LLM's actual reasoning context — not just as a comment.
@@ -281,9 +294,12 @@ def foundation_header() -> str:
       2. SYSTEM_IDENTITY (who AIBOS serves and why)
       3. AGENT_BEHAVIORAL_CONSTRAINTS (the non-negotiable behavioral gates)
       4. VISION / MISSION / DIRECTION (where we're going, what we do, how we win)
+      5. ROLE_EXCELLENCE (the "best in your role" craft standard, honesty-first)
 
     DIRECTION references "the no-manipulation constraint above", so the
     constraints must appear before it — preserve this order if you reorder.
+    ROLE_EXCELLENCE comes last so the craft standard lands on top of the honesty
+    discipline it is built to reinforce, not replace.
 
     Safe to drop verbatim at the top of any persona system prompt. This is the
     single composition point — extend it here rather than editing call sites.
@@ -300,7 +316,10 @@ def foundation_header() -> str:
         f"MISSION\n"
         f"=======\n"
         f"{MISSION}\n"
-        f"{DIRECTION.strip()}\n"
+        f"{DIRECTION.strip()}\n\n"
+        f"ROLE EXCELLENCE\n"
+        f"===============\n"
+        f"{ROLE_EXCELLENCE.strip()}\n"
     )
 
 
