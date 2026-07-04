@@ -1,0 +1,80 @@
+# config/pricing.yaml — Approved product catalog (single source of truth).
+#
+# Owner-approved 2026-07-04 (Michael). Payee entity for the Stripe account:
+#   Automotive Intelligence LLC.
+#
+# This file is the ONE place the six approved offers are encoded. It is read by:
+#   - tools/stripe.py            (creates Stripe Products/Prices + Payment Links)
+#   - scripts/stripe_setup.py    (one-shot idempotent provisioning)
+#   - services/metric_connectors/stripe_arr.py (interprets subscription MRR)
+#   - proposals / SOWs           (so quoted price == charged price)
+#
+# Money is expressed in whole US dollars. tools/stripe.py converts to cents.
+# Recurring amounts are the monthly charge. A `setup_usd` (when present) is a
+# one-time charge collected alongside the first recurring invoice.
+#
+# CLIENT-FACING STRINGS (name, description) must contain NO em-dashes — they
+# surface on Stripe Payment Links and invoices. (Repo rule: feedback_no_em_dashes.)
+#
+# `key` is a stable slug used as the Stripe lookup_key / idempotency anchor so
+# re-running stripe_setup.py never creates duplicate Products or Prices.
+
+currency: usd
+payee_entity: "Automotive Intelligence LLC"
+
+offers:
+  - key: avi_phase1_diagnostic
+    brand: avi
+    name: "AvI Phase 1 AI Diagnostic"
+    description: "One-time AI opportunity diagnostic for your dealership."
+    type: one_time
+    amount_usd: 2500
+
+  - key: avi_integration_advisory
+    brand: avi
+    name: "AvI AI Integration Advisory"
+    description: "Monthly AI integration advisory. Three month minimum, then month to month."
+    type: recurring
+    interval: month
+    amount_usd: 3500
+    min_term_months: 3
+
+  - key: aipg_sophie_core
+    brand: aipg
+    name: "AIPG Sophie Core"
+    description: "Sophie Core AI phone agent. Month to month."
+    type: recurring
+    interval: month
+    amount_usd: 299
+    setup_usd: 500
+    min_term_months: 1
+
+  - key: aipg_sophie_pro
+    brand: aipg
+    name: "AIPG Sophie Pro"
+    description: "Sophie Pro AI phone agent. Month to month."
+    type: recurring
+    interval: month
+    amount_usd: 499
+    setup_usd: 750
+    min_term_months: 1
+
+  - key: wd_foundations
+    brand: wd
+    name: "WD Foundations"
+    description: "Foundations marketing retainer. Three month minimum, then month to month."
+    type: recurring
+    interval: month
+    amount_usd: 1500
+    setup_usd: 750
+    min_term_months: 3
+
+  - key: wd_growth
+    brand: wd
+    name: "WD Growth"
+    description: "Growth marketing retainer. Six month term."
+    type: recurring
+    interval: month
+    amount_usd: 3500
+    setup_usd: 1000
+    min_term_months: 6

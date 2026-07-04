@@ -6052,6 +6052,87 @@ async def instantly_webhook(payload: dict, request: Request):
     }
 
 
+# ── Stripe get-paid rail webhook (P2) ───────────────────────────────────────
+# Mirrors the /webhooks/instantly discipline: guarded, no-ops cleanly when the
+# rail is inactive. Auth is Stripe's own HMAC signature (Stripe-Signature header
+# verified against STRIPE_WEBHOOK_SECRET) — the canonical pattern for Stripe.
+#
+# GUARD: if STRIPE_WEBHOOK_SECRET is absent OR the `stripe` SDK is not
+# installed, we return 200 {"status":"inactive"} and do nothing. Returning 200
+# (not an error) keeps Stripe from hammering retries at a pre-activation
+# endpoint, and never crashes the app.
+#
+# On a real paid event (invoice.paid / customer.subscription.created) we record
+# a `deal_closed` revenue event (the type revenue_tracker already models) with
+# the amount + Stripe subscription id, which is what feeds AVO MRR. Twenty
+# won-flip is left for a follow-up (needs the Stripe<->Twenty opportunity link);
+# noted in the PR so it is not silently forgotten.
+@app.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not secret:
+        # Rail not activated yet. No-op, do not error.
+        return {"status": "inactive", "reason": "STRIPE_WEBHOOK_SECRET not set"}
+
+    try:
+        import stripe
+    except ImportError:
+        logging.warning("[stripe_webhook] STRIPE_WEBHOOK_SECRET set but `stripe` SDK missing")
+        return {"status": "inactive", "reason": "stripe SDK not installed"}
+
+    raw = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    try:
+        event = stripe.Webhook.construct_event(raw, sig, secret)
+    except Exception as e:
+        logging.warning("[stripe_webhook] signature verify failed: %s", e)
+        return JSONResponse(status_code=400, content={"status": "bad_signature"})
+
+    etype = event.get("type", "")
+    obj = (event.get("data") or {}).get("object") or {}
+
+    # Only real money events promote to a won deal.
+    if etype == "invoice.paid":
+        amount = float(obj.get("amount_paid", 0) or 0) / 100.0
+        sub_id = obj.get("subscription") or ""
+        brand = str((obj.get("metadata") or {}).get("brand") or "unknown").lower()
+        try:
+            track_event(
+                "deal_closed", brand, "stripe",
+                opportunity_id=str(sub_id),
+                monetary_value=amount,
+                metadata={"stripe_event": etype, "invoice_id": obj.get("id", "")},
+            )
+        except Exception as e:
+            logging.error("[stripe_webhook] track_event failed: %s", e)
+        return {"status": "recorded", "event": etype, "amount": amount}
+
+    if etype == "customer.subscription.created":
+        # New recurring subscription. Record the monthly value as a won deal so
+        # MRR reflects it immediately even before the first invoice settles.
+        monthly = 0.0
+        try:
+            for item in ((obj.get("items") or {}).get("data") or []):
+                price = item.get("price") or {}
+                monthly += float(price.get("unit_amount", 0) or 0) * float(item.get("quantity", 1) or 1) / 100.0
+        except Exception:
+            monthly = 0.0
+        brand = str((obj.get("metadata") or {}).get("brand") or "unknown").lower()
+        try:
+            track_event(
+                "deal_closed", brand, "stripe",
+                opportunity_id=str(obj.get("id", "")),
+                monetary_value=monthly,
+                metadata={"stripe_event": etype, "customer": obj.get("customer", "")},
+            )
+        except Exception as e:
+            logging.error("[stripe_webhook] track_event failed: %s", e)
+        return {"status": "recorded", "event": etype, "monthly": monthly}
+
+    # Every other Stripe event: acknowledged, no action.
+    return {"status": "ignored", "event": etype}
+
+
 # ── Twenty schema assertion (item 6 of the intent-workflow B&T flag) ──
 # On-demand diff report for a specific brand's Twenty workspace. Read-only;
 # never mutates schema. Startup runs this across all mapped workspaces and
