@@ -354,6 +354,41 @@ def handle_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     idem = _derive_idempotency_key(event)
     twenty_result = _write_to_twenty(event, idem)
     audit_result = _persist_audit(event, idem, twenty_result)
+
+    # ── P1: hot-reply → SMS alert to Michael ────────────────────────────────
+    # Text Michael on genuine positive/neutral reply signals ONLY. The two
+    # terminal response_types (unsubscribe, bounce) are explicitly excluded so
+    # opt-outs and hard bounces never text him. Fire only on a first-seen event
+    # (audit not deduped) so a replayed webhook does not re-alert. The helper is
+    # guarded + no-ops until Twilio creds land, and de-dupes across the Instantly
+    # shim path within its TTL.
+    _HOT_REPLY_TYPES = {
+        "inbound_reply", "sms_reply", "form_submit",
+        "phone_ring", "qr_scan", "meeting_booked",
+    }
+    if event.response_type in _HOT_REPLY_TYPES and not audit_result.get("deduped"):
+        try:
+            from core.notifier import notify_hot_reply
+            _who = (
+                event.person_ref.email
+                or event.person_ref.phone
+                or event.person_ref.twenty_person_id
+                or event.person_ref.external_id
+                or "?"
+            )
+            _snip = ""
+            if isinstance(event.raw_body, dict):
+                _snip = str(
+                    event.raw_body.get("reply_text")
+                    or event.raw_body.get("reply_body")
+                    or event.raw_body.get("body")
+                    or event.raw_body.get("message")
+                    or ""
+                ).strip()
+            notify_hot_reply(event.brand, _who, event.channel, _snip)
+        except Exception as e:
+            logger.warning("[intent-inbound] hot-reply SMS non-fatal: %s", e)
+
     logger.info(
         "[intent-inbound] brand=%s channel=%s type=%s deduped=%s twenty=%s",
         event.brand, event.channel, event.response_type,

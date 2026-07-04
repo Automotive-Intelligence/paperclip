@@ -5958,6 +5958,25 @@ async def instantly_webhook(payload: dict, request: Request):
     if "reply" not in event or not email:
         return {"status": "ignored", "event": event}
 
+    # ── P1: hot-reply → SMS alert to Michael ────────────────────────────────
+    # A genuine reply just landed. Text Michael. Guarded + no-ops until Twilio
+    # creds land; de-duped in the helper so the intent-inbound shim below does
+    # not double-fire. Bounces/unsubs never reach here (this endpoint only
+    # fires on Instantly reply events; "reply" not in event returned above).
+    try:
+        from core.notifier import notify_hot_reply
+        _reply_snippet = str(
+            payload.get("reply_text")
+            or payload.get("reply_body")
+            or payload.get("body")
+            or payload.get("message")
+            or ""
+        ).strip()
+        shim_brand_for_alert = (payload.get("brand") or "aipg").strip().lower()
+        notify_hot_reply(shim_brand_for_alert, email, "cold_email", _reply_snippet)
+    except Exception as e:
+        logging.warning("[instantly_webhook] hot-reply SMS non-fatal: %s", e)
+
     contact = search_contact(email=email)
     if not contact:
         logging.warning("[instantly_webhook] contact not found for %s", email)
