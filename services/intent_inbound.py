@@ -253,17 +253,22 @@ def _persist_audit(event: IntentInboundEvent, idem: str, twenty_result: Dict[str
 # ---------------------------------------------------------------------------
 
 
-def _write_to_twenty(event: IntentInboundEvent) -> Dict[str, Any]:
-    """Upsert the Person to the brand's Twenty workspace using the existing
-    push_prospects_to_twenty contract from services/ghl_voice_ai_bridge.py.
+def _write_to_twenty(event: IntentInboundEvent, idem: str) -> Dict[str, Any]:
+    """Upsert Person + write Signal row in the brand's Twenty workspace.
+
+    Item 6 wiring: uses services/twenty_schema.upsert_person_with_score to
+    handle the Person + custom-field stamp, then services/twenty_schema.
+    create_signal_record to append the S1 event as its own row (Signal is a
+    custom Twenty object per spec section 4; one row per intent event).
 
     For brands with no Twenty workspace mapped today (AIPG on GHL; Book'd/P&P/
-    Panda pending), the handler skips the write and returns status="skipped"
-    with a reason. The event still lands in the audit table for observability.
+    Panda pending), the handler skips both writes and returns status="skipped".
+    The event still lands in the audit table for observability + later replay.
 
-    v1 shape: Person upsert only. The Signal object write (spec section 4 --
-    a Signal is a custom Twenty object, one row per intent event) lands in
-    item 6 when the schema enforcement + Signal writer arrives.
+    Scoring is NOT computed here; the caller (a downstream S2 enrichment step
+    or a scheduled re-scorer) writes score fields when they have the fit
+    inputs. Item 4's minimum-viable path leaves score_snapshot empty on the
+    initial insert; a follow-up updates the Person + adds a scored Signal row.
     """
     business_key = _BRAND_TO_TWENTY_KEY.get(event.brand)
     if not business_key:
@@ -271,7 +276,6 @@ def _write_to_twenty(event: IntentInboundEvent) -> Dict[str, Any]:
             "status": "skipped",
             "reason": f"brand {event.brand!r} not routed to Twenty (mapping is None)",
         }
-    # Build the prospect shape push_prospects_to_twenty expects.
     p = {
         "business_name": "",
         "contact": "",
@@ -286,22 +290,47 @@ def _write_to_twenty(event: IntentInboundEvent) -> Dict[str, Any]:
         "trigger_event":  event.subtype or event.response_type,
     }
     try:
-        from tools.twenty import push_prospects_to_twenty
-        results = push_prospects_to_twenty(
-            [p],
-            source_agent="intent_inbound",
+        from services.twenty_schema import (
+            upsert_person_with_score,
+            create_signal_record,
+        )
+        person_result = upsert_person_with_score(
             business_key=business_key,
+            person=p,
+            score_snapshot=None,  # score arrives via S3 (item 3); this is S1 raw ingest
+            source_agent="intent_inbound",
         )
     except Exception as e:
-        logger.exception("[intent-inbound] Twenty push raised: %s", e)
+        logger.exception("[intent-inbound] Twenty person upsert raised: %s", e)
         return {"status": "twenty_error", "reason": f"{type(e).__name__}: {e}"}
-    if not results:
-        return {"status": "twenty_empty", "reason": "writer returned no results"}
-    r0 = results[0]
+
+    person_id = person_result.get("contact_id") or ""
+    signal_result: Dict[str, Any] = {"status": "not_attempted"}
+    if person_id:
+        try:
+            signal_result = create_signal_record(
+                business_key=business_key,
+                signal_row={
+                    "person_id":      person_id,
+                    "brand":          event.brand,
+                    "channel":        event.channel,
+                    "response_type":  event.response_type,
+                    "subtype":        event.subtype or "",
+                    "source_name":    event.raw_body.get("source_name", ""),
+                    "occurred_at":    event.timestamp.isoformat(),
+                    "idempotency_key": idem,
+                },
+            )
+        except Exception as e:
+            logger.exception("[intent-inbound] Signal write raised: %s", e)
+            signal_result = {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+
     return {
-        "status":       r0.get("status") or "unknown",
-        "twenty_id":    r0.get("contact_id") or "",
-        "business_key": business_key,
+        "status":        person_result.get("status") or "unknown",
+        "twenty_id":     person_id,
+        "score_stamped": bool(person_result.get("score_stamped")),
+        "business_key":  business_key,
+        "signal":        signal_result,
     }
 
 
@@ -323,7 +352,7 @@ def handle_event(payload: Dict[str, Any]) -> Dict[str, Any]:
             "reason": str(e),
         }
     idem = _derive_idempotency_key(event)
-    twenty_result = _write_to_twenty(event)
+    twenty_result = _write_to_twenty(event, idem)
     audit_result = _persist_audit(event, idem, twenty_result)
     logger.info(
         "[intent-inbound] brand=%s channel=%s type=%s deduped=%s twenty=%s",
