@@ -4160,6 +4160,16 @@ async def lifespan(app: FastAPI):
 
 
 def _run_startup_bootstrap():
+    # ── Twenty schema diff report (item 6 of intent-workflow B&T flag)
+    # Non-fatal: logs per-workspace missing Person fields + Signal-object
+    # status as WARNINGs so operators see the gap; Twenty schema mutations
+    # are a founder-hands operation and we don't block startup on them.
+    try:
+        from services.twenty_schema import startup_check as _twenty_schema_check
+        _twenty_schema_check()
+    except Exception as e:
+        logging.warning(f"[twenty_schema] startup_check failed: {e}")
+
     # ── Zernio social media integration init
     try:
         if zernio_ready():
@@ -6021,6 +6031,20 @@ async def instantly_webhook(payload: dict, request: Request):
         "contact_id": contact_id,
         "opp_id": (opp.get("opportunity") or opp).get("id", ""),
     }
+
+
+# ── Twenty schema assertion (item 6 of the intent-workflow B&T flag) ──
+# On-demand diff report for a specific brand's Twenty workspace. Read-only;
+# never mutates schema. Startup runs this across all mapped workspaces and
+# logs the diffs; this endpoint lets an operator inspect a specific one.
+@app.post("/admin/twenty/assert-schema/{business_key}")
+async def admin_twenty_assert_schema(business_key: str, authorization: Optional[str] = Header(None)):
+    validate_key(authorization)
+    from services.twenty_schema import assert_schema as _twenty_assert_schema
+    try:
+        return _twenty_assert_schema(business_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"assert_schema failed: {e}")
 
 
 # ── Unified inbound webhook (item 4 of the intent-workflow B&T flag) ──
