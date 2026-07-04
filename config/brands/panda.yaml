@@ -1,0 +1,74 @@
+# Panda Construction -- reference config (spec section 11, the hardest brand: no cold email, all offline/local).
+# Primary channel is direct_mail. Item 5 of the B&T flag wires the Lob/PostGrid adapter; until then
+# the runner refuses to build for this brand with a clear message.
+
+brand: panda
+display_name: Panda Construction
+business_key: panda
+
+icp:
+  geo_radius:
+    center: Belton TX
+    miles: 30
+  segments:
+    - homeowners_owning_home_in_radius
+    - new_home_purchase_last_30d
+    - commercial_property_permit_filers
+  personas:
+    - homeowner
+    - commercial_property_owner
+
+# S1 signal sources (permit is the tier-1-equivalent for this brand).
+signal_sources:
+  - { name: permit_feed,          tier: T1, half_life_days: 21 }
+  - { name: property_purchase,    tier: T2, half_life_days: 60 }
+  - { name: storm_hail_event,     tier: T1, half_life_days: 10 }
+  - { name: meta_lead_form,       tier: T2, half_life_days: 14 }
+  - { name: inbound_call,         tier: T1, half_life_days: 3 }
+
+# S3 fit weights (standard axis, Panda numbers per spec section 11).
+fit_weights:
+  geo_match: 40
+  persona_match: 20        # homeowner vs commercial owner
+  solution_qualifier: 20   # owns home / permit type match
+  firmographic: 0
+
+# S5 channel roster (priority order). Direct mail is primary; the Lob/PostGrid
+# adapter lands in item 5 of the B&T flag. Until then the runner refuses to
+# activate this brand's channels with a clear message.
+channel_roster:
+  - direct_mail
+  - meta_lead_ad
+  - sms                    # consent-only, hottest tier
+
+compliance_profile:
+  channels:
+    - direct_mail
+    - meta_lead_ad
+    - sms
+  hard_rules:
+    - usps_ncoa_validate
+    - dma_suppress
+    - tcpa_dnc_for_sms
+  physical_address: |
+    Panda Construction, Bell County, TX
+    (address placeholder -- update with Panda's real mailing address before any direct_mail send)
+
+# No cold_email = no instantly block. Runner refuses cleanly.
+
+# Content lane (empty for direct mail; item 5 wires postcard templates).
+icp_content: {}
+
+success_metric: cost_per_job   # not cost_per_meeting; Panda measures jobs booked.
+
+scoring_notes: |
+  Panda is the reference for the 2x2 quadrant model on offline signals.
+  Speed-to-lead SLA for inbound_call is MINUTES not hours (spec section 3).
+  Permit signal decays slower than the standard 14d (21d half-life set above)
+  because concrete/metal work bidding windows are longer than a pricing-page hit.
+
+inbound_webhook_notes: |
+  CallRail number + QR/landing form both POST to the unified S6 endpoint with
+  channel="inbound_call" (call) or channel="meta_lead_ad" (form) once item 4
+  lands. A postcard's QR scan and a cold-email reply arrive as the same
+  response_type; that is the load-bearing abstraction.

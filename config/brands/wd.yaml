@@ -1,0 +1,86 @@
+# Worship Digital (WD) -- full-service marketing partner for SMBs. Worldwide reach,
+# 380 Corridor as the origin/founder-access credibility story (NOT the market ceiling).
+# Intent data is ONE service among many (SEO / web / ads / social / content / email / intent).
+# Primary revenue channel is WARM email via Loops (per feedback_revenue_convos_via_loops).
+# Runner refuses to build in item 1 because only cold_email is wired; a Loops adapter
+# is not in the item-1 scope. When WD does run a cold cohort, the Sales Desk / Quill
+# path uses Smartlead (per reference_outbound_platforms_per_brand) as the warmed-secondary
+# path, wired in item 5 alongside the other missing channel adapters.
+
+brand: wd
+display_name: Worship Digital
+business_key: callingdigital
+
+icp:
+  # Worldwide SMB, not corridor-bound (per feedback_wd_positioning_not_faith update 2026-06-30).
+  geo_radius: null
+  segments:
+    - med_spa_owner
+    - pi_law_firm_partner
+    - real_estate_team_lead
+    - custom_home_builder
+    - smb_owner_general
+  personas:
+    - founder
+    - owner_operator
+    - marketing_director
+
+signal_sources:
+  - { name: intent_topics,     tier: T2, half_life_days: 10 }
+  - { name: meta_lead_form,    tier: T2, half_life_days: 14 }
+  - { name: inbound_call,      tier: T1, half_life_days: 3 }
+  # Loops behavior events (open + click on the warm-tier subset) once the
+  # Loops event adapter lands in a future item.
+
+fit_weights:
+  geo_match: 10           # Worldwide, so geo is a small nudge, not a gate.
+  persona_match: 30       # founder/owner > marketing director > everyone else.
+  solution_qualifier: 30  # one of the 5 named verticals + real digital-marketing budget.
+  firmographic: 30        # employee count + revenue band.
+
+# WD's revenue flow is warm-email (Loops) as primary; cold cohorts go through
+# Smartlead (item 5). Runner refuses build in item 1 because neither adapter
+# is wired yet.
+channel_roster:
+  - warm_email
+  - cold_email
+
+compliance_profile:
+  channels:
+    - warm_email
+    - cold_email
+  hard_rules:
+    - can_spam_physical_address
+    - can_spam_1click_unsub
+    - google_yahoo_bulk_2024
+    - klaviyo_style_flow_sunset_90_180d
+  physical_address: |
+    Worship Digital, TX
+    (update with Anytime Mailbox VBA address before any live send)
+  unsubscribe_footer: |
+
+    --
+    Worship Digital
+    Not for you? Reply "stop" and I will not email again.
+
+# Smartlead is the cold-cohort path (item 5). Instantly block would be present
+# only if WD ever ran on Instantly (not planned). Left unset intentionally so
+# validation catches an accidental cold_email attempt in item 1.
+
+icp_content: {}
+
+leads_dir: ~/avo-telemetry/marketing_deliverables/wd_intent_leads
+
+success_metric: cost_per_strategy_call   # WD measures Strategy call bookings.
+
+scoring_notes: |
+  WD leads are ALL-brand-worldwide (not 380-Corridor-bound). The Corridor is
+  the founder-access credibility story, not the market ceiling. Signal weighting
+  reflects that: solution_qualifier + firmographic dominate over geo.
+
+inbound_webhook_notes: |
+  Loops handles warm replies natively via events; the unified S6 endpoint (item 4)
+  subscribes to Loops event webhooks (postal_hook style) so replies land in the
+  same Twenty WD workspace pipeline as any cold-Smartlead reply once that adapter
+  is wired in item 5. Zero-attachment sends route through Loops with hosted-link
+  dataVariables (see Sales Desk WD playbook update).
