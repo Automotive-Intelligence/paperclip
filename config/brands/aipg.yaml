@@ -1,0 +1,103 @@
+# AI Phone Guy (AIPG) -- DFW home services (plumbing, HVAC, roofing, dental, PI law).
+# Primary channel: cold email via Instantly (meetphoneguy/etc mailboxes, warming through ~Jul 6).
+# Secondary: SMS via GHL (consent-only, when a caller signals interest).
+
+brand: aipg
+display_name: The AI Phone Guy
+business_key: aiphoneguy
+
+icp:
+  # DFW-scoped for the launch cohort. Radius is roughly the metroplex.
+  geo_radius:
+    center: Dallas TX
+    miles: 40
+  segments:
+    - plumbing_operator
+    - hvac_operator
+    - roofing_operator
+    - dental_practice_manager
+    - pi_law_partner
+  personas:
+    - owner_operator
+    - operations_manager
+    - office_manager
+
+signal_sources:
+  # Intent topics tuned to home-services "AI receptionist" purchase intent.
+  - { name: intent_topics,     tier: T2, half_life_days: 10 }
+  - { name: inbound_call,      tier: T1, half_life_days: 3 }
+  - { name: meta_lead_form,    tier: T2, half_life_days: 14 }
+
+fit_weights:
+  geo_match: 30            # DFW-first; further out gets scored lower.
+  persona_match: 25        # owner-operator > office manager for this offer.
+  solution_qualifier: 25   # trade match (plumbing/HVAC/roofing) vs generic SMB.
+  firmographic: 20         # employee count + revenue band.
+
+channel_roster:
+  - cold_email
+  - sms
+
+compliance_profile:
+  channels:
+    - cold_email
+    - sms
+  hard_rules:
+    - can_spam_physical_address
+    - can_spam_1click_unsub
+    - google_yahoo_bulk_2024
+    - tcpa_dnc_for_sms
+  physical_address: |
+    The AI Phone Guy, DFW, TX
+    (update with Anytime Mailbox VBA address before any live send)
+  unsubscribe_footer: |
+
+    --
+    The AI Phone Guy
+    Not for you? Reply "stop" and I will not email again.
+
+instantly:
+  api_key_env: INSTANTLY_API_KEY_AIPG
+  # AIPG has two warming secondary domains per feedback_cold_outbound_infra_rules.
+  # Never send from theaiphoneguy.com primary. These are the warmed mailboxes.
+  sending_accounts:
+    - tyler@meetphoneguy.com
+    - hello@meetphoneguy.com
+    - tyler@getphoneguy.com
+    - hello@getphoneguy.com
+  daily_limit: 60          # under the ~50/mailbox/day post-warmup ceiling per spec section 5.
+  daily_max_leads: 30
+  email_gap_minutes: 12
+  open_tracking: false     # Apple MPP killed open-tracking value; do not attach pixels.
+  link_tracking: false
+  text_only: false
+  stop_on_reply: true
+  stop_on_auto_reply: true
+  schedule_start_hour: 8
+  schedule_end_hour: 17
+  schedule_timezone: America/Chicago
+  schedule_days: [0, 1, 2, 3, 4]
+
+cta_url: https://theaiphoneguy.com/book
+
+# Content per ICP segment. Copy authored by Quill under CRO's GTM Pod; the
+# home-services vertical sub-mode gets loaded when Quill generates for AIPG.
+# Populated when Quill's first AIPG sequence lands (blocked on Quill/Alpha per
+# the CRO GTM Pod activation order).
+icp_content: {}
+
+leads_dir: ~/avo-telemetry/marketing_deliverables/aipg_intent_leads
+
+success_metric: cost_per_meeting   # AIPG measures booked demos.
+
+scoring_notes: |
+  Speed-to-lead is the biggest lever for home services (spec section 3, cite A7):
+  ~2.6x close rate at <5 min vs 24h+, 78% hire the first responder. Any inbound
+  from AIPG surfaces should trigger a <5-min operator alert once GHL rails land.
+
+inbound_webhook_notes: |
+  Warm replies land in the meetphoneguy mailboxes -- item 4 (unified webhook)
+  extends app.py:5910 to promote them to a Twenty Opportunity with
+  quadrant=ACT-NOW or NURTURE-HOT depending on scoring. Inbound calls come
+  through the AIPG GHL Voice AI receptionist and route through
+  services/ghl_voice_ai_bridge.py already.

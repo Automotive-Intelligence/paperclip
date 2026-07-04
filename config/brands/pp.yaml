@@ -1,0 +1,215 @@
+# Paper & Purpose (P&P) -- Miriam Rubio's 90-day guided journal (Romans 12:2).
+# Client brand, delivery under the Client Marketing Garage; ships October 2026.
+# Primary channel: cold email via Instantly (DataMoon intent launch, 2026-06-18).
+# NOT Klaviyo -- Klaviyo bans third-party/intent lists. Instantly permits uploaded lists.
+# Ports pp_build_icp_campaign.py verbatim into the new runner; nothing changes for
+# operators except the invocation.
+
+brand: pp
+display_name: Paper and Purpose
+business_key: pp
+
+icp:
+  geo_radius: null
+  segments:
+    - returning_woman     # ICP-A: mid-life re-approaching faith
+    - christian_girly     # ICP-B: 18-27 aesthetic-forward
+  personas:
+    - woman_of_faith
+    - christian_creator
+
+signal_sources:
+  # DataMoon intent topics tuned to the two ICPs (P&P intent-campaign engine).
+  - { name: intent_topics,     tier: T2, half_life_days: 10 }
+  - { name: meta_lead_form,    tier: T2, half_life_days: 14 }
+
+fit_weights:
+  geo_match: 0            # No geo constraint; national reach.
+  persona_match: 40       # ICP-A vs ICP-B lane; primary axis.
+  solution_qualifier: 30  # Christian/journaling adjacency (topic overlap).
+  firmographic: 30        # engagement proxy (email quality, list source).
+
+channel_roster:
+  - cold_email
+
+compliance_profile:
+  channels:
+    - cold_email
+  hard_rules:
+    - can_spam_physical_address
+    - can_spam_1click_unsub
+    - google_yahoo_bulk_2024
+    - no_family_invention        # never invent Miriam's personal/family details.
+    - miriam_approves_all_copy   # client-approved artifacts only.
+  physical_address: "Paper & Purpose, 9901 Brodie Ln #160, Austin, TX 78748"
+  unsubscribe_footer: |
+
+    --
+    Paper & Purpose  9901 Brodie Ln #160, Austin, TX 78748
+    Not for you? Just reply "no thanks" and I will never email again.
+
+instantly:
+  api_key_env: INSTANTLY_API_KEY_PAPERANDPURPOSE
+  # All 9 provisioned P&P sending mailboxes (rotated by Instantly across both campaigns).
+  sending_accounts:
+    - miriam@getpaperandpurpose.com
+    - hello@getpaperandpurpose.com
+    - hi@getpaperandpurpose.com
+    - miriam@allpaperandpurpose.org
+    - hello@allpaperandpurpose.org
+    - hi@allpaperandpurpose.org
+    - miriam@ultrapaperandpurpose.com
+    - hello@ultrapaperandpurpose.com
+    - hi@ultrapaperandpurpose.com
+  daily_limit: 90          # per-campaign; 2 campaigns -> ~180/day, under ~270 capacity.
+  daily_max_leads: 40
+  email_gap_minutes: 12
+  random_wait_max: 8
+  open_tracking: false     # cold deliverability: tracking pixels hurt; keep off.
+  link_tracking: false
+  text_only: false         # HTML div-wrapping preserves paragraph breaks in send.
+  stop_on_reply: true
+  stop_on_auto_reply: true
+  schedule_start_hour: 8
+  schedule_end_hour: 17
+  schedule_timezone: America/Chicago
+  schedule_days: [0, 1, 2, 3, 4]
+
+cta_url: https://paperandpurpose.co/products/be-transformed-guided-mind-renewal-journal
+
+# Per-ICP content ported verbatim from scripts/pp_build_icp_campaign.py::ICP_CONFIGS.
+# Miriam's approved wording preserved. Em-dashes converted to commas/periods per
+# house rule. [journal link] -> {{cta}}, [First name] -> {{firstName}}.
+# Footer is auto-appended by the runner from compliance_profile.unsubscribe_footer.
+icp_content:
+  returning_woman:
+    campaign_name: PP ICP-A Returning Woman (DataMoon cold)
+    lead_file: pp_returning_woman_clean.csv
+    steps:
+      - delay_days: 3
+        subject: "a gentle question, {{firstName}}"
+        body: |
+          My name is Miriam, a woman of faith who knows what it's like to sit down with God and still walk away with the same anxious, cluttered mind I came with.
+
+          I wasn't missing quiet time. I was missing transformation. I could journal, pray, and read, and still struggle to take my thoughts captive the way Romans 12:2 actually calls us to. And every beautiful journal I bought looked stunning on the outside and left me completely on my own on the inside.
+
+          So I built what I couldn't find.
+
+          Be Transformed is a 90-day guided journal rooted in Romans 12:2. Every page is already prompted for mind renewal, so you never stare at a blank page wondering what to write. You just show up, and God meets you there.
+
+          The first run ships in October, and every pre-order helps make that happen. This is a small, independent launch, no big publisher, no warehouse of extras. When you pre-order, you're not just claiming your journal. You're helping get it into hands that need it.
+
+          If you want to see what's inside before you decide: {{cta}}
+
+          He's not done with your mind yet. Neither are you.
+
+          In Christ,
+          Miriam
+          Founder, Paper and Purpose
+      - delay_days: 4
+        subject: "why 90 days"
+        body: |
+          {{firstName}},
+
+          No pressure to overhaul your whole life. No guilt about the season you fell off. Just this season, this journal, one prompted page at a time.
+
+          Be Transformed is a 90-day guided journal, but it's not a one-and-done. Four journals take you through an entire year of mind renewal, season by season. And when each one is filled? It's a hardcover keepsake you'll actually want to hold onto.
+
+          The first run is limited and ships in October. Pre-orders are what make this launch possible, so if this is speaking to you, I don't want you to miss it.
+
+          Take a full look here: {{cta}}
+
+          He's not done with your mind yet. Neither are you.
+
+          In Christ,
+          Miriam
+          Founder, Paper and Purpose
+      - delay_days: 0
+        subject: "no pressure, {{firstName}}"
+        body: |
+          {{firstName}},
+
+          I promise I won't keep filling your inbox. I just believe in this too much to not say it one more time.
+
+          If this is the season you've been waiting for, to finally take your thoughts captive, to show up consistently, to actually feel like your quiet time is doing something, Be Transformed was made for exactly that moment.
+
+          The first run is small and ships in October. Your pre-order is what gets it there.
+
+          If it's a yes: {{cta}}
+
+          If not, no hard feelings, I'm just glad our paths crossed.
+
+          I'll see you in the pages,
+          Miriam
+          Founder, Paper and Purpose
+
+  christian_girly:
+    campaign_name: PP ICP-B Christian Girly (DataMoon cold)
+    lead_file: pp_christian_girly_clean.csv
+    steps:
+      - delay_days: 3
+        subject: "made you something, {{firstName}}"
+        body: |
+          {{firstName}},
+
+          I'm Miriam, not a big brand, not a marketing team. Just one girl who got tired of faith journals that felt like homework or looked like a tax form.
+
+          I wanted something that looked beautiful on my nightstand and actually did something on the inside. Something that sounded like a friend, not a curriculum. Something rooted in Romans 12:2 that would help me take my thoughts captive on the days my brain wouldn't quiet down.
+
+          I couldn't find it. So I made it.
+
+          Be Transformed is a 90-day guided journal, every page already prompted, so you just show up and God meets you there. No blank page paralysis. No figuring it out alone.
+
+          The first run is small, independent, and ships in October. Pre-orders are open now and honestly, each one is what makes this launch happen.
+
+          Wanna see what's inside? {{cta}}
+
+          I'll see you in the pages,
+          Miriam
+          Founder, Paper and Purpose
+      - delay_days: 4
+        subject: "the gift part"
+        body: |
+          {{firstName}},
+
+          Real talk, people are already buying these in pairs. One for themselves, one for their best friend, their sister, their small group.
+
+          And honestly? I get it. Be Transformed is the kind of gift that actually means something. Every page is already prompted, so you're not handing someone a blank journal and hoping for the best. You're handing her something that walks with her.
+
+          And one of my favorite things in the journal is the answered prayers envelope. You write it, you wait, and when God comes through, you seal it up as proof. A built-in prayer board right inside your journal.
+
+          The first run ships in October and it's limited. Don't let it sell out before you grab yours, or hers.
+
+          {{cta}}
+
+          I'll see you in the pages,
+          Miriam
+          Founder, Paper and Purpose
+      - delay_days: 0
+        subject: "last note, promise"
+        body: |
+          Hey {{firstName}},
+
+          Not gonna flood your inbox. Just wanted to leave you with this.
+
+          If you've been feeling that quiet nudge toward something more, more consistency, more peace, more of Him, I don't think that's an accident. Be Transformed was built for exactly that nudge.
+
+          First run ships in October and it's limited. Here it is if you're ready: {{cta}}
+
+          I'll see you in the pages,
+          Miriam
+
+leads_dir: ~/avo-telemetry/marketing_deliverables/pp_intent_leads
+
+success_metric: cost_per_preorder   # P&P measures pre-orders in the launch window.
+
+scoring_notes: |
+  Two ICP lanes NEVER mixed (project_pp_icp). Signal scoring must maintain
+  strict separation: a returning_woman signal cannot cross-code to christian_girly
+  and vice versa. Miriam gates all creative changes.
+
+inbound_webhook_notes: |
+  Replies land in the P&P sending mailboxes; the unified webhook (item 4) will
+  route them to the P&P Twenty workspace (when P&P is added to the workspace map).
+  Klaviyo remains the lifecycle path for post-purchase / warm; Instantly is
+  cold-only per Klaviyo's TOS constraint on third-party lists.

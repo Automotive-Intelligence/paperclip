@@ -1,0 +1,95 @@
+# Automotive Intelligence (AvI) -- independent auto dealerships, US.
+# Primary channel: cold email via Instantly (avi mailboxes, warming through ~Jul 6).
+# AvI's primary offering is AI integration consulting; intent data is one downstream service.
+# The receptionist books the Phase 1 Diagnostic; this cold flow feeds the same.
+
+brand: avi
+display_name: Automotive Intelligence
+business_key: autointelligence
+
+icp:
+  # US-wide for the first cohort; regional targeting via signal_sources / persona_match.
+  geo_radius: null
+  segments:
+    - independent_dealer_principal
+    - independent_dealer_gm
+    - bdc_manager
+    - fixed_ops_director
+    - dealer_group_leader
+  personas:
+    - dealer_principal
+    - gm
+    - bdc_manager
+    - fixed_ops_director
+    - group_leader
+
+signal_sources:
+  # DataMoon intent topics tuned to dealership AI-adoption research.
+  - { name: intent_topics,     tier: T2, half_life_days: 10 }
+  - { name: meta_lead_form,    tier: T2, half_life_days: 14 }
+  - { name: inbound_call,      tier: T1, half_life_days: 3 }
+
+fit_weights:
+  geo_match: 15           # US-wide launch; low weight vs the other axes.
+  persona_match: 30       # dealer principal / GM > BDC manager > office staff.
+  solution_qualifier: 30  # dealer has a BDC + real spend on CarGurus/vAuto/CDK/etc.
+  firmographic: 25        # store count / rooftops / annual units.
+
+channel_roster:
+  - cold_email
+
+compliance_profile:
+  channels:
+    - cold_email
+  hard_rules:
+    - can_spam_physical_address
+    - can_spam_1click_unsub
+    - google_yahoo_bulk_2024
+  physical_address: |
+    Automotive Intelligence, DFW, TX
+    (update with Anytime Mailbox VBA address before any live send)
+  unsubscribe_footer: |
+
+    --
+    Automotive Intelligence
+    Not for you? Reply "stop" and I will not email again.
+
+instantly:
+  api_key_env: INSTANTLY_API_KEY_AVI
+  # AvI sends from warmed secondary domains (never from automotiveintelligence.io).
+  # Placeholder mailboxes -- confirm actual warmed set before first live send.
+  sending_accounts:
+    - hello@meetautointel.com
+    - hello@getautointel.com
+  daily_limit: 60
+  daily_max_leads: 30
+  email_gap_minutes: 12
+  open_tracking: false
+  link_tracking: false
+  text_only: false
+  stop_on_reply: true
+  stop_on_auto_reply: true
+  schedule_start_hour: 8
+  schedule_end_hour: 17
+  schedule_timezone: America/Chicago
+  schedule_days: [0, 1, 2, 3, 4]
+
+cta_url: https://automotiveintelligence.io/diagnostic-call
+
+icp_content: {}   # populated when Quill's dealer sub-mode sequence lands.
+
+leads_dir: ~/avo-telemetry/marketing_deliverables/avi_intent_leads
+
+success_metric: cost_per_diagnostic_booked   # AvI measures Phase 1 Diagnostic bookings.
+
+scoring_notes: |
+  Independent dealers are the primary ICP (not franchise-corporate). Solution
+  qualifier is high-weighted because a dealer with a BDC + real vendor spend
+  (CarGurus $5K+, vAuto, VinSolutions, CDK) is materially more likely to buy
+  AI integration consulting than a smaller pre-owned lot.
+
+inbound_webhook_notes: |
+  Warm replies + phone bookings + form submits arrive through the receptionist
+  on +1 817-635-1987 (services/ghl_voice_ai_bridge.py) and the automotive-
+  intelligence.io site. Item 4 extends app.py:5910 so all four (Instantly reply,
+  Meta lead-form, CallRail, receptionist bridge) POST the same unified contract.

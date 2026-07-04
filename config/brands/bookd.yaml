@@ -1,0 +1,105 @@
+# Book'd -- licensed life-insurance agents (compliance-first CRM at bookd.cx).
+# Co-owned with Ryan Velazquez (3velazquez LLC). Primary channel: cold email via Instantly.
+# Sender identity: meetbookd + powerbookd (warming through ~Jul 6).
+# NEVER send from bookd.cx primary (feedback_cold_outbound_infra_rules).
+# ICP: licensed agents, older demographic (40-60), TX-first (259 TX cohort).
+
+brand: bookd
+display_name: Book'd
+business_key: bookd
+
+icp:
+  # TX-first cohort; expand nationally after validation.
+  geo_radius:
+    center: Dallas TX
+    miles: 500
+  segments:
+    - independent_life_agent
+    - captive_life_agent
+    - final_expense_specialist
+    - imo_leader              # multi-tenant IMO play, per pitch 3
+  personas:
+    - producing_agent
+    - agency_owner
+    - imo_principal
+
+signal_sources:
+  # Licensed-agent registries + lead-vendor site activity as proxy for
+  # "buying leads today." No open behavioral surge data yet -- treat as
+  # warm-cold, not intent-triggered.
+  - { name: license_registry,  tier: T3, half_life_days: 90 }
+  - { name: intent_topics,     tier: T3, half_life_days: 10 }
+  - { name: inbound_call,      tier: T1, half_life_days: 3 }
+
+fit_weights:
+  geo_match: 15           # TX-first launch weights TX higher; national is lower.
+  persona_match: 30       # producing agent > agency owner > everyone else for v1.
+  solution_qualifier: 30  # licensed + writing final expense/term > general P&C.
+  firmographic: 25        # policy volume band + years in market.
+
+channel_roster:
+  - cold_email
+
+compliance_profile:
+  channels:
+    - cold_email
+  hard_rules:
+    - can_spam_physical_address
+    - can_spam_1click_unsub
+    - google_yahoo_bulk_2024
+    - no_income_claim         # insurance compliance: never income/earnings claims.
+    - no_carrier_endorsement  # never imply carrier endorsement.
+  physical_address: |
+    Book'd (3velazquez LLC), TX
+    (update with Book'd Anytime Mailbox VBA address before any live send)
+  unsubscribe_footer: |
+
+    --
+    Book'd
+    Not for you? Reply "stop" and I will not email again.
+
+instantly:
+  api_key_env: INSTANTLY_API_KEY_BOOKD
+  # Book'd sends from warmed secondary domains ONLY. Never bookd.cx primary.
+  sending_accounts:
+    - ryan@meetbookd.com
+    - hello@meetbookd.com
+    - ryan@powerbookd.com
+    - hello@powerbookd.com
+  daily_limit: 60
+  daily_max_leads: 30
+  email_gap_minutes: 12
+  open_tracking: false
+  link_tracking: false
+  text_only: false
+  stop_on_reply: true
+  stop_on_auto_reply: true
+  schedule_start_hour: 8
+  schedule_end_hour: 17
+  schedule_timezone: America/Chicago
+  schedule_days: [0, 1, 2, 3, 4]
+
+cta_url: https://crm.bookd.cx/demo
+
+# Content authored by Quill under the insurance sub-mode. Blocked on Quill/Alpha
+# per the CRO GTM Pod activation order; when they ship, the 4-step Day 0/3/7/12
+# cadence for the first Book'd cohort lands here.
+icp_content: {}
+
+leads_dir: ~/avo-telemetry/marketing_deliverables/bookd_intent_leads
+
+success_metric: cost_per_demo_booked   # Book'd measures demos booked.
+
+scoring_notes: |
+  Compliance is the hard axis for Book'd. Any signal that suggests a non-
+  licensed contact (e.g., a lead-form fill from an aspiring agent) should
+  score to F fit and suppress -- captive/producing agent qualifiers are
+  gate criteria, not soft weights. The Ryan-verification compliance gate
+  applies to any claim in Book'd copy (testimonials/case refs require Ryan
+  sign-off; feedback_bookd_email_identity).
+
+inbound_webhook_notes: |
+  Warm replies land in meetbookd/powerbookd mailboxes. Item 4's unified webhook
+  routes them to the Twenty Book'd workspace held for Ryan sign-off
+  (services/ghl_voice_ai_bridge.py _BRAND_TO_TWENTY_KEY.bookd = None until
+  released). Once Ryan signs off, flip that one line in the bridge module.
