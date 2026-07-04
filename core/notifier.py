@@ -55,22 +55,58 @@ def notify_daily_summary(stats: dict):
     logger.info("\n".join(lines))
 
 
+def _twilio_config():
+    """Resolve Twilio send config, preferring a Standard API key over the
+    account Auth Token.
+
+    Auth precedence:
+      1. If TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET are both set, Basic Auth
+         uses (TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET).
+      2. Otherwise, fall back to (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN).
+
+    In BOTH cases the request URL path uses the Account SID (AC..., from
+    TWILIO_ACCOUNT_SID) — never the key SID. The API key only changes the Basic
+    Auth credentials, not the /Accounts/{AccountSid}/ path.
+
+    Returns (url, auth_tuple, from_number, to_number) when a complete + valid
+    config is present, else None so callers can no-op cleanly. The guard
+    requires: TWILIO_ACCOUNT_SID + TWILIO_FROM + MICHAEL_PHONE + either
+    (API_KEY_SID and API_KEY_SECRET) or AUTH_TOKEN.
+    """
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    from_number = os.environ.get("TWILIO_FROM")
+    michael_phone = os.environ.get("MICHAEL_PHONE")
+    api_key_sid = os.environ.get("TWILIO_API_KEY_SID")
+    api_key_secret = os.environ.get("TWILIO_API_KEY_SECRET")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+
+    if not all([account_sid, from_number, michael_phone]):
+        return None
+
+    if api_key_sid and api_key_secret:
+        auth = (api_key_sid, api_key_secret)
+    elif auth_token:
+        auth = (account_sid, auth_token)
+    else:
+        return None
+
+    # URL path uses the ACCOUNT SID, regardless of which auth pair we send.
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    return url, auth, from_number, michael_phone
+
+
 def notify_cost_alert(message: str):
     """Send cost budget alert — logs + Twilio when configured."""
     logger = _get_hot_lead_logger("cost_alerts")
     logger.warning(f"COST ALERT | {message}")
 
-    # Twilio alert when credentials are available
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_FROM")
-    michael_phone = os.environ.get("MICHAEL_PHONE")
-
-    if all([account_sid, auth_token, from_number, michael_phone]):
+    # Twilio alert when credentials are available (API key preferred, else token)
+    cfg = _twilio_config()
+    if cfg:
+        url, auth, from_number, michael_phone = cfg
         try:
             import requests
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-            requests.post(url, auth=(account_sid, auth_token), data={
+            requests.post(url, auth=auth, data={
                 "From": from_number,
                 "To": michael_phone,
                 "Body": message,
@@ -121,14 +157,13 @@ def notify_hot_reply(brand: str, person_ref: str, channel: str, snippet: str = "
 
     logger.info(f"HOT REPLY | {brand} | {person_ref} | {channel} | {snippet[:120]}")
 
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_number = os.environ.get("TWILIO_FROM")
-    michael_phone = os.environ.get("MICHAEL_PHONE")
-
-    if not all([account_sid, auth_token, from_number, michael_phone]):
-        logger.info("HOT REPLY not texted (Twilio/MICHAEL_PHONE env not set) — logged only")
+    # API key preferred, else account Auth Token. No-ops cleanly if neither a
+    # complete key pair nor a token is present (plus Account SID/from/to).
+    cfg = _twilio_config()
+    if not cfg:
+        logger.info("HOT REPLY not texted (Twilio creds/MICHAEL_PHONE not set) — logged only")
         return False
+    url, auth, from_number, michael_phone = cfg
 
     # Keep the SMS short and useful. No em-dashes in outbound copy.
     snippet_out = snippet[:100] + ("..." if len(snippet) > 100 else "")
@@ -140,8 +175,7 @@ def notify_hot_reply(brand: str, person_ref: str, channel: str, snippet: str = "
 
     try:
         import requests
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-        resp = requests.post(url, auth=(account_sid, auth_token), data={
+        resp = requests.post(url, auth=auth, data={
             "From": from_number,
             "To": michael_phone,
             "Body": body,

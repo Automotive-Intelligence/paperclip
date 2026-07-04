@@ -28,10 +28,11 @@ from core.notifier import notify_hot_reply  # noqa: E402
 
 
 def main() -> int:
-    creds_present = all(
-        os.environ.get(k)
-        for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM", "MICHAEL_PHONE")
-    )
+    # Mirror the helper's own guard so the test reports accurately whether creds
+    # are complete. Supports either a Standard API key (preferred) or the
+    # account Auth Token.
+    from core.notifier import _twilio_config  # noqa: E402
+    creds_present = _twilio_config() is not None
 
     sent = notify_hot_reply(
         brand="avi",
