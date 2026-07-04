@@ -185,6 +185,28 @@ async def handle_webhook(request: Request, secret_from_url: str) -> Dict[str, An
 
     if event_type in LOG_EVENTS:
         logger.info(f"smartlead reply from {email}")
+        # ── P1: hot-reply → SMS alert to Michael ────────────────────────────
+        # WD (first-dollar brand) sends intent on Smartlead, so a genuine reply
+        # must text Michael. This branch is reached ONLY for LOG_EVENTS
+        # (lead_replied); SUPPRESS_EVENTS (bounce/unsub) returned above and
+        # never reach here, so opt-outs and bounces never text. Reuses the
+        # guarded + de-duped notify_hot_reply helper (no-ops without Twilio
+        # creds). Additive only: suppression behavior is unchanged, and the
+        # call is try/except-wrapped so Twilio can't break the webhook.
+        try:
+            from core.notifier import notify_hot_reply
+            snippet = str(
+                payload.get("reply_text")
+                or payload.get("reply_body")
+                or payload.get("reply_message")
+                or ((payload.get("lead") or {}).get("reply_text"))
+                or payload.get("body")
+                or payload.get("message")
+                or "reply received"
+            ).strip() or "reply received"
+            notify_hot_reply("wd", email, "smartlead", snippet)
+        except Exception as e:
+            logger.warning(f"smartlead hot-reply SMS non-fatal: {e}")
         return {"ok": True, "event": event_type, "email": email, "outcome": "logged_no_suppress"}
 
     # Unknown event type — log + 200
