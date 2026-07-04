@@ -5994,11 +5994,52 @@ async def instantly_webhook(payload: dict, request: Request):
         return {"status": "opp_create_failed", "error": str(e)}
 
     track_event("email_replied", "tyler", "aiphoneguy", contact_id=contact_id)
+
+    # ── Item 4 shim (2026-07-03) ────────────────────────────────────────
+    # Forward this Instantly reply into the unified inbound pipeline so it
+    # lands in the intent_inbound_events audit table + Twenty. The existing
+    # GHL Opportunity promotion above is unchanged (business logic AIPG relies
+    # on). This shim adds observability + cross-channel parity without
+    # touching the tyler/aiphoneguy path. See services/intent_inbound.py.
+    try:
+        from services.intent_inbound import (
+            handle_event as _intent_handle_event,
+            instantly_reply_to_event as _instantly_to_event,
+        )
+        # Instantly today feeds AIPG's Tyler cohort; the shim brand-tags
+        # accordingly. Once other brands ship on Instantly the sender can
+        # include brand in the payload and we route on that.
+        shim_brand = (payload.get("brand") or "aipg").strip().lower()
+        shim_event = _instantly_to_event(shim_brand, payload)
+        if shim_event is not None:
+            _intent_handle_event(shim_event.model_dump(mode="json"))
+    except Exception as e:
+        logging.warning("[instantly_webhook] intent-inbound shim non-fatal: %s", e)
+
     return {
         "status": "promoted",
         "contact_id": contact_id,
         "opp_id": (opp.get("opportunity") or opp).get("id", ""),
     }
+
+
+# ── Unified inbound webhook (item 4 of the intent-workflow B&T flag) ──
+# Path-secret auth (Q4.1 lock). Every S1 adapter POSTs the same JSON contract
+# defined in services/intent_inbound.py::IntentInboundEvent, and this endpoint
+# persists + writes to Twenty via the brand's workspace mapping. See spec
+# section 5, line 130 for the load-bearing abstraction rationale.
+@app.post("/webhooks/intent-inbound/{secret}")
+async def intent_inbound_webhook(secret: str, payload: dict, request: Request):
+    from services.intent_inbound import handle_event as _intent_handle_event
+    from services.intent_inbound import path_secret_ok as _intent_secret_ok
+
+    if not _intent_secret_ok(secret):
+        logging.warning("[intent-inbound] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+    result = _intent_handle_event(payload)
+    if not result.get("ok"):
+        return JSONResponse(status_code=400, content=result)
+    return result
 
 
 # ── Marketing pipeline (generation upstream, Zernio distribution) ────────────
