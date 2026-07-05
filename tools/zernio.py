@@ -79,6 +79,16 @@ def zernio_ready() -> bool:
     return bool(ZERNIO_API_KEY)
 
 
+def use_api_key(key: Optional[str]) -> None:
+    """Override the active Zernio API key for partner routing (e.g. Book'd via
+    Ryan's Zernio through a per-brand key), then reset when done. Pass None to
+    restore the default ZERNIO_API_KEY from the environment. All requests read
+    the module-level ZERNIO_API_KEY at call time, so reassigning it here is
+    sufficient for the request layer to pick up the switch."""
+    global ZERNIO_API_KEY
+    ZERNIO_API_KEY = (key or os.getenv("ZERNIO_API_KEY", "")).strip()
+
+
 def _zernio_request(
     method: str,
     endpoint: str,
