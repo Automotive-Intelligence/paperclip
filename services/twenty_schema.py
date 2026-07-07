@@ -472,9 +472,15 @@ def apply_schema(
         # We can still try to create Signal.
 
     # 2. Person custom fields.
+    # NOTE: Twenty's REST metadata API is FLAT, not nested. Fields live at
+    # /rest/metadata/fields, with objectMetadataId in the query (GET) or the
+    # body (POST). The nested path /rest/metadata/objects/{id}/fields returns
+    # 400 with a clear invalid-path hint. Confirmed against a live workspace
+    # 2026-07-07.
     if person_id:
         fields_body, err = _metadata_get(
-            base_url, api_key, f"/rest/metadata/objects/{person_id}/fields",
+            base_url, api_key,
+            f"/rest/metadata/fields?objectMetadataId={person_id}",
         )
         if err:
             report["raw_errors"].append(f"list person fields: {err}")
@@ -492,12 +498,13 @@ def apply_schema(
             body = {
                 "name": name,
                 "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
+                "objectMetadataId": person_id,
                 "description": f.get("desc", ""),
                 "isNullable": True,
                 "label": name.replace("_", " ").title(),
             }
             resp, err2 = _metadata_post(
-                base_url, api_key, f"/rest/metadata/objects/{person_id}/fields", body,
+                base_url, api_key, "/rest/metadata/fields", body,
             )
             if err2 == "conflict (already exists)":
                 report["person"]["fields_skipped_existing"].append(name)
@@ -551,10 +558,11 @@ def apply_schema(
         report["signal"]["object_skipped_existing"] = True
         report["signal"]["object_id"] = signal_id
 
-    # 4. Signal object fields.
+    # 4. Signal object fields (same flat path pattern as Person fields above).
     if signal_id and not dry_run:
         fields_body, err4 = _metadata_get(
-            base_url, api_key, f"/rest/metadata/objects/{signal_id}/fields",
+            base_url, api_key,
+            f"/rest/metadata/fields?objectMetadataId={signal_id}",
         )
         existing_sig = _existing_field_names(_extract_fields(fields_body or {})) if not err4 else set()
         for f in TWENTY_SIGNAL_OBJECT_SCHEMA["fields"]:
@@ -565,6 +573,7 @@ def apply_schema(
             body = {
                 "name": name,
                 "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
+                "objectMetadataId": signal_id,
                 "description": f.get("desc", ""),
                 "isNullable": True,
                 "label": name.replace("_", " ").title(),
@@ -581,7 +590,7 @@ def apply_schema(
                 body["isUnique"] = True
 
             resp, err5 = _metadata_post(
-                base_url, api_key, f"/rest/metadata/objects/{signal_id}/fields", body,
+                base_url, api_key, "/rest/metadata/fields", body,
             )
             if err5 == "conflict (already exists)":
                 report["signal"]["fields_skipped_existing"].append(name)
