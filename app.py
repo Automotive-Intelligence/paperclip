@@ -8654,6 +8654,48 @@ async def smartlead_wd_webhook(secret: str, request: Request):
     return await _smartlead_wd_handle_webhook(request, secret)
 
 
+# ===== RFC 8058 one-click unsubscribe endpoint =====
+# COMPLIANCE-CRITICAL. Google/Yahoo bulk-sender rules (Feb 2024) require a
+# working one-click unsubscribe. The cold-email footer carries a per-recipient
+# link `<PUBLIC_UNSUB_BASE_URL>/u/<token>` where <token> is an HMAC-signed
+# (email, brand) pair (services/unsubscribe.py). This endpoint verifies the
+# signature and records the opt-out into the suppression source
+# (services/suppression.py), so the NEXT load-leads drops that address before
+# enrollment. Handles BOTH:
+#   POST /u/{token}  -> RFC 8058 one-click (List-Unsubscribe-Post) — returns 200
+#   GET  /u/{token}  -> human click in the email — returns a confirmation page
+# FAIL-CLOSED: an unverifiable/forged token is refused (never suppresses the
+# wrong address, never falsely confirms).
+@app.api_route("/u/{token}", methods=["GET", "POST"])
+async def one_click_unsubscribe(token: str, request: Request):
+    from services.unsubscribe import parse_token
+    from services import suppression
+
+    parsed = parse_token(token)
+    if not parsed:
+        # Bad/forged/expired token — refuse. 400 so no client treats it as done.
+        if request.method == "POST":
+            return PlainTextResponse("invalid unsubscribe token", status_code=400)
+        return HTMLResponse(
+            "<h1>Unsubscribe link invalid</h1><p>This link could not be "
+            "verified. Please reply to the email with the word STOP and you "
+            "will be removed.</p>",
+            status_code=400,
+        )
+    email, brand = parsed
+    status = suppression.record_unsubscribe(email, brand, reason="one_click_unsub")
+    logger.info("one-click unsubscribe brand=%s email=%s -> %s", brand, email, status)
+
+    if request.method == "POST":
+        # RFC 8058 one-click: minimal 200, no body required.
+        return PlainTextResponse("unsubscribed", status_code=200)
+    return HTMLResponse(
+        "<h1>You're unsubscribed</h1><p>You will not receive further emails "
+        "from us. It may take a short time for in-flight messages to stop.</p>",
+        status_code=200,
+    )
+
+
 # ===== GHL Voice AI receptionist → Twenty bridge =====
 # Per file 77 (AI Receptionists — AvI, WD, Book'd). The 3 receptionist
 # agents in the AIPG GHL location POST captured-call data here when a call
