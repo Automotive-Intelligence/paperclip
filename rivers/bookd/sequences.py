@@ -21,12 +21,15 @@ import os
 BOOKING_LINK = os.environ.get("BOOKING_LINK_BOOKD", "")
 
 # DataMoon B2B intent topic IDs → ICP signal label.
+# Verified Batch-A set (2026-07-07, catalog of 34,873 B2B topics). Replaces the
+# dead id 47780 (does not resolve in the current catalog) and the stale 27554;
+# adds 22805 (Financial CRM Software) + 5434 (CRM Software).
 DATAMOON_TOPIC_IDS = {
-    "13635": "Agency Management System",
-    "27554": "Lead Management Software",
-    "26165": "Insurance Software",
     "27799": "Life & Health Insurance Agency Management Software",
-    "47780": "Independent Insurance Agent Growth Strategies",
+    "13635": "Agency Management System",
+    "22805": "Financial CRM Software",
+    "26165": "Insurance Software",
+    "5434": "CRM Software",
 }
 
 # Signal → outbound angle (Cole references the observed signal directly).
@@ -34,9 +37,9 @@ SIGNAL_TO_ANGLE = {
     "Agency Management System": (
         "Book'd plugs into your AMS so bookings live where the policy work lives."
     ),
-    "Lead Management Software": (
-        "Speed-to-lead is the entire game in final-expense. "
-        "Book'd answers + qualifies in seconds."
+    "Financial CRM Software": (
+        "A CRM that already speaks insurance, so you stop bending a "
+        "financial-advisor tool to fit how life agents actually work."
     ),
     "Insurance Software": (
         "Less time stitching tools. More time selling."
@@ -44,9 +47,9 @@ SIGNAL_TO_ANGLE = {
     "Life & Health Insurance Agency Management Software": (
         "Agency-grade calendar + intake without the agency-grade price tag."
     ),
-    "Independent Insurance Agent Growth Strategies": (
-        "The bottleneck isn't leads, it's getting them on the calendar. "
-        "Book'd is the calendar piece."
+    "CRM Software": (
+        "A CRM built around agent follow-up, not a blank pipeline you have "
+        "to configure for a week."
     ),
 }
 

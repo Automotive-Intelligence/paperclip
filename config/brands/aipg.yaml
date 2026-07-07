@@ -48,11 +48,14 @@ compliance_profile:
     - google_yahoo_bulk_2024
     - tcpa_dnc_for_sms
   physical_address: "The AI Phone Guy, 508 Bluestem Dr., Aubrey, TX 76227"
+  # Approved compliant footer (Quill sequences, 2026-07-07). Runner appends this
+  # to every step; {{unsubscribe_url}} is the RFC 8058 one-click merge tag that
+  # Instantly fills per-recipient at load-leads time (satisfies the #142 gate).
   unsubscribe_footer: |
 
     --
-    The AI Phone Guy
-    Not for you? Reply "stop" and I will not email again.
+    The AI Phone Guy, 508 Bluestem Dr., Aubrey, TX 76227
+    Not the right fit? Unsubscribe in one click: {{unsubscribe_url}} and I won't email again.
 
 instantly:
   api_key_env: INSTANTLY_API_KEY_AIPG
@@ -78,11 +81,40 @@ instantly:
 
 cta_url: https://theaiphoneguy.com/book
 
-# Content per ICP segment. Copy authored by Quill under CRO's GTM Pod; the
-# home-services vertical sub-mode gets loaded when Quill generates for AIPG.
-# Populated when Quill's first AIPG sequence lands (blocked on Quill/Alpha per
-# the CRO GTM Pod activation order).
-icp_content: {}
+# Approved intent-data cold sequence (Quill, 2026-07-07, Michael-approved).
+# 3-step Day 0/3/7 (delay_days 3/4/0 = wait-after-step, per the P&P port).
+# NO PRICE (Iron Rule #1). CTA = demo booking theaiphoneguy.com/book (Michael
+# chose DEMO over the free calculator). Sender = Tyler. Verbatim copy; do not
+# reword. {{firstName}}/{{companyName}} pass to Instantly native mail-merge;
+# footer (address + one-click {{unsubscribe_url}}) appended by the runner.
+icp_content:
+  home_services:
+    campaign_name: AIPG | DFW Home Services Intent Cold v1
+    lead_file: null   # set when the DataMoon DFW home-services pull lands in leads_dir
+    steps:
+      - delay_days: 3
+        subject: "every missed call is a check to your competitor"
+        body: |
+          {{firstName}}, honest question: how many calls does {{companyName}} miss in a week? Most DFW shops your size miss a quarter to a third of them, on jobs, after hours, on weekends. And over half of those callers just dial the next company that picks up.
+          That is real money walking out the door, and it is not a hiring problem, it is a coverage problem.
+          We build a 24/7 AI that answers, qualifies, and books the calls you and your team cannot get to, so the job gets caught instead of lost. On a quick demo I will show you roughly what those missed calls are costing {{companyName}} a month. It is just math.
+          Want to see your number? Book a 15-min demo: theaiphoneguy.com/book
+          Tyler / The AI Phone Guy
+      - delay_days: 4
+        subject: "the first shop to answer usually wins the job"
+        body: |
+          {{firstName}}, one thing most owners underrate: it is not the best ad that wins the job, it is the first company to actually answer. Over half of customers go with whoever responds first.
+          So when your best lead calls at 7pm and hits voicemail, you did not just miss a call. You handed a ready-to-book customer to whoever picks up next.
+          The Guy answers instantly, day or night, qualifies the caller, and books them on your calendar, then texts you the details. You stay on the tools and the job still gets caught.
+          Two minutes to see your missed-call math? theaiphoneguy.com/book
+          Tyler / The AI Phone Guy
+      - delay_days: 0
+        subject: "should I close the loop?"
+        body: |
+          {{firstName}}, I do not want to keep bugging you, so this is the last note from me.
+          Is a 24/7 answer for {{companyName}} something you are still thinking about, or should I close the loop? If the numbers do not work for you, I will tell you that on the call too. It is just math, not a pitch.
+          If it is worth a look, you will see your own missed-call number on the demo: theaiphoneguy.com/book
+          Tyler / The AI Phone Guy
 
 leads_dir: ~/avo-telemetry/marketing_deliverables/aipg_intent_leads
 

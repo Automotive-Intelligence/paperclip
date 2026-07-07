@@ -55,17 +55,54 @@ compliance_profile:
     - google_yahoo_bulk_2024
     - klaviyo_style_flow_sunset_90_180d
   physical_address: "Worship Digital, 508 Bluestem Dr., Aubrey, TX 76227"
+  # Approved compliant footer (Quill sequences, 2026-07-07). When WD's cold path
+  # runs on Smartlead (item 5), map {{unsubscribe_url}} to Smartlead's native
+  # one-click token; on Loops (warm) the unsubscribe is Loops-native.
   unsubscribe_footer: |
 
     --
-    Worship Digital
-    Not for you? Reply "stop" and I will not email again.
+    Worship Digital, 508 Bluestem Dr., Aubrey, TX 76227
+    Not the right fit? Unsubscribe in one click: {{unsubscribe_url}} and I won't email again.
 
-# Smartlead is the cold-cohort path (item 5). Instantly block would be present
-# only if WD ever ran on Instantly (not planned). Left unset intentionally so
-# validation catches an accidental cold_email attempt in item 1.
+# WD booking CTA. Live GHL/booking widget confirmed 2026-07-07 (task item 2).
+# The WD copy file's placeholder (worshipdigital.co/strategy-call) is updated to
+# this same URL so config + copy agree.
+cta_url: https://the.aiappdashboard.com/widget/booking/5f6YW0cdV0Wrm0GVaU9W
 
-icp_content: {}
+# Smartlead is the cold-cohort path (item 5); Loops is the warm primary. Neither
+# adapter is wired in item 1, so `runner build` REFUSES for WD (channel_roster[0]
+# is warm_email, not cold_email). The approved sequence is pasted here now for
+# readiness so item 5 can load it without a copy round-trip. When WD runs cold on
+# Smartlead, map {{firstName}}/{{companyName}} to Smartlead's native merge syntax.
+# Verbatim copy (Quill, 2026-07-07); do not reword. 3-step Day 0/3/7 (3/4/0).
+icp_content:
+  smb_owner_general:
+    campaign_name: WD | SMB Owner Intent Cold v1
+    lead_file: null   # set when the DataMoon WD SMB pull lands in leads_dir
+    steps:
+      - delay_days: 3
+        subject: "one team instead of five vendors, {{firstName}}?"
+        body: |
+          {{firstName}}, most owners I talk to are stitching together five different vendors, one for the site, one for SEO, one for ads, one for social, one for email, and none of them own the whole picture. So the marketing never quite adds up, and every six months you are firing one and hiring another.
+          Worship Digital is the other way to run it: one team owning your entire marketing foundation, so the strategy actually connects for {{companyName}}.
+          We start with Foundations, $750 to set up and $1,500 a month with a 3-month minimum, which covers the core so you are not managing a pile of vendors anymore.
+          Worth a no-pressure strategy call to see if it fits? Book one here: https://the.aiappdashboard.com/widget/booking/5f6YW0cdV0Wrm0GVaU9W
+          Michael / Worship Digital
+      - delay_days: 4
+        subject: "the real problem with five marketing vendors"
+        body: |
+          {{firstName}}, quick follow-up. The real issue with five vendors is not the five invoices. It is that when leads dry up, every one of them points at the other four. Nobody owns the result.
+          When one team owns your foundation, there is one plan, one point of contact, and one group accountable for whether it actually works. That is most of the value right there.
+          Foundations is built to be that base for {{companyName}}, with no long lock-in past the first three months.
+          Open to a strategy call this week or next? https://the.aiappdashboard.com/widget/booking/5f6YW0cdV0Wrm0GVaU9W
+          Michael / Worship Digital
+      - delay_days: 0
+        subject: "should I leave this here, {{firstName}}?"
+        body: |
+          {{firstName}}, last note from me so I am not cluttering your inbox.
+          If sorting out the marketing is not a right-now priority for {{companyName}}, no problem and I will leave it. If it is, a strategy call is genuinely just that, a look at what one team owning your foundation would do for you, with no obligation to sign anything.
+          If the timing works: https://the.aiappdashboard.com/widget/booking/5f6YW0cdV0Wrm0GVaU9W
+          Michael / Worship Digital
 
 leads_dir: ~/avo-telemetry/marketing_deliverables/wd_intent_leads
 
