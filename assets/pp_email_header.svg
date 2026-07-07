@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Paper & Purpose — email header asset.
+
+  600x200 (industry-standard 2:1 email header at 72dpi).
+
+  Composition:
+    - Bone Cream #F2EDE4 background
+    - Floral sprig (apothecary botanical) on the left, in Dusty Sage
+      #9CA88E with a Heritage Gold #B89968 flower bud
+    - "Paper & Purpose" wordmark, centered, Cormorant Garamond
+      Light fallback stack in Antique Charcoal #2A2A26
+    - "BE TRANSFORMED" tagline below, letter-spaced small caps in
+      Forest Olive #4A5340
+    - Thin Heritage Gold rule line at the bottom
+
+  Notes:
+    - Font-family stack falls back to Garamond/Times where Cormorant
+      isn't installed. Email clients that don't load web fonts will
+      use the fallback automatically.
+    - This is a placeholder header. Replace once the DesignCrowd logo
+      lands.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200"
+     width="600" height="200" role="img"
+     aria-label="Paper and Purpose — Be Transformed">
+  <title>Paper &amp; Purpose</title>
+
+  <!-- Bone Cream background -->
+  <rect width="600" height="200" fill="#F2EDE4"/>
+
+  <!-- Floral sprig, left -->
+  <g transform="translate(80, 32)">
+    <!-- Stem -->
+    <path d="M 30 130 Q 26 95 30 60 Q 34 30 30 4"
+          stroke="#9CA88E" stroke-width="1.6" fill="none"
+          stroke-linecap="round"/>
+    <!-- Lower-left leaf -->
+    <path d="M 30 105 Q 6 100 -2 85 Q 14 96 30 100 Z"
+          fill="#9CA88E" opacity="0.85"/>
+    <!-- Mid-right leaf -->
+    <path d="M 30 80 Q 56 76 64 60 Q 48 72 30 75 Z"
+          fill="#9CA88E" opacity="0.85"/>
+    <!-- Upper-left leaf -->
+    <path d="M 30 52 Q 8 48 0 32 Q 16 44 30 47 Z"
+          fill="#9CA88E" opacity="0.85"/>
+    <!-- Mid-right tiny leaf -->
+    <path d="M 30 30 Q 48 28 54 18 Q 42 26 30 26 Z"
+          fill="#9CA88E" opacity="0.7"/>
+    <!-- Heritage Gold flower bud at top -->
+    <circle cx="30" cy="4" r="6" fill="#B89968"/>
+    <circle cx="30" cy="2" r="3.5" fill="#B89968" opacity="0.55"/>
+    <circle cx="30" cy="0" r="1.5" fill="#F2EDE4" opacity="0.7"/>
+  </g>
+
+  <!-- Wordmark: Paper & Purpose -->
+  <text x="360" y="100"
+        font-family="'Cormorant Garamond', 'Cormorant Garamond Light', Garamond, 'Hoefler Text', 'Times New Roman', serif"
+        font-size="42" font-weight="300"
+        fill="#2A2A26" text-anchor="middle"
+        letter-spacing="1.8">Paper &amp; Purpose</text>
+
+  <!-- Tagline: BE TRANSFORMED -->
+  <text x="360" y="130"
+        font-family="'Cormorant Garamond', Garamond, 'Hoefler Text', 'Times New Roman', serif"
+        font-size="12" font-weight="400"
+        fill="#4A5340" text-anchor="middle"
+        letter-spacing="7">BE TRANSFORMED</text>
+
+  <!-- Heritage Gold rule line -->
+  <line x1="60" y1="172" x2="540" y2="172"
+        stroke="#B89968" stroke-width="0.6" opacity="0.65"/>
+</svg>

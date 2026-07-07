@@ -1,0 +1,9 @@
+{
+  "_comment": "Maps business_key -> list of Buffer channel IDs. Populate as Miriam (and future clients) connect platforms in the Buffer UI. The wrapper uses this to filter buffer_list_channels(business_key) and to target buffer_create_draft_post calls when channel_ids arg is empty.",
+  "_schema": "{ business_key: string -> channel_ids: string[] }",
+  "paperandpurpose": ["6a205be0c687a22dd4584d1f", "6a205c0cc687a22dd4584db5", "6a205c29c687a22dd4584e07"],
+  "bookd": [],
+  "aiphoneguy": [],
+  "automotiveintelligence": [],
+  "callingdigital": []
+}
