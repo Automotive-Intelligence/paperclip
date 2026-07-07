@@ -261,6 +261,339 @@ def create_signal_record(
 
 
 # ---------------------------------------------------------------------------
+# Schema APPLY (creates missing Person fields + Signal object via metadata API)
+#
+# Twenty CRM's REST metadata API lives at /rest/metadata (v0.x convention).
+# Endpoints exercised here:
+#   GET  /rest/metadata/objects                     -> list all objects
+#   POST /rest/metadata/objects                     -> create custom object
+#   GET  /rest/metadata/objects/{id}/fields         -> list fields on an object
+#   POST /rest/metadata/objects/{id}/fields         -> create custom field
+#
+# If a specific Twenty instance exposes these at slightly different paths, the
+# apply_schema function returns structured errors per operation so the caller
+# can either patch the paths here or fall back to the admin UI.
+#
+# Non-destructive: skip if field/object already exists (probed via metadata
+# list). Never deletes / modifies existing fields.
+# ---------------------------------------------------------------------------
+
+
+# Map our canonical field type names -> Twenty's field type enum. Twenty v0.x
+# uses these type names in the metadata API. If a specific version varies, the
+# per-field POST will surface a clear error the caller can iterate on.
+_TWENTY_FIELD_TYPE_MAP: Dict[str, str] = {
+    "TEXT":      "TEXT",
+    "NUMBER":    "NUMBER",
+    "DATE_TIME": "DATE_TIME",
+    "RELATION":  "RELATION",
+    "BOOLEAN":   "BOOLEAN",
+    "SELECT":    "SELECT",
+}
+
+
+def _metadata_get(base_url: str, api_key: str, path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """GET against Twenty's metadata surface. Returns (body, error)."""
+    try:
+        r = requests.get(f"{base_url}{path}", headers=_headers_for(api_key), timeout=20)
+    except requests.RequestException as e:
+        return None, f"network: {e}"
+    if r.status_code == 404:
+        return None, "endpoint 404 (metadata API path may differ in this Twenty version)"
+    if not r.ok:
+        return None, f"HTTP {r.status_code} {r.text[:200]}"
+    try:
+        return r.json(), None
+    except ValueError:
+        return None, f"non-JSON body: {r.text[:200]}"
+
+
+def _metadata_post(base_url: str, api_key: str, path: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """POST against Twenty's metadata surface. Returns (body, error)."""
+    try:
+        r = requests.post(
+            f"{base_url}{path}",
+            headers=_headers_for(api_key),
+            json=body,
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        return None, f"network: {e}"
+    if r.status_code == 409:
+        return None, "conflict (already exists)"
+    if r.status_code == 404:
+        return None, "endpoint 404 (metadata API path may differ in this Twenty version)"
+    if not r.ok:
+        return None, f"HTTP {r.status_code} {r.text[:300]}"
+    try:
+        return r.json(), None
+    except ValueError:
+        return {"raw": r.text[:200]}, None
+
+
+def _headers_for(api_key: str) -> Dict[str, str]:
+    """Local copy of the headers helper -- avoids importing from tools.twenty
+    (which is optional at module load time to keep tests light)."""
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+
+def _extract_objects(body: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Twenty's metadata list responses can nest under data.objects or return
+    a bare list; handle both."""
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        data = body.get("data") or body.get("objects")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            objs = data.get("objects") or data.get("objectMetadataItems") or data.get("items")
+            if isinstance(objs, list):
+                return objs
+    return []
+
+
+def _extract_fields(body: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Twenty's field-list response shape parallel to _extract_objects."""
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        data = body.get("data") or body.get("fields")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            fields = data.get("fields") or data.get("fieldMetadataItems") or data.get("items")
+            if isinstance(fields, list):
+                return fields
+    return []
+
+
+def _find_object_id(objects: List[Dict[str, Any]], name_or_target: str) -> Optional[str]:
+    """Find an object's id by matching name / nameSingular / namePlural /
+    targetTableName. Twenty normalizes these differently across versions."""
+    target = name_or_target.lower()
+    for o in objects:
+        if not isinstance(o, dict):
+            continue
+        for key in ("nameSingular", "namePlural", "name", "targetTableName"):
+            v = str(o.get(key) or "").lower()
+            if v == target or v == target + "s":
+                return o.get("id")
+    return None
+
+
+def _existing_field_names(fields: List[Dict[str, Any]]) -> set:
+    """Return the set of field name strings already present on an object."""
+    names: set = set()
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        for key in ("name", "nameSingular"):
+            v = f.get(key)
+            if v:
+                names.add(str(v))
+    return names
+
+
+def apply_schema(
+    business_key: str,
+    *,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Create missing Person custom fields + Signal object + Signal fields in
+    the brand's Twenty workspace. Non-destructive (skips existing).
+
+    Returns a structured report:
+      {
+        "workspace_ok": bool,
+        "dry_run": bool,
+        "person": {
+          "object_id": str | None,
+          "fields_created": [...],
+          "fields_skipped_existing": [...],
+          "fields_errors": [{name, error}]
+        },
+        "signal": {
+          "object_id": str | None,
+          "object_created": bool,
+          "object_skipped_existing": bool,
+          "object_error": str | None,
+          "fields_created": [...],
+          "fields_skipped_existing": [...],
+          "fields_errors": [{name, error}]
+        },
+        "raw_errors": [...]
+      }
+
+    Caller (admin endpoint) is expected to be Bearer-authed. This function does
+    NOT validate auth on its own.
+    """
+    from tools.twenty import _workspace_config
+
+    report: Dict[str, Any] = {
+        "workspace_ok": False,
+        "dry_run": dry_run,
+        "person": {
+            "object_id": None,
+            "fields_created": [],
+            "fields_skipped_existing": [],
+            "fields_errors": [],
+        },
+        "signal": {
+            "object_id": None,
+            "object_created": False,
+            "object_skipped_existing": False,
+            "object_error": None,
+            "fields_created": [],
+            "fields_skipped_existing": [],
+            "fields_errors": [],
+        },
+        "raw_errors": [],
+    }
+
+    try:
+        base_url, api_key = _workspace_config(business_key)
+    except ValueError as e:
+        report["raw_errors"].append(f"workspace config: {e}")
+        return report
+    report["workspace_ok"] = True
+
+    # 1. List all objects; find Person, and see if Signal already exists.
+    objs_body, err = _metadata_get(base_url, api_key, "/rest/metadata/objects")
+    if err:
+        report["raw_errors"].append(f"list objects: {err}")
+        return report
+    objects = _extract_objects(objs_body or {})
+    person_id = _find_object_id(objects, "person")
+    signal_id = _find_object_id(objects, "signal")
+    report["person"]["object_id"] = person_id
+    if not person_id:
+        report["raw_errors"].append("Person object not found in metadata list; cannot add fields")
+        # We can still try to create Signal.
+
+    # 2. Person custom fields.
+    if person_id:
+        fields_body, err = _metadata_get(
+            base_url, api_key, f"/rest/metadata/objects/{person_id}/fields",
+        )
+        if err:
+            report["raw_errors"].append(f"list person fields: {err}")
+            existing = set()
+        else:
+            existing = _existing_field_names(_extract_fields(fields_body or {}))
+        for f in TWENTY_PERSON_CUSTOM_FIELDS:
+            name = f["name"]
+            if name in existing:
+                report["person"]["fields_skipped_existing"].append(name)
+                continue
+            if dry_run:
+                report["person"]["fields_created"].append(name + " (dry-run)")
+                continue
+            body = {
+                "name": name,
+                "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
+                "description": f.get("desc", ""),
+                "isNullable": True,
+                "label": name.replace("_", " ").title(),
+            }
+            resp, err2 = _metadata_post(
+                base_url, api_key, f"/rest/metadata/objects/{person_id}/fields", body,
+            )
+            if err2 == "conflict (already exists)":
+                report["person"]["fields_skipped_existing"].append(name)
+            elif err2:
+                report["person"]["fields_errors"].append({"name": name, "error": err2})
+            else:
+                report["person"]["fields_created"].append(name)
+
+    # 3. Signal object.
+    if not signal_id:
+        obj_spec = TWENTY_SIGNAL_OBJECT_SCHEMA
+        if dry_run:
+            report["signal"]["object_created"] = True
+            report["signal"]["object_id"] = "(dry-run)"
+            # In dry-run we still list all fields as "created" so the caller
+            # sees the shape the endpoint WOULD apply.
+            report["signal"]["fields_created"] = [f["name"] for f in obj_spec["fields"]]
+        else:
+            create_body = {
+                "nameSingular":  obj_spec["object_name"],
+                "namePlural":    obj_spec["object_name"] + "s",
+                "labelSingular": obj_spec["object_display"],
+                "labelPlural":   obj_spec["object_display"] + "s",
+                "description":   "One row per S1 intent event (spec section 4).",
+                "isCustom":      True,
+            }
+            resp, err3 = _metadata_post(
+                base_url, api_key, "/rest/metadata/objects", create_body,
+            )
+            if err3 == "conflict (already exists)":
+                report["signal"]["object_skipped_existing"] = True
+                # Re-list to pick up the id.
+                objs_body2, _ = _metadata_get(base_url, api_key, "/rest/metadata/objects")
+                signal_id = _find_object_id(_extract_objects(objs_body2 or {}), "signal")
+                report["signal"]["object_id"] = signal_id
+            elif err3:
+                report["signal"]["object_error"] = err3
+            else:
+                report["signal"]["object_created"] = True
+                # Extract id from response
+                created = None
+                if isinstance(resp, dict):
+                    data = resp.get("data") or resp
+                    if isinstance(data, dict):
+                        created = data.get("createObject") or data
+                        if isinstance(created, dict):
+                            signal_id = created.get("id")
+                report["signal"]["object_id"] = signal_id
+
+    else:
+        report["signal"]["object_skipped_existing"] = True
+        report["signal"]["object_id"] = signal_id
+
+    # 4. Signal object fields.
+    if signal_id and not dry_run:
+        fields_body, err4 = _metadata_get(
+            base_url, api_key, f"/rest/metadata/objects/{signal_id}/fields",
+        )
+        existing_sig = _existing_field_names(_extract_fields(fields_body or {})) if not err4 else set()
+        for f in TWENTY_SIGNAL_OBJECT_SCHEMA["fields"]:
+            name = f["name"]
+            if name in existing_sig:
+                report["signal"]["fields_skipped_existing"].append(name)
+                continue
+            body = {
+                "name": name,
+                "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
+                "description": f.get("desc", ""),
+                "isNullable": True,
+                "label": name.replace("_", " ").title(),
+            }
+            # RELATION fields need extra hints; if this is person_id, point it
+            # at the Person object we already found.
+            if f["type"] == "RELATION" and person_id:
+                body["settings"] = {
+                    "relationType": "MANY_TO_ONE",
+                    "targetObjectMetadataId": person_id,
+                }
+            # UNIQUE constraint on idempotency_key (spec section 4 dedup)
+            if name == "idempotency_key":
+                body["isUnique"] = True
+
+            resp, err5 = _metadata_post(
+                base_url, api_key, f"/rest/metadata/objects/{signal_id}/fields", body,
+            )
+            if err5 == "conflict (already exists)":
+                report["signal"]["fields_skipped_existing"].append(name)
+            elif err5:
+                report["signal"]["fields_errors"].append({"name": name, "error": err5})
+            else:
+                report["signal"]["fields_created"].append(name)
+
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Person upsert with scoring stamp (extends push_prospects_to_twenty)
 # ---------------------------------------------------------------------------
 
@@ -365,6 +698,7 @@ __all__ = [
     "TWENTY_SIGNAL_OBJECT_SCHEMA",
     "TWENTY_PIPELINE_STAGES",
     "TWENTY_TAG_PREFIXES",
+    "apply_schema",
     "assert_schema",
     "create_signal_record",
     "upsert_person_with_score",
