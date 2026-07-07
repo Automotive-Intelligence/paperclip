@@ -46,11 +46,14 @@ compliance_profile:
     - can_spam_1click_unsub
     - google_yahoo_bulk_2024
   physical_address: "Automotive Intelligence, 508 Bluestem Dr., Aubrey, TX 76227"
+  # Approved compliant footer (Quill sequences, 2026-07-07). Runner appends this
+  # to every step; {{unsubscribe_url}} is the RFC 8058 one-click merge tag that
+  # Instantly fills per-recipient at load-leads time (satisfies the #142 gate).
   unsubscribe_footer: |
 
     --
-    Automotive Intelligence
-    Not for you? Reply "stop" and I will not email again.
+    Automotive Intelligence, 508 Bluestem Dr., Aubrey, TX 76227
+    Not the right fit? Unsubscribe in one click: {{unsubscribe_url}} and I won't email again.
 
 instantly:
   api_key_env: INSTANTLY_API_KEY_AVI
@@ -74,7 +77,39 @@ instantly:
 
 cta_url: https://automotiveintelligence.io/diagnostic-call
 
-icp_content: {}   # populated when Quill's dealer sub-mode sequence lands.
+# Approved intent-data cold sequence (Quill, 2026-07-07, Michael-approved).
+# 3-step Day 0/3/7 (delay_days 3/4/0 = wait-after-step, per the P&P port).
+# Offer: Phase 1 AI Diagnostic $2,500. Verbatim copy; do not reword. Tokens
+# {{firstName}}/{{companyName}} pass through to Instantly's native mail-merge.
+# Footer (address + one-click {{unsubscribe_url}}) is appended by the runner
+# from compliance_profile.unsubscribe_footer.
+icp_content:
+  dealers:
+    campaign_name: AvI | Dealer Intent Cold v1
+    lead_file: null   # set when the DataMoon dealer pull lands in leads_dir
+    steps:
+      - delay_days: 3
+        subject: "where AI actually moves metal at {{companyName}}"
+        body: |
+          {{firstName}}, every week another vendor pitches you AI for the store. Most of it is noise, and not one of them can tell you where it would actually move metal in {{companyName}} versus where it just burns budget.
+          That gap is the whole thing we fix. Our Phase 1 Diagnostic ($2,500, one time) looks at how your store actually runs and hands you the 2 or 3 places AI pays off first, before you spend a dollar on the tools themselves.
+          Franchised or independent, it is built around your numbers, not a generic playbook.
+          Worth a 30-minute diagnostic call to see if it fits? Book it here: automotiveintelligence.io/diagnostic-call
+          Michael / Automotive Intelligence
+      - delay_days: 4
+        subject: "before you buy the next AI tool for the store"
+        body: |
+          {{firstName}}, quick follow-up. The dealers who get burned on AI usually are not the ones who moved too slow. They are the ones who bought the shiny tool first and found out later it never touched the metric that was actually bleeding.
+          Phase 1 flips the order. We tell you the 2 or 3 highest-payoff spots in {{companyName}} first, then you decide what, if anything, to buy. No retainer, no obligation to keep working with us after the diagnostic.
+          If that order makes more sense to you: automotiveintelligence.io/diagnostic-call
+          Michael / Automotive Intelligence
+      - delay_days: 0
+        subject: "should I close the loop on this?"
+        body: |
+          {{firstName}}, I do not want to keep landing in your inbox, so this is the last one from me.
+          If AI in the store is not a this-quarter priority for {{companyName}}, no problem at all and I will leave it there. If it is, the Phase 1 Diagnostic is the cheapest way to find out where it actually pays before you commit real budget to it.
+          Either way, thanks for the read. If the timing is right: automotiveintelligence.io/diagnostic-call
+          Michael / Automotive Intelligence
 
 leads_dir: ~/avo-telemetry/marketing_deliverables/avi_intent_leads
 

@@ -62,8 +62,11 @@ class PlaceholderAddressGuardTests(unittest.TestCase):
     def test_assert_real_address_ok_on_real(self):
         suppression.assert_real_address(_fake_brand())  # should not raise
 
-    def test_only_pp_yaml_passes_today(self):
-        """The real brand configs on disk: only pp has a real address."""
+    def test_real_address_brands_pass_stub_brands_blocked(self):
+        """Address guard on the real configs on disk. After #144 (508 Bluestem
+        for AvI/AIPG/WD) and #145 (McKinney for Book'd), those brands + pp carry
+        real CAN-SPAM addresses and PASS the guard. Any brand still on a stub
+        (panda) must be BLOCKED (fail-closed)."""
         from config.brands._schema import BrandConfig
         import yaml
 
@@ -75,10 +78,11 @@ class PlaceholderAddressGuardTests(unittest.TestCase):
             results[brand.brand] = not suppression.is_placeholder_address(
                 brand.compliance_profile.physical_address
             )
-        # pp must pass; every other brand with a stub address must be blocked.
-        self.assertTrue(results.get("pp"), f"pp should pass; got {results}")
-        for k in ("avi", "aipg", "wd", "bookd"):
-            self.assertFalse(results.get(k, True), f"{k} should be blocked; got {results}")
+        # Brands with owner-provided real addresses must pass the guard.
+        for k in ("pp", "avi", "aipg", "wd", "bookd"):
+            self.assertTrue(results.get(k), f"{k} should pass the address guard; got {results}")
+        # Panda is still a placeholder address -> must remain blocked (fail-closed).
+        self.assertFalse(results.get("panda", True), f"panda should be blocked; got {results}")
 
 
 class SuppressionFilterTests(unittest.TestCase):

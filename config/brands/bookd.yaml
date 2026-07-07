@@ -50,11 +50,12 @@ compliance_profile:
     - no_income_claim         # insurance compliance: never income/earnings claims.
     - no_carrier_endorsement  # never imply carrier endorsement.
   physical_address: "Book'd, 6150 Eldorado Pkwy, Ste 190 #2036, McKinney, TX 75070"
-  unsubscribe_footer: |
-
-    --
-    Book'd
-    Not for you? Reply "stop" and I will not email again.
+  # NULL on purpose: the approved Book'd package (2026-07-07) carries the footer
+  # (one-click {{unsubscribe_url}} + verbatim McKinney address) INLINE in each
+  # step body, so the runner must NOT append a second one. If a future step is
+  # added WITHOUT an inline footer, restore a footer here. #142 gate satisfied
+  # by the inline {{unsubscribe_url}} in every step below.
+  unsubscribe_footer: null
 
 instantly:
   api_key_env: INSTANTLY_API_KEY_BOOKD
@@ -79,10 +80,98 @@ instantly:
 
 cta_url: https://crm.bookd.cx/demo
 
-# Content authored by Quill under the insurance sub-mode. Blocked on Quill/Alpha
-# per the CRO GTM Pod activation order; when they ship, the 4-step Day 0/3/7/12
-# cadence for the first Book'd cohort lands here.
-icp_content: {}
+# Approved intent-data cold sequence (Book'd package, 2026-07-07, Michael-approved).
+# 3-step Day 0/3/7 (delay_days 3/4/0 = wait-after-step, per the P&P port).
+# HARD COMPLIANCE: no price, no income/earnings claim, no carrier endorsement,
+# no testimonials, no guarantee (the "60 policies or you don't pay" line was
+# dropped). Single CTA = demo booking crm.bookd.cx/demo (PLACEHOLDER; Michael is
+# confirming the real calendar link). Sender/from-name = Ryan (NOT Cole);
+# sending identity = meetbookd.com / powerbookd.com only (see instantly block),
+# never bookd.cx primary. Footer is INLINE in each body (address + one-click
+# {{unsubscribe_url}}); unsubscribe_footer is null so the runner does not double
+# it. Verbatim copy; do not reword.
+icp_content:
+  life_agents:
+    campaign_name: Book'd | TX Life Agents Intent Cold v1
+    lead_file: null   # set when the DataMoon TX life-agent pull lands in leads_dir
+    steps:
+      - delay_days: 3
+        subject: "built for agents, by an agent"
+        body: |
+          Hi {{firstName}},
+
+          Quick honest intro, agent to agent. I co-founded Book'd because the tools built
+          for life agents mostly ignore how our follow-up actually has to work. You know
+          the drill: a lead comes in, you owe them a callback, a text, a quote, a calendar
+          invite, and by week three your spreadsheet has quietly lost half of them.
+
+          You showed up on our radar because your agency was recently looking at
+          agency-management or CRM software. So you already know the gap we built Book'd
+          to close.
+
+          Book'd is a CRM made for licensed life agents, not a generic tool with an
+          insurance skin. It logs the follow-up, handles the reminders, and keeps records
+          clean enough to survive a compliance review. You stay the one talking to clients.
+
+          Worth 20 minutes to see it run? Grab a slot: https://crm.bookd.cx/demo
+
+          Ryan
+          Book'd
+
+          Not for you? One click to opt out: {{unsubscribe_url}}
+          Book'd, 6150 Eldorado Pkwy, Ste 190 #2036, McKinney, TX 75070
+      - delay_days: 4
+        subject: "the 15 leads your spreadsheet forgot"
+        body: |
+          {{firstName}},
+
+          Following up. Here is the part no agent-management demo shows you.
+
+          The lead is the easy part. Working fifty of them without one slipping is the
+          hard part. Another call runs long, a day gets away from you, and three real
+          prospects go quiet because nobody circled back. That is not a discipline
+          problem. It is a tooling problem.
+
+          Book'd was built the other way around. The reminders, the logging, the next
+          step, all handled, so the follow-up runs even on your busiest week. It knows the
+          questions a life agent asks and what to log for compliance and what to skip. It
+          does not pretend to be your carrier or endorse one.
+
+          Twenty minutes and I will show you it work on a real workflow, not a slide deck:
+          https://crm.bookd.cx/demo
+
+          Ryan
+          Book'd
+
+          Not for you? One click to opt out: {{unsubscribe_url}}
+          Book'd, 6150 Eldorado Pkwy, Ste 190 #2036, McKinney, TX 75070
+      - delay_days: 0
+        subject: "the honest version"
+        body: |
+          {{firstName}},
+
+          Last note from me unless you want to talk, so I am not crowding your inbox.
+
+          Straight with you: Book'd is early. We do not have a wall of testimonials yet,
+          and I am not going to invent one. Here is why I think that is the reason to look,
+          not the reason to pass. One of us carries a license and worked these leads the
+          same way you do, so Book'd was built around the problems that seat actually has.
+          Being early means you get a founder on the phone and you help shape how it works.
+
+          I am asking for twenty minutes, not a contract. See it run, tell me where it is
+          wrong, and if it is not for you, that is useful and I will stop.
+
+          If getting the follow-up right is still eating your week, it is worth the look:
+          https://crm.bookd.cx/demo
+
+          Ryan
+          Book'd
+
+          PS: built by Ryan (licensed agent) and Michael (operator who got tired of
+          watching good agents lose deals to dropped follow-up). Two people, one product.
+
+          Not for you? One click to opt out: {{unsubscribe_url}}
+          Book'd, 6150 Eldorado Pkwy, Ste 190 #2036, McKinney, TX 75070
 
 leads_dir: ~/avo-telemetry/marketing_deliverables/bookd_intent_leads
 
