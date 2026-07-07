@@ -47,9 +47,7 @@ compliance_profile:
     - can_spam_1click_unsub
     - google_yahoo_bulk_2024
     - tcpa_dnc_for_sms
-  physical_address: |
-    The AI Phone Guy, DFW, TX
-    (update with Anytime Mailbox VBA address before any live send)
+  physical_address: "The AI Phone Guy, 508 Bluestem Dr., Aubrey, TX 76227"
   unsubscribe_footer: |
 
     --
