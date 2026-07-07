@@ -6147,6 +6147,30 @@ async def admin_twenty_assert_schema(business_key: str, authorization: Optional[
         raise HTTPException(status_code=500, detail=f"assert_schema failed: {e}")
 
 
+# ── Twenty schema apply (item 6 automation) ──
+# Programmatically creates the 9 missing Person custom fields + the Signal
+# custom object + its 12 fields via Twenty's metadata API. Non-destructive:
+# skips fields/objects that already exist. Use ?dry_run=1 to preview without
+# writing.
+#
+# The response is a structured report per operation so the caller can see
+# exactly what was created, skipped, or errored. If Twenty's metadata surface
+# differs in this workspace version, per-field errors surface with clear text
+# for a manual fallback in the admin UI (only for the ones that failed).
+@app.post("/admin/twenty/apply-schema/{business_key}")
+async def admin_twenty_apply_schema(
+    business_key: str,
+    dry_run: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    validate_key(authorization)
+    from services.twenty_schema import apply_schema as _twenty_apply_schema
+    try:
+        return _twenty_apply_schema(business_key, dry_run=dry_run)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"apply_schema failed: {e}")
+
+
 # ── Unified inbound webhook (item 4 of the intent-workflow B&T flag) ──
 # Path-secret auth (Q4.1 lock). Every S1 adapter POSTs the same JSON contract
 # defined in services/intent_inbound.py::IntentInboundEvent, and this endpoint
