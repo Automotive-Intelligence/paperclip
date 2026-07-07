@@ -151,8 +151,9 @@ def assert_schema(business_key: str) -> Dict[str, Any]:
     report["workspace_ok"] = True
 
     # 1. Person field probe. Fetch one Person, inspect the returned attribute
-    # keys. This is a soft probe -- Twenty's metadata API varies by version;
-    # inspecting a real record is universal.
+    # keys. Twenty stores our canonical snake_case names as camelCase, so we
+    # normalize each observed key by converting it back to snake_case AND
+    # keeping the raw form for comparison.
     expected = {f["name"] for f in TWENTY_PERSON_CUSTOM_FIELDS}
     try:
         r = requests.get(
@@ -164,7 +165,13 @@ def assert_schema(business_key: str) -> Dict[str, Any]:
             data = body.get("data") if isinstance(body, dict) else None
             records = (data or {}).get("people") if isinstance(data, dict) else None
             if records:
-                seen = set(records[0].keys())
+                raw = set(records[0].keys())
+                # Twenty responds with camelCase; normalize each observed key
+                # by adding the snake_case equivalent so our canonical names
+                # match either shape.
+                seen: set = set(raw)
+                for k in raw:
+                    seen.add(_snake_from_camel(k))
                 present = sorted(expected & seen)
                 missing = sorted(expected - seen)
                 report["person_fields"]["present"] = present
@@ -193,7 +200,10 @@ def assert_schema(business_key: str) -> Dict[str, Any]:
             data = body.get("data") if isinstance(body, dict) else None
             records = (data or {}).get("signals") if isinstance(data, dict) else None
             if records:
-                seen = set(records[0].keys())
+                raw = set(records[0].keys())
+                seen = set(raw)
+                for k in raw:
+                    seen.add(_snake_from_camel(k))
                 expected_sig = {f["name"] for f in TWENTY_SIGNAL_OBJECT_SCHEMA["fields"]}
                 report["signal_object"]["missing_fields"] = sorted(expected_sig - seen)
         else:
