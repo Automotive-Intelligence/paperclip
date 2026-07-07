@@ -58,6 +58,8 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.brands._schema import BrandConfig, EmailStep, ICPContent, InstantlyConfig  # noqa: E402
+from services import suppression  # noqa: E402  (pre-send DNC / opt-out gate)
+from services import unsubscribe  # noqa: E402  (RFC 8058 one-click unsubscribe)
 
 logger = logging.getLogger("intent_workflow_runner")
 
@@ -162,7 +164,15 @@ def _instantly_html(text: str) -> str:
 
 def _render_body(step: EmailStep, brand: BrandConfig) -> str:
     """Substitute {{cta}} + {{footer}} tokens; append footer if not already
-    injected. {{firstName}} et al. pass through to Instantly's own mail-merge."""
+    injected. {{firstName}} et al. pass through to Instantly's own mail-merge.
+
+    COMPLIANCE: the footer is guaranteed to carry a REAL one-click unsubscribe
+    link. We inject the literal `{{unsubscribe_url}}` merge tag (Instantly fills
+    the per-recipient URL from the custom variable set at load-leads time). This
+    upgrades the old "Reply STOP"-only footer to Google/Yahoo 2024 one-click.
+    The merge tag contains no '&', so it survives _instantly_html's sanitizer;
+    the real URL is a single path segment (no '&' either) minted per lead.
+    """
     body = step.body
     cta = brand.cta_url or ""
     footer = brand.compliance_profile.unsubscribe_footer or ""
@@ -171,6 +181,9 @@ def _render_body(step: EmailStep, brand: BrandConfig) -> str:
         body = body.replace("{{footer}}", footer)
     elif footer:
         body = body.rstrip() + "\n\n" + footer
+    # Ensure a working one-click unsubscribe link is present exactly once.
+    if "{{unsubscribe_url}}" not in body:
+        body = body.rstrip() + "\n\nUnsubscribe (one click): {{unsubscribe_url}}"
     return _instantly_html(body)
 
 
@@ -230,6 +243,15 @@ def _cmd_build(brand: BrandConfig, config_version: str, dry_run: bool) -> int:
         logger.error("brand '%s' has cold_email in roster but no 'instantly' block", brand.brand)
         return 2
 
+    # COMPLIANCE GATE (fail-closed): refuse to build/enable a campaign for any
+    # brand whose CAN-SPAM physical address is still a placeholder. A campaign
+    # built with a fake address could be launched later; block it at the source.
+    try:
+        suppression.assert_real_address(brand)
+    except suppression.PlaceholderAddressError as e:
+        logger.error("BLOCKED (placeholder address): %s", e)
+        return 3
+
     cfg = brand.instantly
     common = {
         "daily_limit": cfg.daily_limit,
@@ -277,12 +299,47 @@ def _cmd_build(brand: BrandConfig, config_version: str, dry_run: bool) -> int:
     return 0
 
 
-def _cmd_load_leads(brand: BrandConfig, config_version: str, segment: str) -> int:
-    """Upload a CSV of leads to the segment's built campaign. Same shape as
-    pp_build_icp_campaign.py::load_leads (skip_if_in_campaign, ~6 req/sec)."""
+def _cmd_load_leads(
+    brand: BrandConfig,
+    config_version: str,
+    segment: str,
+    allow_unreachable_suppression: bool = False,
+) -> int:
+    """Upload a CSV of leads to the segment's built campaign, AFTER passing
+    every lead through the pre-send suppression / opt-out gate.
+
+    Compliance preflight (all fail-closed) runs before a single lead uploads:
+      1. Placeholder-address guard  -> block if the CAN-SPAM address is fake.
+      2. One-click unsubscribe capability -> block if we cannot mint a
+         verifiable RFC 8058 unsubscribe link (no working opt-out == no send).
+      3. Suppression filter -> drop unsubscribed / bounced / do-not-contact /
+         existing-customer addresses BEFORE enrollment. If a configured
+         suppression source is unreachable, block everyone unless the operator
+         passed --allow-unreachable-suppression.
+    """
     if brand.instantly is None:
         logger.error("brand '%s' has no 'instantly' block; load-leads not applicable", brand.brand)
         return 2
+
+    # --- Compliance preflight 1: placeholder-address guard (fail-closed) ----
+    try:
+        suppression.assert_real_address(brand)
+    except suppression.PlaceholderAddressError as e:
+        logger.error("BLOCKED (placeholder address): %s", e)
+        return 3
+
+    # --- Compliance preflight 2: one-click unsubscribe capability -----------
+    # We attach a per-lead unsubscribe URL below; if we cannot mint a verifiable
+    # link (no signing secret / no public base URL) we must NOT enroll, because
+    # a send whose unsubscribe link does not work is itself non-compliant.
+    if not unsubscribe.unsubscribe_ready():
+        logger.error(
+            "BLOCKED (no one-click unsubscribe): set UNSUBSCRIBE_SIGNING_SECRET "
+            "and PUBLIC_UNSUB_BASE_URL before enrolling leads. Refusing to "
+            "enroll without a working RFC 8058 unsubscribe link (fail-closed)."
+        )
+        return 3
+
     content = brand.icp_content.get(segment)
     if content is None:
         available = sorted(brand.icp_content.keys())
@@ -311,14 +368,51 @@ def _cmd_load_leads(brand: BrandConfig, config_version: str, segment: str) -> in
 
     with open(path, newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
+
+    # --- Compliance preflight 3: suppression filter (fail-closed) -----------
+    # Drop anyone unsubscribed / bounced / do-not-contact / existing-customer
+    # BEFORE enrollment. build fails closed on an unreachable configured source
+    # unless the operator explicitly overrode it.
+    try:
+        result = suppression.filter_suppressed(
+            rows, brand, allow_unreachable=allow_unreachable_suppression
+        )
+    except suppression.SuppressionSourceUnreachable as e:
+        logger.error(
+            "BLOCKED (suppression source unreachable): %s. Re-run with "
+            "--allow-unreachable-suppression ONLY if you accept the risk.", e,
+        )
+        return 3
+
+    print(
+        f"[{segment}] suppression gate: loaded={result.loaded} "
+        f"suppressed={result.suppressed_count} enrolled={result.enrolled} "
+        f"degraded={result.index.degraded} sources={result.index.sources}"
+    )
+    if result.index.degraded:
+        logger.warning(
+            "[%s] suppression index DEGRADED (override active) — a source failed; "
+            "enrolling on partial suppression data.", segment,
+        )
+    rows = result.kept
+    if not rows:
+        print(f"[{segment}] nothing to enroll after suppression; done.")
+        return 0
+
     print(f"[{segment}] uploading {len(rows)} leads -> campaign {cid} (config_version={config_version})")
     added = failed = 0
     for i, row in enumerate(rows, 1):
+        email = (row["email"] or "").strip()
         b = {
-            "email": row["email"],
+            "email": email,
             "campaign": cid,
             "first_name": (row.get("first_name") or "").strip() or None,
             "last_name": (row.get("last_name") or "").strip() or None,
+            # Per-recipient one-click unsubscribe URL; the footer's
+            # {{unsubscribe_url}} merge tag renders this at send time.
+            "custom_variables": {
+                "unsubscribe_url": unsubscribe.unsubscribe_url(email, brand.brand),
+            },
             "skip_if_in_campaign": True,
         }
         b = {k: v for k, v in b.items() if v is not None}
@@ -330,7 +424,10 @@ def _cmd_load_leads(brand: BrandConfig, config_version: str, segment: str) -> in
         if i % 250 == 0:
             print(f"  {i}/{len(rows)}  added={added} failed={failed}")
         time.sleep(0.15)
-    print(f"[{segment}] DONE added={added} failed={failed}")
+    print(
+        f"[{segment}] DONE added={added} failed={failed} "
+        f"(suppressed_before_enroll={result.suppressed_count})"
+    )
     return 0
 
 
@@ -381,6 +478,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     ll = sub.add_parser("load-leads", help="Upload a CSV of leads for a segment.")
     ll.add_argument("--segment", required=True, help="ICP segment key (matches brand.icp_content).")
+    ll.add_argument(
+        "--allow-unreachable-suppression",
+        action="store_true",
+        help=(
+            "DANGER: enroll even if a configured suppression source is "
+            "unreachable. Default is fail-closed (block all enrollment)."
+        ),
+    )
 
     sub.add_parser("status", help="List campaigns for this brand.")
 
@@ -398,7 +503,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "build":
         return _cmd_build(brand, config_version, dry_run=args.dry_run)
     if args.cmd == "load-leads":
-        return _cmd_load_leads(brand, config_version, segment=args.segment)
+        return _cmd_load_leads(
+            brand,
+            config_version,
+            segment=args.segment,
+            allow_unreachable_suppression=args.allow_unreachable_suppression,
+        )
     if args.cmd == "status":
         return _cmd_status(brand)
     return 1
