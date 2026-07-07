@@ -49,7 +49,7 @@ compliance_profile:
     - google_yahoo_bulk_2024
     - no_income_claim         # insurance compliance: never income/earnings claims.
     - no_carrier_endorsement  # never imply carrier endorsement.
-  physical_address: "Book'd (3velazquez LLC), 508 Bluestem Dr., Aubrey, TX 76227"
+  physical_address: "Book'd, 6150 Eldorado Pkwy, Ste 190 #2036, McKinney, TX 75070"
   unsubscribe_footer: |
 
     --
