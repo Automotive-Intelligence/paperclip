@@ -54,9 +54,7 @@ compliance_profile:
     - can_spam_1click_unsub
     - google_yahoo_bulk_2024
     - klaviyo_style_flow_sunset_90_180d
-  physical_address: |
-    Worship Digital, TX
-    (update with Anytime Mailbox VBA address before any live send)
+  physical_address: "Worship Digital, 508 Bluestem Dr., Aubrey, TX 76227"
   unsubscribe_footer: |
 
     --

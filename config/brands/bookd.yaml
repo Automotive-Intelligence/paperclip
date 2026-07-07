@@ -49,9 +49,7 @@ compliance_profile:
     - google_yahoo_bulk_2024
     - no_income_claim         # insurance compliance: never income/earnings claims.
     - no_carrier_endorsement  # never imply carrier endorsement.
-  physical_address: |
-    Book'd (3velazquez LLC), TX
-    (update with Book'd Anytime Mailbox VBA address before any live send)
+  physical_address: "Book'd (3velazquez LLC), 508 Bluestem Dr., Aubrey, TX 76227"
   unsubscribe_footer: |
 
     --

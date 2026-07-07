@@ -45,9 +45,7 @@ compliance_profile:
     - can_spam_physical_address
     - can_spam_1click_unsub
     - google_yahoo_bulk_2024
-  physical_address: |
-    Automotive Intelligence, DFW, TX
-    (update with Anytime Mailbox VBA address before any live send)
+  physical_address: "Automotive Intelligence, 508 Bluestem Dr., Aubrey, TX 76227"
   unsubscribe_footer: |
 
     --
