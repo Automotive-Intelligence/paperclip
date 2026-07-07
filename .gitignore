@@ -63,3 +63,14 @@ data/backups/
 
 scripts/backups/pp_product_*.json
 scripts/outputs/pp_welcome_templates_*.json
+
+# Secret backups — NEVER commit (live secrets live in Doppler / local .env)
+.env.bak
+*.env.bak
+*.bak
+
+# Generated output backups (reproducible; keep dir via .gitkeep)
+scripts/outputs/*_backup_*.json
+
+# Large local AV / brand-film working assets (270MB+ media, not for git)
+Avo/
