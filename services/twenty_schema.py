@@ -231,11 +231,13 @@ def create_signal_record(
     except ValueError as e:
         return {"status": "error", "reason": f"workspace: {e}"}
 
+    # Convert our snake_case keys to Twenty's camelCase field names.
+    data = {_to_camel(k): v for k, v in signal_row.items()}
     try:
         r = requests.post(
             f"{base_url}/rest/signals",
             headers=_headers(api_key),
-            json={"data": signal_row},
+            json={"data": data},
             timeout=30,
         )
     except requests.RequestException as e:
@@ -383,7 +385,12 @@ def _find_object_id(objects: List[Dict[str, Any]], name_or_target: str) -> Optio
 
 
 def _existing_field_names(fields: List[Dict[str, Any]]) -> set:
-    """Return the set of field name strings already present on an object."""
+    """Return the set of field name strings already present on an object.
+
+    Twenty stores field names in camelCase; we canonicalize to snake_case
+    internally, so this returns BOTH the raw camelCase name and the
+    snake_case equivalent so callers can match against either.
+    """
     names: set = set()
     for f in fields:
         if not isinstance(f, dict):
@@ -391,8 +398,49 @@ def _existing_field_names(fields: List[Dict[str, Any]]) -> set:
         for key in ("name", "nameSingular"):
             v = f.get(key)
             if v:
-                names.add(str(v))
+                camel = str(v)
+                names.add(camel)
+                names.add(_snake_from_camel(camel))
     return names
+
+
+def _to_camel(snake: str) -> str:
+    """Convert snake_case to camelCase for Twenty's field names.
+
+    Twenty rejects any name containing underscores with a clear validation
+    error: "Name is not valid: it must start with lowercase letter and
+    contain only alphanumeric characters." Confirmed 2026-07-07 against
+    a live workspace.
+    """
+    parts = snake.split("_")
+    if not parts:
+        return snake
+    return parts[0] + "".join(p.title() for p in parts[1:])
+
+
+def _snake_from_camel(camel: str) -> str:
+    """Reverse of _to_camel; mirrored for existence probes."""
+    out = []
+    for ch in camel:
+        if ch.isupper():
+            out.append("_")
+            out.append(ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+# HTTP 400 responses whose body signals "already exists" so the caller can
+# treat as skip instead of error. Twenty returns 400 with code=NOT_AVAILABLE
+# when a field name collides.
+def _is_already_exists_error(err: str) -> bool:
+    if not err:
+        return False
+    if "NOT_AVAILABLE" in err and "is not available" in err:
+        return True
+    if "already used by another field" in err:
+        return True
+    return False
 
 
 def apply_schema(
@@ -489,14 +537,15 @@ def apply_schema(
             existing = _existing_field_names(_extract_fields(fields_body or {}))
         for f in TWENTY_PERSON_CUSTOM_FIELDS:
             name = f["name"]
-            if name in existing:
+            camel = _to_camel(name)
+            if name in existing or camel in existing:
                 report["person"]["fields_skipped_existing"].append(name)
                 continue
             if dry_run:
                 report["person"]["fields_created"].append(name + " (dry-run)")
                 continue
             body = {
-                "name": name,
+                "name": camel,
                 "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
                 "objectMetadataId": person_id,
                 "description": f.get("desc", ""),
@@ -506,7 +555,7 @@ def apply_schema(
             resp, err2 = _metadata_post(
                 base_url, api_key, "/rest/metadata/fields", body,
             )
-            if err2 == "conflict (already exists)":
+            if err2 == "conflict (already exists)" or _is_already_exists_error(err2 or ""):
                 report["person"]["fields_skipped_existing"].append(name)
             elif err2:
                 report["person"]["fields_errors"].append({"name": name, "error": err2})
@@ -567,23 +616,28 @@ def apply_schema(
         existing_sig = _existing_field_names(_extract_fields(fields_body or {})) if not err4 else set()
         for f in TWENTY_SIGNAL_OBJECT_SCHEMA["fields"]:
             name = f["name"]
-            if name in existing_sig:
+            camel = _to_camel(name)
+            if name in existing_sig or camel in existing_sig:
                 report["signal"]["fields_skipped_existing"].append(name)
                 continue
             body = {
-                "name": name,
+                "name": camel,
                 "type": _TWENTY_FIELD_TYPE_MAP.get(f["type"], f["type"]),
                 "objectMetadataId": signal_id,
                 "description": f.get("desc", ""),
                 "isNullable": True,
                 "label": name.replace("_", " ").title(),
             }
-            # RELATION fields need extra hints; if this is person_id, point it
-            # at the Person object we already found.
+            # RELATION fields need a relationCreationPayload block (Twenty's
+            # documented shape; 'settings' is silently ignored). Point Signal.
+            # person_id at the Person object we found above; use MANY_TO_ONE
+            # per spec section 4 (a Person accumulates many Signals).
             if f["type"] == "RELATION" and person_id:
-                body["settings"] = {
-                    "relationType": "MANY_TO_ONE",
+                body["relationCreationPayload"] = {
+                    "type": "MANY_TO_ONE",
                     "targetObjectMetadataId": person_id,
+                    "targetFieldLabel": "Signals",
+                    "targetFieldIcon": "IconLink",
                 }
             # UNIQUE constraint on idempotency_key (spec section 4 dedup)
             if name == "idempotency_key":
@@ -592,7 +646,7 @@ def apply_schema(
             resp, err5 = _metadata_post(
                 base_url, api_key, "/rest/metadata/fields", body,
             )
-            if err5 == "conflict (already exists)":
+            if err5 == "conflict (already exists)" or _is_already_exists_error(err5 or ""):
                 report["signal"]["fields_skipped_existing"].append(name)
             elif err5:
                 report["signal"]["fields_errors"].append({"name": name, "error": err5})
@@ -638,10 +692,14 @@ def upsert_person_with_score(
         return r0
 
     # Stamp the score fields via PATCH.
+    # Twenty stores custom field names in camelCase; our score_snapshot uses
+    # snake_case for Pythonic consistency, so translate on write.
     try:
         base_url, api_key = _workspace_config(business_key)
         allowed = {f["name"] for f in TWENTY_PERSON_CUSTOM_FIELDS}
-        payload = {k: v for k, v in score_snapshot.items() if k in allowed}
+        payload = {
+            _to_camel(k): v for k, v in score_snapshot.items() if k in allowed
+        }
         if not payload:
             r0["score_stamped"] = False
             r0["stamp_reason"] = "no known fields in score_snapshot"
