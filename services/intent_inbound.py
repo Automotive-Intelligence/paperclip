@@ -76,6 +76,7 @@ ChannelName = Literal[
     "sms",
     "inbound_call",
     "sheet_drop",
+    "web_visitor",       # DataMoon Visitor-ID + similar de-anon per-minute POSTs
 ]
 
 
