@@ -28,7 +28,9 @@ the DataMoon-side mapping.
 """
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
@@ -283,8 +285,34 @@ def datamoon_payload_to_event(raw_payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "event": event, "heat": heat, "landing_page": landing_page}
 
 
+# ---------------------------------------------------------------------------
+# Path-secret auth
+#
+# DataMoon uses its OWN secret rather than sharing INTENT_INBOUND_WEBHOOK_PATH_SECRET
+# for two reasons:
+#   1. Blast radius: DataMoon's secret ends up in DataMoon's config UI, so a
+#      compromised DataMoon tenant shouldn't leak the shared inbound webhook.
+#   2. Path-safety: the secret goes IN the URL path, so it must be URL-safe.
+#      base64 secrets (which existing inbound uses) contain '/' and '+' that
+#      break FastAPI's path parameter routing. Michael generates the DataMoon
+#      secret with `openssl rand -hex 32` -- 64 chars, all URL-safe.
+# ---------------------------------------------------------------------------
+
+
+def datamoon_path_secret_ok(sent: str) -> bool:
+    """Constant-time compare against DATAMOON_VISITOR_ID_WEBHOOK_PATH_SECRET.
+
+    Fails closed if the env is unset (never silently accepts every request).
+    """
+    expected = (os.getenv("DATAMOON_VISITOR_ID_WEBHOOK_PATH_SECRET") or "").strip()
+    if not expected:
+        return False
+    return hmac.compare_digest(sent, expected)
+
+
 __all__ = [
     "datamoon_payload_to_event",
+    "datamoon_path_secret_ok",
     "_extract_brand",
     "_extract_person_ref",
     "_heat_from_landing_page",

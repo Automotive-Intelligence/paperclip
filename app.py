@@ -6201,10 +6201,12 @@ async def intent_inbound_webhook(secret: str, payload: dict, request: Request):
 @app.post("/webhooks/datamoon-visitor-id/{secret}")
 async def datamoon_visitor_id_webhook(secret: str, payload: dict, request: Request):
     from services.intent_inbound import handle_event as _intent_handle_event
-    from services.intent_inbound import path_secret_ok as _intent_secret_ok
-    from services.datamoon_visitor_id import datamoon_payload_to_event
+    from services.datamoon_visitor_id import (
+        datamoon_payload_to_event,
+        datamoon_path_secret_ok,
+    )
 
-    if not _intent_secret_ok(secret):
+    if not datamoon_path_secret_ok(secret):
         logging.warning("[datamoon-visitor-id] auth failed")
         return JSONResponse(status_code=401, content={"status": "unauthorized"})
 
