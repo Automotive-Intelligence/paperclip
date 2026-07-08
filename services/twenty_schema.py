@@ -247,14 +247,17 @@ def create_signal_record(
     # and reject with "Object signal doesn't have any 'data' field".
     data = {_to_camel(k): v for k, v in signal_row.items()}
 
-    # Twenty's CUSTOM-created RELATION fields (unlike built-in `companyId` on
-    # Person, which accepts a flat FK) require the connect wrapper on the
-    # SAME field name -- personId stays as personId, but its value becomes
-    # {"connect": {"id": <uuid>}}. NOT the relation name ("person") -- Twenty
-    # rejects that with `Object signal doesn't have any "person" field`.
-    person_fk = data.get("personId")
+    # Twenty stored our RELATION field as name="personId" with
+    # joinColumnName="personIdId" (its convention: append "Id" to the field
+    # name to derive the FK column). Neither the connect wrapper on the
+    # field name nor a flat write to `personId` actually attaches the
+    # relation -- Twenty accepts the request but silently drops the FK.
+    # The write MUST target the join column directly: `personIdId: <uuid>`.
+    # (See metadata GET /rest/metadata/fields for the Signal object; the
+    #  personId field's settings.joinColumnName confirms this convention.)
+    person_fk = data.pop("personId", None)
     if isinstance(person_fk, str) and person_fk:
-        data["personId"] = {"connect": {"id": person_fk}}
+        data["personIdId"] = person_fk
 
     try:
         r = requests.post(
