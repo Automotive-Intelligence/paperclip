@@ -6190,6 +6190,45 @@ async def intent_inbound_webhook(secret: str, payload: dict, request: Request):
     return result
 
 
+# ── DataMoon Visitor-ID normalizer (S1 web-visitor de-anon feed) ────────────
+# DataMoon's Webhook connector POSTs identified visitors per-minute here. This
+# endpoint accepts DataMoon's flexible payload shape (name/email/phone/
+# location/landing_page), routes by landing-page domain to the correct brand's
+# Twenty workspace, rates heat by URL path, and hands off to the same
+# handle_event() used by every other S1 adapter. The DataMoon side is Michael's
+# config (no enterprise license required — Webhook connector is included at
+# every tier). See services/datamoon_visitor_id.py for normalization detail.
+@app.post("/webhooks/datamoon-visitor-id/{secret}")
+async def datamoon_visitor_id_webhook(secret: str, payload: dict, request: Request):
+    from services.intent_inbound import handle_event as _intent_handle_event
+    from services.intent_inbound import path_secret_ok as _intent_secret_ok
+    from services.datamoon_visitor_id import datamoon_payload_to_event
+
+    if not _intent_secret_ok(secret):
+        logging.warning("[datamoon-visitor-id] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
+
+    norm = datamoon_payload_to_event(payload)
+    if not norm.get("ok"):
+        logging.info("[datamoon-visitor-id] normalize rejected: %s | payload=%s",
+                     norm.get("reason"), payload)
+        return JSONResponse(status_code=400, content=norm)
+
+    event = norm["event"]
+    result = _intent_handle_event(event)
+    if not result.get("ok"):
+        logging.warning("[datamoon-visitor-id] handle_event failed: %s | event=%s",
+                        result, event)
+        return JSONResponse(status_code=400, content=result)
+
+    result["normalized"] = {
+        "brand": event["brand"],
+        "heat": norm["heat"],
+        "landing_page": norm["landing_page"],
+    }
+    return result
+
+
 # ── Marketing pipeline (generation upstream, Zernio distribution) ────────────
 
 @app.post("/webhook/marketing-content")
