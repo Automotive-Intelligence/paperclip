@@ -242,12 +242,15 @@ def create_signal_record(
         return {"status": "error", "reason": f"workspace: {e}"}
 
     # Convert our snake_case keys to Twenty's camelCase field names.
+    # Twenty's REST v0.x /rest/{object}s expects the fields FLAT in the body;
+    # wrapping in {"data": {...}} makes Twenty treat "data" as a field name
+    # and reject with "Object signal doesn't have any 'data' field".
     data = {_to_camel(k): v for k, v in signal_row.items()}
     try:
         r = requests.post(
             f"{base_url}/rest/signals",
             headers=_headers(api_key),
-            json={"data": data},
+            json=data,
             timeout=30,
         )
     except requests.RequestException as e:
@@ -714,9 +717,11 @@ def upsert_person_with_score(
             r0["score_stamped"] = False
             r0["stamp_reason"] = "no known fields in score_snapshot"
             return r0
+        # Twenty PATCH expects flat body (same as POST); the {"data": ...}
+        # wrapper is a response-side artifact, not a request-side one.
         resp = requests.patch(
             f"{base_url}/rest/people/{person_id}",
-            headers=_headers(api_key), json={"data": payload}, timeout=30,
+            headers=_headers(api_key), json=payload, timeout=30,
         )
         r0["score_stamped"] = resp.ok
         if not resp.ok:

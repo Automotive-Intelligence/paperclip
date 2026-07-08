@@ -216,12 +216,14 @@ def _persist_audit(event: IntentInboundEvent, idem: str, twenty_result: Dict[str
     Uses ON CONFLICT (idempotency_key) DO NOTHING so duplicate sends are safe.
     """
     try:
-        from services.database import execute_query
+        from services.database import execute_query, fetch_all
         execute_query(_CREATE_TABLE_SQL)
         # ON CONFLICT ... RETURNING id: on new insert we get the id; on conflict
         # we get zero rows so a second query looks it up. For our purposes we
         # just distinguish "first time" vs "already seen."
-        row = execute_query(
+        # execute_query is write-only (returns None); fetch_all is the helper
+        # for statements with RETURNING.
+        row = fetch_all(
             """
             INSERT INTO intent_inbound_events
                 (idempotency_key, brand, channel, response_type, subtype,
@@ -240,7 +242,6 @@ def _persist_audit(event: IntentInboundEvent, idem: str, twenty_result: Dict[str
                 twenty_result.get("twenty_id") or None,
                 json.dumps(event.raw_body, default=str),
             ),
-            fetch=True,
         )
         inserted = bool(row)
         return {"inserted": inserted, "deduped": not inserted}
