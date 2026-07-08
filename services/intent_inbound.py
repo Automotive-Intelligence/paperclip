@@ -319,7 +319,9 @@ def _write_to_twenty(event: IntentInboundEvent, idem: str) -> Dict[str, Any]:
                     "response_type":  event.response_type,
                     "subtype":        event.subtype or "",
                     "source_name":    event.raw_body.get("source_name", ""),
-                    "occurred_at":    event.timestamp.isoformat(),
+                    # Twenty's date-time validator rejects microseconds and
+                    # +00:00 offsets -- wants strict 'YYYY-MM-DDTHH:mm:ssZ'.
+                    "occurred_at":    event.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "idempotency_key": idem,
                 },
             )
