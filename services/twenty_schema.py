@@ -248,13 +248,13 @@ def create_signal_record(
     data = {_to_camel(k): v for k, v in signal_row.items()}
 
     # Twenty's CUSTOM-created RELATION fields (unlike built-in `companyId` on
-    # Person, which accepts a flat FK) require Prisma-style connect syntax.
-    # Signal.person_id is a MANY_TO_ONE relation to Person; Twenty rejects a
-    # flat `personId` with `Relation "personId" requires connect or disconnect
-    # operation`. Rewrite `personId: "<uuid>"` -> `person: {connect: {id: ...}}`.
-    person_fk = data.pop("personId", None)
-    if person_fk:
-        data["person"] = {"connect": {"id": person_fk}}
+    # Person, which accepts a flat FK) require the connect wrapper on the
+    # SAME field name -- personId stays as personId, but its value becomes
+    # {"connect": {"id": <uuid>}}. NOT the relation name ("person") -- Twenty
+    # rejects that with `Object signal doesn't have any "person" field`.
+    person_fk = data.get("personId")
+    if isinstance(person_fk, str) and person_fk:
+        data["personId"] = {"connect": {"id": person_fk}}
 
     try:
         r = requests.post(
