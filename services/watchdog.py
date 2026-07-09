@@ -1,0 +1,290 @@
+"""services/watchdog.py -- AVO Watchdog, Railway edition.
+
+Port of ~/.local/bin/avo-watchdog.sh to run in the paperclip service instead
+of on the local Mac via launchd. Local can't catch a 3am outage while the
+laptop sleeps; this runs on Railway's uptime and posts anomalies to
+#build-tech via the existing SLACK_BOT_TOKEN.
+
+Three families of checks (dropped: launchd-job health, since Railway has
+no launchd — paperclip's own scheduler health surfaces via /health):
+
+  1. Brand-site health: HTTP status on each brand URL. Anything other than
+     2xx/3xx = anomaly.
+  2. avo-telemetry freshness: last commit older than N hours = anomaly.
+     Coordination layer stalling is a leading indicator of a persona chat
+     going dark.
+  3. Extension slot: add more checks over time (Vercel deploys, Doppler
+     token expiry, etc.) inside `_all_anomalies`.
+
+Anomaly deduplication:
+  Fingerprint-based, stored in a small watchdog_state table so a persistent
+  anomaly doesn't spam Slack every hour. Only NEW fingerprints alert.
+  When the underlying anomaly resolves, its fingerprint drops from the
+  active set on the next run.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import List, Optional, Set, Tuple
+
+import requests
+
+logger = logging.getLogger(__name__)
+
+
+BRAND_URLS: List[str] = [
+    "https://automotiveintelligence.io",
+    "https://worshipdigital.co",
+    "https://crm.worshipdigital.co",
+    "https://buildagentempire.com",
+    "https://bookd.cx",
+    "https://paperandpurpose.co",
+]
+
+TELEMETRY_REPO = "salesdroid/avo-telemetry"
+TELEMETRY_MAX_STALE_HOURS = 48
+
+SLACK_CHANNEL = "build-tech"
+SLACK_API = "https://slack.com/api/chat.postMessage"
+
+
+# ---------------------------------------------------------------------------
+# Anomaly datatype
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Anomaly:
+    """One anomaly. `fingerprint` is a stable dedup key; `human` is the
+    message that ends up in Slack.
+    """
+    fingerprint: str
+    human: str
+    severity: str = "warn"  # "warn" | "critical"
+
+
+# ---------------------------------------------------------------------------
+# Individual checks
+# ---------------------------------------------------------------------------
+
+
+def _check_brand_sites() -> List[Anomaly]:
+    """HEAD each brand URL; any non-2xx/3xx is an anomaly."""
+    out: List[Anomaly] = []
+    for url in BRAND_URLS:
+        try:
+            r = requests.get(url, timeout=15, allow_redirects=True)
+            code = r.status_code
+        except requests.RequestException as e:
+            out.append(Anomaly(
+                fingerprint=f"site-network-{url}",
+                human=f"Site DOWN/network error: {url} -- {type(e).__name__}",
+                severity="critical",
+            ))
+            continue
+        if not (200 <= code < 400):
+            out.append(Anomaly(
+                fingerprint=f"site-http-{url}-{code}",
+                human=f"Site returned HTTP {code}: {url}",
+                severity="critical" if code >= 500 else "warn",
+            ))
+    return out
+
+
+def _check_telemetry_freshness() -> List[Anomaly]:
+    """avo-telemetry not-committed-in-N-hours = coordination layer stalled.
+    Uses GitHub REST rather than a local git clone so this survives running
+    inside a stateless container.
+    """
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{TELEMETRY_REPO}/commits",
+            params={"per_page": 1}, headers=headers, timeout=15,
+        )
+    except requests.RequestException as e:
+        # Network failure to GitHub isn't a Watchdog anomaly per se; log + skip.
+        logger.warning("[watchdog] telemetry commit fetch failed: %s", e)
+        return []
+    if not r.ok:
+        logger.warning("[watchdog] telemetry commit fetch HTTP %s: %s", r.status_code, r.text[:120])
+        return []
+    commits = r.json() or []
+    if not commits:
+        return []
+    ts_str = (commits[0].get("commit") or {}).get("committer", {}).get("date") or ""
+    try:
+        commit_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        logger.warning("[watchdog] unparseable telemetry commit ts: %r", ts_str)
+        return []
+    stale_h = (datetime.now(timezone.utc) - commit_ts).total_seconds() / 3600
+    if stale_h > TELEMETRY_MAX_STALE_HOURS:
+        return [Anomaly(
+            fingerprint="telemetry-stale",
+            human=(
+                f"avo-telemetry has no commits in {int(stale_h)}h "
+                f"(>{TELEMETRY_MAX_STALE_HOURS}h) -- coordination layer may be stalled."
+            ),
+            severity="warn",
+        )]
+    return []
+
+
+def _all_anomalies() -> List[Anomaly]:
+    """Composite check. Add more callables here as coverage expands."""
+    out: List[Anomaly] = []
+    for check in (_check_brand_sites, _check_telemetry_freshness):
+        try:
+            out.extend(check())
+        except Exception as e:
+            logger.exception("[watchdog] check %s raised: %s", check.__name__, e)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Dedup via Postgres
+# ---------------------------------------------------------------------------
+
+
+_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS watchdog_state (
+    fingerprint  TEXT PRIMARY KEY,
+    human        TEXT NOT NULL,
+    severity     TEXT NOT NULL,
+    first_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+
+def _active_fingerprints() -> Set[str]:
+    from services.database import fetch_all
+    rows = fetch_all("SELECT fingerprint FROM watchdog_state")
+    return {r[0] for r in rows}
+
+
+def _record_active(anomalies: List[Anomaly]) -> None:
+    """Upsert each current anomaly; delete any fingerprint not present now
+    (self-clearing anomalies)."""
+    from services.database import execute_query
+    execute_query(_CREATE_TABLE_SQL)
+    if anomalies:
+        for a in anomalies:
+            execute_query(
+                """
+                INSERT INTO watchdog_state (fingerprint, human, severity)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (fingerprint) DO UPDATE
+                    SET last_seen = NOW(), human = EXCLUDED.human, severity = EXCLUDED.severity
+                """,
+                (a.fingerprint, a.human, a.severity),
+            )
+    # Prune fingerprints not in the current set (auto-clear resolved).
+    current = tuple(a.fingerprint for a in anomalies)
+    if current:
+        execute_query(
+            "DELETE FROM watchdog_state WHERE fingerprint <> ALL(%s)",
+            (list(current),),
+        )
+    else:
+        execute_query("DELETE FROM watchdog_state")
+
+
+# ---------------------------------------------------------------------------
+# Slack alert
+# ---------------------------------------------------------------------------
+
+
+def _post_to_slack(new_anomalies: List[Anomaly]) -> Optional[str]:
+    """Post ONE consolidated message per run summarizing new anomalies."""
+    if not new_anomalies:
+        return None
+    token = (os.environ.get("SLACK_BOT_TOKEN") or "").strip()
+    if not token:
+        logger.error("[watchdog] SLACK_BOT_TOKEN missing -- alert skipped")
+        return None
+    lines = ["🩺 *AVO Watchdog*: new infrastructure anomaly detected"]
+    for a in new_anomalies:
+        icon = "🚨" if a.severity == "critical" else "⚠️"
+        lines.append(f"{icon} {a.human}")
+    text = "\n".join(lines)
+    try:
+        r = requests.post(
+            SLACK_API,
+            headers={"Authorization": f"Bearer {token}"},
+            json={"channel": SLACK_CHANNEL, "text": text, "unfurl_links": False},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        logger.warning("[watchdog] slack post failed: %s", e)
+        return None
+    if not r.ok or not r.json().get("ok"):
+        logger.warning("[watchdog] slack error: %s %s", r.status_code, r.text[:200])
+        return None
+    return r.json().get("ts")
+
+
+# ---------------------------------------------------------------------------
+# Public entry
+# ---------------------------------------------------------------------------
+
+
+def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
+    """Execute one Watchdog cycle. Returns (all_anomalies, new_anomalies).
+    Idempotent + safe to call from HTTP endpoint or scheduler.
+    """
+    anomalies = _all_anomalies()
+    try:
+        active = _active_fingerprints()
+    except Exception as e:
+        logger.warning("[watchdog] state fetch failed (assuming fresh): %s", e)
+        active = set()
+    new = [a for a in anomalies if a.fingerprint not in active]
+    if new:
+        _post_to_slack(new)
+    try:
+        _record_active(anomalies)
+    except Exception as e:
+        logger.warning("[watchdog] state persist failed: %s", e)
+    return anomalies, new
+
+
+def run_hourly() -> None:
+    """Scheduler entry point."""
+    anomalies, new = run_once()
+    logger.info(
+        "[watchdog] cycle done: %d active, %d new anomalies",
+        len(anomalies), len(new),
+    )
+
+
+def run_now_json() -> dict:
+    """Manual-trigger admin endpoint response."""
+    anomalies, new = run_once()
+    return {
+        "ok": True,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "active_anomalies": [
+            {"fingerprint": a.fingerprint, "human": a.human, "severity": a.severity}
+            for a in anomalies
+        ],
+        "new_this_cycle": [
+            {"fingerprint": a.fingerprint, "human": a.human, "severity": a.severity}
+            for a in new
+        ],
+        "coverage": {
+            "brand_urls": BRAND_URLS,
+            "telemetry_repo": TELEMETRY_REPO,
+            "telemetry_max_stale_hours": TELEMETRY_MAX_STALE_HOURS,
+        },
+    }
+
+
+__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json"]
