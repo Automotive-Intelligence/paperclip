@@ -69,6 +69,44 @@ compliance_profile:
 # this same URL so config + copy agree.
 cta_url: https://the.aiappdashboard.com/widget/booking/5f6YW0cdV0Wrm0GVaU9W
 
+# Smartlead cold_email adapter (the warmed-secondary provider). WD runs its cold
+# cohort here; Loops stays the warm primary. The runner dispatches cold_email to
+# Smartlead because this block is present (no 'instantly' block for WD). The
+# SAME fail-closed compliance gate as the Instantly brands applies on load-leads:
+# placeholder-address guard + one-click-unsubscribe capability + suppression filter.
+#
+# LAUNCH GATES (why this does not send yet):
+#   - SMARTLEAD_WD_API_KEY must be in Doppler (build/load no-op cleanly without it);
+#   - sending_account_ids is empty until the warmed bestworshipdigital.com /
+#     allworshipdigital.com mailboxes are provisioned in Smartlead (14d warmup,
+#     per services/wd_dmarc_monitor.py). Build attaches nothing until then.
+#   - the DataMoon WD SMB pull must land in leads_dir (icp_content.lead_file).
+smartlead:
+  api_key_env: SMARTLEAD_WD_API_KEY
+  # Cold cohort ONLY on the warmed secondary domains, NEVER the primary
+  # worshipdigital.co (enforced by the never_send_from_domains guard below).
+  sending_domains:
+    - bestworshipdigital.com
+    - allworshipdigital.com
+  never_send_from_domains:
+    - worshipdigital.co
+  # Smartlead numeric email_account_ids for the warmed mailboxes. Empty until
+  # they are provisioned + warmed; runner builds the campaign but attaches no
+  # mailboxes (reported launch gate) rather than guessing an id.
+  sending_account_ids: []
+  daily_limit: 90
+  daily_max_leads: 30
+  min_time_btw_emails: 12
+  open_tracking: false
+  link_tracking: false
+  text_only: true
+  stop_on_reply: true
+  schedule_start_hour: 8
+  schedule_end_hour: 17
+  schedule_timezone: America/Chicago
+  # Smartlead weekday convention 0=Sun..6=Sat; Mon-Fri.
+  schedule_days: [1, 2, 3, 4, 5]
+
 # Smartlead is the cold-cohort path (item 5); Loops is the warm primary. Neither
 # adapter is wired in item 1, so `runner build` REFUSES for WD (channel_roster[0]
 # is warm_email, not cold_email). The approved sequence is pasted here now for
