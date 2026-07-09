@@ -3113,6 +3113,17 @@ scheduler.add_job(_wd_dmarc_weekly, CronTrigger(day_of_week="sun", hour=8, minut
     id="wd_dmarc_monitor_weekly", name="WD DMARC Monitor — Weekly Sunday",
     replace_existing=True, misfire_grace_time=3600)
 
+# AVO Watchdog — hourly infrastructure sweep. Replaces the local launchd
+# job at ~/.local/bin/avo-watchdog.sh (which can't fire while the Mac
+# sleeps). Checks brand-site HTTP health + avo-telemetry commit freshness,
+# posts NEW anomalies to #build-tech via SLACK_BOT_TOKEN. Dedup via
+# watchdog_state Postgres table so persistent anomalies don't re-alert.
+# Per B&T flag NEW 2026-06-28.
+from services.watchdog import run_hourly as _watchdog_hourly
+scheduler.add_job(_watchdog_hourly, CronTrigger(minute=0, timezone=CST),
+    id="avo_watchdog_hourly", name="AVO Watchdog — Hourly Infra Sweep",
+    replace_existing=True, misfire_grace_time=1800)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -5133,6 +5144,18 @@ async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
     fixes after a DMARC record change. Per IM-WD flag #9."""
     validate_key(authorization)
     from services.wd_dmarc_monitor import run_now_json
+    result = await asyncio.to_thread(run_now_json)
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-watchdog")
+async def run_watchdog_now(authorization: Optional[str] = Header(None)):
+    """Fire the AVO Watchdog sweep immediately (same code path as the
+    hourly cron). Returns active + new-this-cycle anomalies. Useful for
+    verifying after a fix ('did my anomaly clear?') or expanding coverage
+    ('does the new URL check work?'). Per B&T flag 2026-06-28."""
+    validate_key(authorization)
+    from services.watchdog import run_now_json
     result = await asyncio.to_thread(run_now_json)
     return JSONResponse(content=result)
 
