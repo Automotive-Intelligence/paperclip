@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +151,63 @@ class InstantlyConfig(BaseModel):
     )
 
 
+class SmartleadConfig(BaseModel):
+    """Smartlead-specific cold_email adapter config. Present when a brand runs
+    its cold cohort on Smartlead instead of Instantly (WD today). Mirrors
+    InstantlyConfig's shape so the runner can dispatch either provider with the
+    same build / load-leads / status interface.
+
+    Sending accounts on Smartlead are referenced by numeric email_account_id
+    (not address). `sending_account_ids` stays empty until the warmed mailboxes
+    are provisioned; with an empty list the runner builds the campaign but skips
+    the mailbox-attach step (a launch gate, reported to the operator).
+
+    Domain guard: `sending_domains` are the warmed SECONDARY domains the cold
+    cohort is allowed to send from; `never_send_from_domains` lists the primary
+    domain(s) that must NEVER carry cold outbound. The validator refuses any
+    overlap so a misconfig cannot route cold mail through the primary domain.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    api_key_env: str  # e.g. "SMARTLEAD_WD_API_KEY"
+    # Warmed secondary domains the cold cohort may send from (documentation +
+    # guard). Never the primary. e.g. ["bestworshipdigital.com", "allworshipdigital.com"].
+    sending_domains: List[str] = Field(min_length=1)
+    # Primary domain(s) that must never carry cold outbound. Overlap with
+    # sending_domains is a hard config error (see validator below).
+    never_send_from_domains: List[str] = Field(default_factory=list)
+    # Smartlead numeric email_account_ids to attach to the campaign. Empty until
+    # the warmed mailboxes exist; runner skips the attach step (launch gate).
+    sending_account_ids: List[int] = Field(default_factory=list)
+    daily_limit: int = Field(gt=0, default=90)
+    daily_max_leads: int = Field(gt=0, default=40)
+    min_time_btw_emails: int = Field(gt=0, default=12)  # minutes
+    open_tracking: bool = False
+    link_tracking: bool = False
+    text_only: bool = False
+    stop_on_reply: bool = True
+    schedule_start_hour: int = Field(ge=0, le=23, default=8)
+    schedule_end_hour: int = Field(ge=1, le=24, default=17)
+    schedule_timezone: str = "America/Chicago"
+    # Smartlead weekday convention: 0=Sunday .. 6=Saturday. Default Mon-Fri.
+    schedule_days: List[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
+
+    @field_validator("never_send_from_domains")
+    @classmethod
+    def _no_primary_domain_overlap(cls, v: List[str], info):
+        """A domain can never be BOTH an allowed cold-sending domain AND a
+        forbidden primary. Fail-closed: reject the config outright."""
+        sending = {d.strip().lower() for d in info.data.get("sending_domains", [])}
+        forbidden = {d.strip().lower() for d in v}
+        overlap = sending & forbidden
+        if overlap:
+            raise ValueError(
+                f"sending_domains overlaps never_send_from_domains: {sorted(overlap)}. "
+                f"The cold cohort must never send from the primary domain."
+            )
+        return v
+
+
 class ComplianceProfile(BaseModel):
     """Hard gate. The runner refuses to activate any channel whose compliance
     rules are not listed here (spec section 5)."""
@@ -220,8 +277,10 @@ class BrandConfig(BaseModel):
     compliance_profile: ComplianceProfile
 
     # Per-channel adapter blocks. Present only for channels this brand actually
-    # uses; runner reads the block that matches channel_roster[0].
+    # uses; the runner reads the cold_email provider block (instantly OR
+    # smartlead) when cold_email is in the roster.
     instantly: Optional[InstantlyConfig] = None
+    smartlead: Optional[SmartleadConfig] = None
 
     # Content per ICP segment (the ICP_CONFIGS map from pp_build_icp_campaign.py)
     icp_content: Dict[str, ICPContent] = Field(default_factory=dict)
@@ -238,14 +297,20 @@ class BrandConfig(BaseModel):
     scoring_notes: Optional[str] = None  # human notes for item 3 scoring service
     inbound_webhook_notes: Optional[str] = None  # human notes for item 4 unified webhook
 
-    @field_validator("instantly")
-    @classmethod
-    def _instantly_required_if_cold_email(cls, v, info):
-        """If cold_email is in channel_roster, an InstantlyConfig block must be present."""
-        roster = info.data.get("channel_roster", [])
-        if "cold_email" in roster and v is None:
-            raise ValueError("channel_roster includes cold_email but no 'instantly' block is set")
-        return v
+    @model_validator(mode="after")
+    def _cold_email_provider_required(self):
+        """If cold_email is in channel_roster, at least one cold-email provider
+        block (instantly OR smartlead) must be present. A model_validator (not a
+        field_validator) so the check runs even when both provider fields fall
+        back to their None defaults (a yaml with cold_email but no provider block
+        must still fail-closed)."""
+        if "cold_email" in self.channel_roster:
+            if self.instantly is None and self.smartlead is None:
+                raise ValueError(
+                    "channel_roster includes cold_email but neither an "
+                    "'instantly' nor a 'smartlead' block is set"
+                )
+        return self
 
     @field_validator("compliance_profile")
     @classmethod
@@ -274,4 +339,5 @@ __all__ = [
     "InstantlyConfig",
     "SignalSource",
     "SignalTier",
+    "SmartleadConfig",
 ]
