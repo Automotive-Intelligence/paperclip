@@ -5192,6 +5192,27 @@ async def aipg_scoreboard_get(
     return JSONResponse(content=board.to_dict())
 
 
+@app.get("/admin/scoreboard/pp")
+async def pp_scoreboard_get(
+    days: int = 7,
+    authorization: Optional[str] = Header(None),
+):
+    """P&P launch scoreboard JSON for the trailing N days (default 7).
+
+    Surfaces Klaviyo signup count + Shopify order/unit/revenue rollup +
+    progress toward 250-unit pre-order goal (deadline 2026-07-01). When a
+    token is missing the affected metric returns null with an explicit
+    `notes` message pointing at the required env var.
+
+    Per Pit Wall flag #4 (2026-06-15).
+    """
+    validate_key(authorization)
+    from services.pp_scoreboard import build_pp_scoreboard
+    days_clamped = max(1, min(int(days), 90))
+    board = await asyncio.to_thread(build_pp_scoreboard, days_clamped)
+    return JSONResponse(content=board.to_dict())
+
+
 @app.post("/admin/run-now")
 async def run_now(
     scope: str = "sales",
