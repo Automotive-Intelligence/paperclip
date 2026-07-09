@@ -23,4 +23,4 @@ cryptography>=42.0.0
 google-api-python-client>=2.130.0
 PyYAML>=6.0
 dnspython>=2.4.0
-stripe>=9.0.0
+stripe>=9,<15

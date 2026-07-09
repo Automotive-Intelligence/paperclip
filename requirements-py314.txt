@@ -6,4 +6,4 @@ requests
 anthropic
 pytz
 apscheduler>=3.10.4
-stripe>=9.0.0
+stripe>=9,<15
