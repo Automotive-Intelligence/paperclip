@@ -478,15 +478,23 @@ def publish_to_zernio(
         post_data["scheduledFor"] = scheduled_for
         post_data["timezone"] = timezone
 
-    result = _zernio_request("POST", "/posts", post_data)
-    
-    post_id = result.get("_id")
-    status = result.get("status", "unknown")
+    raw = _zernio_request("POST", "/posts", post_data)
+
+    # Zernio wraps the created post under a "post" key:
+    #   {"post": {"_id": ..., "status": ..., "platforms": [...]}}
+    # Callers (studio_publish.py, dispatch.py) and the log below read `_id`/`status`
+    # off the returned object directly, so unwrap the envelope here to honor the
+    # documented contract ("Returns: Post object with _id, status, ...").
+    # Fall back to the raw body if a future API shape returns the post un-nested.
+    result = raw.get("post") if isinstance(raw, dict) and isinstance(raw.get("post"), dict) else raw
+
+    post_id = result.get("_id") if isinstance(result, dict) else None
+    status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
     logging.info(
         f"[Zernio] Post created: {post_id} (status: {status}, "
         f"platforms: {', '.join(normalized_platforms)})"
     )
-    
+
     return result
 
 
