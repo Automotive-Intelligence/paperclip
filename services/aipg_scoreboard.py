@@ -146,12 +146,13 @@ def _ghl_count_tyler_prospects(days: int) -> tuple[Optional[int], Optional[str]]
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
     cutoff_iso = cutoff.isoformat()
     try:
-        # Paginate up to 5 pages = 1000 contacts max (well above weekly volume).
+        # Paginate up to 10 pages = 1000 contacts max (well above weekly volume).
+        # GHL caps /contacts/ limit at 100 (422 above 100 -- verified 2026-07-10).
         seen = 0
         start_after = None
         start_after_id = None
-        for _ in range(5):
-            params = {"locationId": loc, "limit": 200}
+        for _ in range(10):
+            params = {"locationId": loc, "limit": 100}
             if start_after and start_after_id:
                 params["startAfter"] = start_after
                 params["startAfterId"] = start_after_id
