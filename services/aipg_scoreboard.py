@@ -66,12 +66,15 @@ def _ghl_pipeline_id() -> str:
 
 
 def _ghl_count_appointments(days: int) -> tuple[Optional[int], Optional[str]]:
-    """Count GHL appointments in the trailing N days.
+    """Count GHL appointments across ALL location calendars in the trailing
+    N days.
 
-    Returns (count, blocker_reason). count is None when we can't read; the
-    reason string explains why (so the scoreboard's `notes` can be specific
-    instead of vague "unavailable"). The correct path is /calendars/events;
-    `/calendars/events/appointments` (an earlier guess) is a 404.
+    GHL's /calendars/events endpoint requires a calendarId/userId/groupId
+    per request (not just locationId), so we first list the location's
+    calendars and then sum events per calendar. startTime/endTime must be
+    ISO-string milliseconds; `limit` is not a valid parameter.
+
+    Returns (count, blocker_reason). count is None when we can't read.
     """
     headers = _ghl_headers()
     loc = _ghl_location_id()
@@ -80,25 +83,50 @@ def _ghl_count_appointments(days: int) -> tuple[Optional[int], Optional[str]]:
     import datetime as _dt
     end = _dt.datetime.now(_dt.timezone.utc)
     start = end - _dt.timedelta(days=days)
+    start_ms_str = str(int(start.timestamp() * 1000))
+    end_ms_str = str(int(end.timestamp() * 1000))
     try:
-        r = requests.get(
-            f"{GHL_BASE}/calendars/events",
-            headers=headers,
-            params={
-                "locationId": loc,
-                "startTime": int(start.timestamp() * 1000),
-                "endTime": int(end.timestamp() * 1000),
-                "limit": 200,
-            },
+        cal_r = requests.get(
+            f"{GHL_BASE}/calendars/",
+            headers=headers, params={"locationId": loc},
             timeout=_REQUEST_TIMEOUT,
         )
-        if r.status_code == 401:
-            return None, "GHL_API_KEY lacks calendars.readonly scope — reauth with calendar scopes added"
-        if not r.ok:
-            return None, f"/calendars/events http={r.status_code}"
-        body = r.json()
-        events = body.get("events") or body.get("appointments") or []
-        return len(events), None
+        if cal_r.status_code == 401:
+            return None, "GHL_API_KEY lacks calendars.readonly scope"
+        if not cal_r.ok:
+            return None, f"/calendars/ http={cal_r.status_code}"
+        calendars = cal_r.json().get("calendars") or []
+        if not calendars:
+            return 0, None
+
+        total = 0
+        for cal in calendars:
+            cal_id = cal.get("id")
+            if not cal_id:
+                continue
+            r = requests.get(
+                f"{GHL_BASE}/calendars/events",
+                headers=headers,
+                params={
+                    "locationId": loc,
+                    "calendarId": cal_id,
+                    "startTime": start_ms_str,
+                    "endTime": end_ms_str,
+                },
+                timeout=_REQUEST_TIMEOUT,
+            )
+            if r.status_code == 401:
+                return None, "GHL_API_KEY lacks calendars/events.readonly scope"
+            if not r.ok:
+                # Skip individual calendar failures; keep counting the rest.
+                logger.warning(
+                    "[aipg_scoreboard] /calendars/events cal=%s http=%s body=%s",
+                    cal_id, r.status_code, r.text[:120],
+                )
+                continue
+            events = r.json().get("events") or []
+            total += len(events)
+        return total, None
     except Exception as e:
         return None, f"/calendars/events raised {type(e).__name__}: {e}"
 
