@@ -154,7 +154,7 @@ _BRAND_TO_TWENTY_KEY: Dict[str, Optional[str]] = {
     "avi":   "autointelligence",
     "wd":    "callingdigital",       # WD workspace
     "aipg":  None,                    # AIPG remains on GHL; Twenty write skipped
-    "bookd": None,                    # held for Ryan sign-off, per bridge module
+    "bookd": "bookd",                 # Book'd Twenty live 2026-07-10; schema applied
     "pp":    None,                    # P&P Twenty workspace not yet provisioned
     "panda": None,                    # Panda has no cold-email path; write when workspace lands
 }
