@@ -46,7 +46,10 @@ _KLAVIYO_REVISION = "2024-10-15"
 
 
 def _klaviyo_headers() -> Optional[Dict[str, str]]:
-    token = (os.getenv("KLAVIYO_API_KEY") or "").strip()
+    # Matches tools/klaviyo.py convention: per-brand suffixed env var
+    # (KLAVIYO_API_KEY_PAPERANDPURPOSE). Do not use the generic KLAVIYO_API_KEY
+    # -- it's not the paperclip convention and would fail lookup.
+    token = (os.getenv("KLAVIYO_API_KEY_PAPERANDPURPOSE") or "").strip()
     if not token:
         return None
     return {
@@ -63,7 +66,7 @@ def _klaviyo_count_signups(days: int) -> Tuple[Optional[int], Optional[str]]:
     """
     headers = _klaviyo_headers()
     if not headers:
-        return None, "KLAVIYO_API_KEY missing (Doppler paperclip/prd)"
+        return None, "KLAVIYO_API_KEY_PAPERANDPURPOSE missing on paperclip service"
     since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
     total = 0
     cursor: Optional[str] = None
@@ -106,15 +109,75 @@ def _klaviyo_count_signups(days: int) -> Tuple[Optional[int], Optional[str]]:
 _SHOPIFY_API_VERSION = "2024-10"
 
 
-def _shopify_headers_and_url(store: str) -> Optional[Tuple[Dict[str, str], str]]:
-    token = (os.getenv("SHOPIFY_PP_TOKEN") or "").strip()
-    if not token or not store:
+# In-process cache of the freshly-minted Shopify admin token. The pre-loaded
+# SHOPIFY_ADMIN_TOKEN_PAPERANDPURPOSE is a Client Credentials Grant token that
+# expires every 24h; when it 401's we mint a fresh one from CLIENT_ID/SECRET
+# and cache it for the process's lifetime. Railway will re-mint on next hot
+# call after a container restart.
+_SHOPIFY_TOKEN_CACHE: Dict[str, str] = {}
+
+
+def _mint_shopify_token(shop: str) -> Optional[str]:
+    """Client Credentials Grant against Shopify OAuth. Returns a fresh
+    access_token (shpat_...) or None on failure. Mirrors
+    scripts/pp_refresh_shopify_token.py but writes to an in-process cache
+    instead of the local .env (Railway has no .env)."""
+    client_id = (os.getenv("SHOPIFY_CLIENT_ID_PAPERANDPURPOSE") or "").strip()
+    client_secret = (os.getenv("SHOPIFY_CLIENT_SECRET_PAPERANDPURPOSE") or "").strip()
+    if not client_id or not client_secret:
         return None
-    base = f"https://{store}.myshopify.com/admin/api/{_SHOPIFY_API_VERSION}"
+    try:
+        r = requests.post(
+            f"https://{shop}.myshopify.com/admin/oauth/access_token",
+            json={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "client_credentials",
+            },
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        logger.warning("[pp_scoreboard] shopify token mint network: %s", e)
+        return None
+    if r.status_code != 200:
+        logger.warning("[pp_scoreboard] shopify token mint HTTP %s: %s", r.status_code, r.text[:200])
+        return None
+    tok = (r.json() or {}).get("access_token") or ""
+    if tok:
+        _SHOPIFY_TOKEN_CACHE[shop] = tok
+    return tok or None
+
+
+def _shopify_current_token(shop: str) -> Optional[str]:
+    """Return the freshest known Shopify admin token: cache > env."""
+    cached = _SHOPIFY_TOKEN_CACHE.get(shop)
+    if cached:
+        return cached
+    return (os.getenv("SHOPIFY_ADMIN_TOKEN_PAPERANDPURPOSE") or "").strip() or None
+
+
+def _shopify_headers_and_url() -> Optional[Tuple[Dict[str, str], str, str]]:
+    """Resolve Shopify creds using the per-brand suffixed convention from
+    tools/shopify.py: SHOPIFY_SHOP_PAPERANDPURPOSE + SHOPIFY_ADMIN_TOKEN_PAPERANDPURPOSE.
+    On 401 the scoreboard mints a fresh token via _mint_shopify_token() using
+    SHOPIFY_CLIENT_ID/SECRET, so Railway stays self-healing across the 24h
+    token expiry.
+    """
+    store = (os.getenv("SHOPIFY_SHOP_PAPERANDPURPOSE") or "").strip()
+    api_version = (os.getenv("SHOPIFY_API_VERSION") or _SHOPIFY_API_VERSION).strip()
+    if not store:
+        return None
+    token = _shopify_current_token(store)
+    if not token:
+        # No pre-loaded token, mint one from CLIENT_ID/SECRET.
+        token = _mint_shopify_token(store)
+    if not token:
+        return None
+    base = f"https://{store}.myshopify.com/admin/api/{api_version}"
     return {
         "X-Shopify-Access-Token": token,
         "Accept": "application/json",
-    }, base
+    }, base, store
 
 
 def _shopify_count_orders(days: int) -> Tuple[
@@ -125,11 +188,10 @@ def _shopify_count_orders(days: int) -> Tuple[
     Returns (order_count, unit_count, revenue_usd, blocker_reason). Any of the
     first three can be None if unreachable.
     """
-    store = (os.getenv("SHOPIFY_PP_STORE") or "nsapaq-qu").strip()
-    hu = _shopify_headers_and_url(store)
+    hu = _shopify_headers_and_url()
     if not hu:
-        return None, None, None, "SHOPIFY_PP_TOKEN missing (Doppler paperclip/prd)"
-    headers, base = hu
+        return None, None, None, "SHOPIFY_ADMIN_TOKEN_PAPERANDPURPOSE or SHOPIFY_SHOP_PAPERANDPURPOSE missing"
+    headers, base, store = hu
 
     since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
     orders_seen = 0
@@ -146,12 +208,20 @@ def _shopify_count_orders(days: int) -> Tuple[
         "fields": "id,line_items,total_price,currency,cancelled_at",
     }
     pages = 0
+    minted_once = False
     try:
         while next_url:
             pages += 1
             if pages > 40:
                 break
             r = requests.get(next_url, headers=headers, params=params, timeout=_REQUEST_TIMEOUT)
+            if r.status_code == 401 and not minted_once:
+                # Pre-loaded token stale -> mint fresh via CLIENT_ID/SECRET and retry once.
+                fresh = _mint_shopify_token(store)
+                if fresh:
+                    headers = {**headers, "X-Shopify-Access-Token": fresh}
+                    minted_once = True
+                    r = requests.get(next_url, headers=headers, params=params, timeout=_REQUEST_TIMEOUT)
             if not r.ok:
                 return None, None, None, f"Shopify /orders.json HTTP {r.status_code}: {r.text[:120]}"
             body = r.json()
