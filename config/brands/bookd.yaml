@@ -61,10 +61,10 @@ instantly:
   api_key_env: INSTANTLY_API_KEY_BOOKD
   # Book'd sends from warmed secondary domains ONLY. Never bookd.cx primary.
   sending_accounts:
+    - michael@meetbookd.com
     - ryan@meetbookd.com
-    - hello@meetbookd.com
+    - michael@powerbookd.com
     - ryan@powerbookd.com
-    - hello@powerbookd.com
   daily_limit: 60
   daily_max_leads: 30
   email_gap_minutes: 12
