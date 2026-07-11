@@ -93,7 +93,7 @@ cta_url: https://crm.bookd.cx/demo
 icp_content:
   life_agents:
     campaign_name: Book'd | TX Life Agents Intent Cold v1
-    lead_file: null   # set when the DataMoon TX life-agent pull lands in leads_dir
+    lead_file: null   # KILLED 2026-07-10: prior Tier-A file was off-ICP (P&C/commercial, not life) + junk/mismatched emails. Awaiting Ryan-vetted licensed-life-agent list before any reload.
     steps:
       - delay_days: 3
         subject: "built for agents, by an agent"
