@@ -6275,44 +6275,49 @@ async def datamoon_visitor_id_webhook(secret: str, payload: dict, request: Reque
     return result
 
 
-# ── Calendly booking webhook (Boardroom Readout 004 P1, 2026-07-09) ──────────
-# Meeting booked → normalize → intent-inbound → Twenty upsert + SMS via
-# notify_hot_reply (response_type=meeting_booked is in _HOT_REPLY_TYPES).
-# HMAC-SHA256 signature verified via Calendly-Webhook-Signature header;
-# fails closed when CALENDLY_WEBHOOK_SIGNING_KEY is unset.
-@app.post("/webhooks/calendly")
-async def calendly_webhook(request: Request, brand: Optional[str] = None):
+# ── GHL Appointment webhook (Boardroom Readout 004 P1, 2026-07-09) ──────────
+# GHL is the LIVE booking system for AvI/WD/Book'd/AIPG (per file 77 +
+# reference_ghl_voice_ai_build_pattern memory). AppointmentCreate /
+# AppointmentUpdate fire when a prospect books via GHL Voice AI receptionist,
+# a shared calendar link, or an embed. This endpoint normalizes → intent-
+# inbound → Twenty upsert + SMS via notify_hot_reply (response_type=
+# meeting_booked is in _HOT_REPLY_TYPES).
+#
+# Auth: path secret (GHL_APPOINTMENT_WEBHOOK_PATH_SECRET) since GHL Private
+# Integration Tokens don't include webhook signing; matches the DataMoon
+# endpoint pattern. Fails closed when the env is unset.
+@app.post("/webhooks/ghl-appointment/{secret}")
+async def ghl_appointment_webhook(
+    secret: str,
+    payload: dict,
+    request: Request,
+    brand: Optional[str] = None,
+):
     from services.intent_inbound import handle_event as _intent_handle_event
-    from services.calendly_webhook import (
-        calendly_payload_to_event,
-        verify_signature,
+    from services.ghl_appointment_webhook import (
+        ghl_payload_to_event,
+        path_secret_ok as _ghl_appt_secret_ok,
     )
-    raw = await request.body()
-    sig_header = request.headers.get("Calendly-Webhook-Signature") or ""
-    ok_sig, sig_reason = verify_signature(raw, sig_header)
-    if not ok_sig:
-        logging.warning("[calendly] signature reject: %s", sig_reason)
-        return JSONResponse(status_code=401, content={"status": "unauthorized", "reason": sig_reason})
+    if not _ghl_appt_secret_ok(secret):
+        logging.warning("[ghl-appointment] auth failed")
+        return JSONResponse(status_code=401, content={"status": "unauthorized"})
 
-    try:
-        payload = await request.json()
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"ok": False, "reason": f"json parse: {e}"})
-
-    norm = calendly_payload_to_event(payload, brand_override=brand)
+    norm = ghl_payload_to_event(payload, brand_override=brand)
     if not norm.get("ok"):
-        logging.info("[calendly] normalize rejected: %s | payload=%s", norm.get("reason"), payload)
+        logging.info("[ghl-appointment] normalize rejected: %s | payload=%s",
+                     norm.get("reason"), payload)
         return JSONResponse(status_code=400, content=norm)
 
     event = norm["event"]
     result = _intent_handle_event(event)
     if not result.get("ok"):
-        logging.warning("[calendly] handle_event failed: %s | event=%s", result, event)
+        logging.warning("[ghl-appointment] handle_event failed: %s | event=%s", result, event)
         return JSONResponse(status_code=400, content=result)
 
     result["normalized"] = {
         "brand": norm["brand"],
-        "event_name": norm["event_name"],
+        "calendar_id": norm.get("calendar_id"),
+        "event_name": norm.get("event_name"),
     }
     return result
 
