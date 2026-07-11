@@ -61,11 +61,17 @@ instantly:
   api_key_env: INSTANTLY_API_KEY_AIPG
   # AIPG has two warming secondary domains per feedback_cold_outbound_infra_rules.
   # Never send from theaiphoneguy.com primary. These are the warmed mailboxes.
+  # FIXED 2026-07-11: the previous four (tyler@/hello@ meetphoneguy.com and
+  # getphoneguy.com) DO NOT EXIST in the Instantly workspace — the build failed
+  # 400 "Some emails are not found", which is why the AIPG campaign was never
+  # created and "launch day" sent nothing. These four are the real, connected,
+  # warmed mailboxes (warmup=1, status=1). info@theaiphoneguy.ai is deliberately
+  # excluded: never send cold from the brand/primary domain.
   sending_accounts:
-    - tyler@meetphoneguy.com
-    - hello@meetphoneguy.com
-    - tyler@getphoneguy.com
-    - hello@getphoneguy.com
+    - hello@gettheaiphoneguy.com
+    - michael@gettheaiphoneguy.com
+    - hello@trytheaiphoneguy.com
+    - michael@trytheaiphoneguy.com
   daily_limit: 60          # under the ~50/mailbox/day post-warmup ceiling per spec section 5.
   daily_max_leads: 30
   email_gap_minutes: 12
