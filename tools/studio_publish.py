@@ -213,15 +213,38 @@ def main() -> int:
                                         timezone=args.tz)
                 print(f"    {platform:10} SCHEDULED id={res.get('_id')} status={res.get('status')} @ {when_post}")
                 ledger.append({"brand": name, "platform": platform,
-                               "post_id": res.get("_id"), "status": res.get("status")})
+                               "post_id": res.get("_id"), "status": res.get("status"),
+                               # the REAL per-post time (--stagger fires each platform at
+                               # its own native peak), not the top-level --when
+                               "scheduled_for": when_post})
             print()
         finally:
             use_api_key(None)
 
     if args.commit and ledger:
         out = os.path.join(md_dir, "studio_publish_ledger.json")
-        json.dump({"when": scheduled_for, "tz": args.tz, "posts": ledger}, open(out, "w"), indent=2)
-        print(f"[ledger] {out} ({len(ledger)} posts)")
+        # APPEND, never clobber. The Studio weekly engine invokes this once per batch
+        # file (and per brand), and every call writes the SAME ledger path in the SAME
+        # folder. Opening in "w" mode meant each call erased the last: the 2026-07-11
+        # run really did schedule 18 posts across 3 brands, but the ledger it left
+        # behind showed 4 posts and zero AvI. The posts were real; the audit trail was
+        # a lie. That is the same class of blind spot that let "launch day" be reported
+        # as live for two days while nothing sent. Merge, deduped by post_id.
+        batch_name = os.path.basename(args.batch)
+        stamped = [{**row, "tz": args.tz, "batch": batch_name} for row in ledger]
+        existing: list = []
+        if os.path.exists(out):
+            try:
+                prior = json.load(open(out, encoding="utf-8"))
+                existing = prior.get("posts", []) if isinstance(prior, dict) else list(prior)
+            except (ValueError, OSError) as e:
+                # A corrupt/legacy ledger must not cost us THIS run's record.
+                print(f"[ledger] WARNING: could not read existing ledger ({e}); starting fresh")
+                existing = []
+        seen = {p.get("post_id") for p in existing if p.get("post_id")}
+        merged = existing + [r for r in stamped if r.get("post_id") not in seen]
+        json.dump({"posts": merged}, open(out, "w"), indent=2)
+        print(f"[ledger] {out} (+{len(stamped)} this call, {len(merged)} total)")
     elif not args.commit:
         print("DRY-RUN complete. Re-run with --commit to schedule (requires gate stamps).")
     return 0
