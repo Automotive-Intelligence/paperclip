@@ -4581,8 +4581,25 @@ async def publish_content_to_ghl_social_endpoint(
     limit: int = 5,
     authorization: Optional[str] = Header(None),
 ):
-    """Publish queued AI Phone Guy social content via GHL social channels."""
+    """Publish queued AI Phone Guy social content via GHL social channels.
+
+    DISABLED 2026-07-12 per CMO flag (cmo_state.md 2026-07-11): the auto-card
+    posts this pushed to GHL's planner were off-brand and Michael flagged them.
+    AIPG social routes through Zernio once its profile is OAuth-connected;
+    the auto-card generator is being superseded by Slipstream social packs.
+    Flip AIPG_GHL_SOCIAL_ENABLED=1 only if the CMO explicitly reverses.
+    """
     validate_key(authorization)
+    if (os.getenv("AIPG_GHL_SOCIAL_ENABLED") or "").strip() != "1":
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "AIPG GHL social publishing is DISABLED per CMO decision "
+                "2026-07-11 (off-brand auto-cards). AIPG social routes via "
+                "Zernio once connected. Set AIPG_GHL_SOCIAL_ENABLED=1 only "
+                "on explicit CMO reversal."
+            ),
+        )
     if limit < 1:
         limit = 1
     if limit > 25:
@@ -4872,7 +4889,12 @@ async def publish_content_to_ghl_all(
     """Publish AI Phone Guy site and social content in one run."""
     validate_key(authorization)
     site_result = await publish_content_to_ghl(limit=limit_site, authorization=authorization)
-    social_result = await publish_content_to_ghl_social_endpoint(limit=limit_social, authorization=authorization)
+    # Social half is DISABLED per CMO 2026-07-11 (see the social endpoint's
+    # kill-switch); don't let its 410 sink the still-live site publish.
+    try:
+        social_result = await publish_content_to_ghl_social_endpoint(limit=limit_social, authorization=authorization)
+    except HTTPException as e:
+        social_result = {"status": "disabled", "detail": e.detail}
     return {
         "status": "ok",
         "site": site_result,
