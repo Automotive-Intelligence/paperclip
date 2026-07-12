@@ -7597,9 +7597,19 @@ async def health():
             "name": job.name,
             "next_run": _job_next_run_str(job),
         })
+    # Stripe SDK version surfaced so version drift is observable without
+    # container ssh. requirements.txt pins stripe>=9,<15 (PR #163) because
+    # 15.x breaks the webhook construct_event path; a value >=15 here means
+    # a build reused a stale layer and the pay rail is silently broken.
+    try:
+        import stripe as _stripe_mod
+        _stripe_ver = getattr(_stripe_mod, "VERSION", "unknown")
+    except ImportError:
+        _stripe_ver = "not installed"
     return {
         "status": "ok",
         "version": SETTINGS.app_version,
+        "stripe_sdk_version": _stripe_ver,
         "engine": "revenue",
         "scheduler": "running" if scheduler.running else "stopped",
         "jobs_registered": len(jobs_info),
