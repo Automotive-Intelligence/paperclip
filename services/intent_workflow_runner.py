@@ -822,17 +822,46 @@ def _cmd_load_leads(
     added = failed = 0
     for i, row in enumerate(rows, 1):
         email = (row["email"] or "").strip()
+        # Every OTHER column in the lead file becomes an Instantly custom variable, so a
+        # brand's copy can merge on whatever that list actually carries. Before 2026-07-12
+        # only first_name/last_name were passed, so ANY other merge tag in the copy rendered
+        # blank at send time. AIPG's rewritten sequence merges {{trade}} and {{city}} (the
+        # only two fields verifiable per-lead); without this they would have gone out empty
+        # to all 62 recipients. Long values (provenance/source notes) are skipped: they are
+        # internal bookkeeping, not merge material.
+        _RESERVED = {"email", "first_name", "last_name"}
+        extras = {
+            k.strip(): str(v).strip()
+            for k, v in row.items()
+            if k
+            and k.strip() not in _RESERVED
+            and str(v or "").strip()
+            and len(str(v).strip()) <= 120
+        }
+        # `custom_variables` is the correct WRITE field (verified live 2026-07-12: it is
+        # echoed back inside `payload` on read, which is merely Instantly's read shape).
+        custom_vars = {
+            # Per-recipient one-click unsubscribe URL; the footer's
+            # {{unsubscribe_url}} merge tag renders this at send time.
+            "unsubscribe_url": unsubscribe.unsubscribe_url(email, brand.brand),
+        }
+        custom_vars.update(extras)
         b = {
             "email": email,
             "campaign": cid,
             "first_name": (row.get("first_name") or "").strip() or None,
             "last_name": (row.get("last_name") or "").strip() or None,
-            # Per-recipient one-click unsubscribe URL; the footer's
-            # {{unsubscribe_url}} merge tag renders this at send time.
-            "custom_variables": {
-                "unsubscribe_url": unsubscribe.unsubscribe_url(email, brand.brand),
-            },
-            "skip_if_in_campaign": True,
+            "custom_variables": custom_vars,
+            # 2026-07-12: was `skip_if_in_campaign: True`. Instantly applies that skip
+            # ACROSS the workspace, not just this campaign: if the address already exists
+            # in ANY campaign it is silently dropped, the API still answers 200, and the
+            # runner counted it as added. AIPG's 62 leads already lived in a broken
+            # zero-step import campaign, so `load-leads` reported "added=62 failed=0"
+            # while adding exactly ZERO. Same silent-success class as the Studio engine
+            # exiting 0 having shipped nothing. Enroll for real; the post-load verification
+            # below is what catches it if this ever regresses.
+            "skip_if_in_workspace": False,
+            "skip_if_in_campaign": False,
         }
         b = {k: v for k, v in b.items() if v is not None}
         res = _instantly_req(cfg, "POST", "/leads", body=b)
@@ -843,10 +872,35 @@ def _cmd_load_leads(
         if i % 250 == 0:
             print(f"  {i}/{len(rows)}  added={added} failed={failed}")
         time.sleep(0.15)
+
     print(
         f"[{segment}] DONE added={added} failed={failed} "
         f"(suppressed_before_enroll={result.suppressed_count})"
     )
+
+    # VERIFY against the campaign itself. Do NOT trust the per-lead 200s: Instantly answers
+    # 200 on a silent skip, which is exactly how this printed "added=62 failed=0" on
+    # 2026-07-12 while enrolling ZERO. A load that claims success without landing the leads
+    # is worse than one that errors, because the very next step is to press send.
+    verified = None
+    try:
+        an = _instantly_req(cfg, "GET", "/campaigns/analytics", params={"ids": cid})
+        rows_ = an if isinstance(an, list) else (an.get("items") or [])
+        if rows_:
+            verified = rows_[0].get("leads_count")
+    except Exception as e:  # the check must never break the load
+        logger.warning("[%s] post-load verification could not run: %s", segment, e)
+
+    if verified is None:
+        print(f"[{segment}] WARNING: could not verify the campaign's real lead count.")
+    elif verified < len(rows):
+        print(
+            f"[{segment}] MISMATCH: the API accepted {added} but the campaign actually "
+            f"holds {verified} of {len(rows)} leads. DO NOT LAUNCH until this is understood."
+        )
+        return 4
+    else:
+        print(f"[{segment}] VERIFIED: campaign holds {verified} leads.")
     return 0
 
 
