@@ -47,6 +47,15 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.labels",
+    # gmail.send added 2026-07-11. Postal was inbox-only, which is why
+    # tools/brand_send.py (the send-as-brand rail, built for Brian Leija's
+    # overdue sample) has never been able to fire: it had no transport, so every
+    # send silently degraded to draft-and-log. Requesting the scope does NOT
+    # grant send authority on its own. Firing still requires BOTH (a) the mailbox
+    # re-consented with this scope, and (b) that identity listed in
+    # SEND_AUTHORIZED_MAILBOXES, which is Michael's boundary and is never
+    # populated in code.
+    "https://www.googleapis.com/auth/gmail.send",
 ]
 
 VALID_ACCOUNT_LABELS = {"avi", "wd", "salesdroid", "aipg", "agentempire", "bookd"}
