@@ -84,6 +84,7 @@ def _resolve_store(env: Dict[str, str]) -> Optional[str]:
         or env.get("SHOPIFY_STORE")
         or os.environ.get("SHOPIFY_FLAG_STORE")
         or os.environ.get("SHOPIFY_STORE")
+        or os.environ.get("SHOPIFY_SHOP_PAPERANDPURPOSE")  # per-brand fallback
         or ""
     ).strip()
     if not store:
@@ -94,7 +95,15 @@ def _resolve_store(env: Dict[str, str]) -> Optional[str]:
 
 
 def _resolve_admin_token(env: Dict[str, str]) -> Optional[str]:
-    """Return a usable Admin API token. Rejects Theme Access (shptka_) tokens."""
+    """Return a usable Admin API token. Rejects Theme Access (shptka_) tokens.
+
+    P&P's store is on the new Dev Dashboard where static tokens expire every
+    24h (Client Credentials Grant), so a stale env token is the NORMAL case
+    there — when the per-brand suffixed CLIENT_ID/SECRET pair is present we
+    auto-mint a fresh token instead of trusting the env one. Verified
+    2026-07-12: the minted token carries write_content + write_themes and
+    blogs.json returns 200, which closes the "Shopify token wall" flag.
+    """
     token = (
         env.get("SHOPIFY_ADMIN_TOKEN")
         or env.get("SHOPIFY_ADMIN_API_TOKEN")
@@ -102,7 +111,30 @@ def _resolve_admin_token(env: Dict[str, str]) -> Optional[str]:
         or os.environ.get("SHOPIFY_ADMIN_TOKEN")
         or ""
     ).strip()
-    return token or None
+    if token:
+        return token
+    # Auto-mint via Client Credentials Grant (per-brand suffixed convention,
+    # same machinery as services/pp_scoreboard.py). PAPERANDPURPOSE is the
+    # only Dev-Dashboard store today; extend the suffix list as more migrate.
+    for suffix in ("PAPERANDPURPOSE",):
+        shop = (os.environ.get(f"SHOPIFY_SHOP_{suffix}") or "").strip().replace(".myshopify.com", "")
+        cid = (os.environ.get(f"SHOPIFY_CLIENT_ID_{suffix}") or "").strip()
+        sec = (os.environ.get(f"SHOPIFY_CLIENT_SECRET_{suffix}") or "").strip()
+        if not (shop and cid and sec):
+            continue
+        try:
+            r = requests.post(
+                f"https://{shop}.myshopify.com/admin/oauth/access_token",
+                json={"client_id": cid, "client_secret": sec, "grant_type": "client_credentials"},
+                timeout=15,
+            )
+            if r.ok:
+                minted = (r.json().get("access_token") or "").strip()
+                if minted:
+                    return minted
+        except requests.RequestException:
+            continue
+    return None
 
 
 def _api_version(env: Dict[str, str]) -> str:
