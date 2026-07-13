@@ -166,17 +166,25 @@ class PostJob:
 
 
 def _real_rails() -> Dict[str, Any]:
-    """Late imports so tests never touch the network or need API keys."""
+    """Late imports so tests never touch the network or need API keys.
+
+    The Buffer rail (P&P only) pulls in crewai via tools.buffer. Import it
+    lazily, on first buffer use, so Zernio-routed brands (AvI / AIPG / WD)
+    can run the loader in a crewai-free environment (e.g. the blog engine's
+    image venv). Zernio needs only requests, which is always present."""
     from tools.zernio import list_zernio_posts, publish_to_zernio
-    from tools.buffer import buffer_create_draft_post, buffer_list_posts
+
+    def _buffer():
+        from tools.buffer import buffer_create_draft_post, buffer_list_posts
+        return buffer_create_draft_post, buffer_list_posts
 
     return {
         "zernio_list": list_zernio_posts,
         "zernio_publish": lambda **kw: publish_to_zernio(**kw),
         "buffer_list": lambda channel_id: json.loads(
-            buffer_list_posts.func(channel_id, "draft", 50) or "[]"),
+            _buffer()[1].func(channel_id, "draft", 50) or "[]"),
         "buffer_draft": lambda business_key, text, media_csv:
-            buffer_create_draft_post.func(business_key, text, media_csv, ""),
+            _buffer()[0].func(business_key, text, media_csv, ""),
     }
 
 
