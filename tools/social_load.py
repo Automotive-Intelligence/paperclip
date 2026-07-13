@@ -181,14 +181,17 @@ def _real_rails() -> Dict[str, Any]:
 
 
 def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = False,
-              rails: Optional[Dict[str, Any]] = None) -> List[dict]:
+              rails: Optional[Dict[str, Any]] = None,
+              cfg: Optional[dict] = None) -> List[dict]:
+    """cfg overrides config/social_load.json — tests MUST pass it so they never
+    depend on the live WD-rename flag (that dependency broke a test once)."""
     r = rails or _real_rails()
     results: List[dict] = []
     zernio_queue: Optional[List[dict]] = None      # fetched once per call
     for i, job in enumerate(jobs):
         brand = canonical_brand(job.brand)
         try:
-            rail = route_for_brand(brand)
+            rail = route_for_brand(brand, cfg=cfg)
         except (WdBlockedError, NoRailError) as e:
             results.append({"job": job, "action": "blocked", "detail": str(e)})
             continue

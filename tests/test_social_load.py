@@ -190,9 +190,17 @@ class TestLoadJobs(unittest.TestCase):
     def test_wd_blocked(self):
         from tools.social_load import load_jobs
         rails, calls = _fake_rails()
-        res = load_jobs([self._job(brand="wd")], commit=True, rails=rails)
+        res = load_jobs([self._job(brand="wd")], commit=True, rails=rails,
+                        cfg={"wd_rename_done": False})
         self.assertEqual(res[0]["action"], "blocked")
         self.assertEqual(calls["publish"], [])
+
+    def test_wd_flows_after_rename(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        res = load_jobs([self._job(brand="wd", platform="facebook", account_id="cd1")],
+                        commit=False, rails=rails, cfg={"wd_rename_done": True})
+        self.assertEqual(res[0]["action"], "dry-run")
 
     def test_pp_goes_to_buffer_as_draft(self):
         from tools.social_load import load_jobs
@@ -226,6 +234,34 @@ class TestCli(unittest.TestCase):
         os.unlink(path)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("dry-run", out.stdout)
+
+
+class TestScoreboard(unittest.TestCase):
+    def test_registry_window_and_dedupe(self):
+        from tools.social_scoreboard import load_registry
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "r.jsonl")
+            os.environ["SOCIAL_REGISTRY_PATH"] = path
+            try:
+                with open(path, "w") as f:
+                    f.write(json.dumps({"post_id": "a", "scheduled_for": "2026-07-14T07:00:00"}) + "\n")
+                    f.write(json.dumps({"post_id": "a", "scheduled_for": "2026-07-17T07:00:00"}) + "\n")  # re-time
+                    f.write(json.dumps({"post_id": "b", "scheduled_for": "2026-07-01T07:00:00"}) + "\n")  # out of window
+                rows = load_registry("2026-07-10", "2026-07-20")
+            finally:
+                del os.environ["SOCIAL_REGISTRY_PATH"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["scheduled_for"], "2026-07-17T07:00:00")
+
+    def test_table_renders_without_rail_calls_for_buffer(self):
+        from tools.social_scoreboard import build_table
+        calls = []
+        rows = [{"post_id": "bp1", "rail": "buffer", "brand": "paperandpurpose",
+                 "platform": "instagram", "scheduled_for": "2026-07-16T12:00:00",
+                 "content_id": "c", "utm_campaign": "paperandpurpose_c"}]
+        table = build_table(rows, {}, lambda **kw: calls.append(kw))
+        self.assertEqual(calls, [])
+        self.assertIn("paperandpurpose", table)
 
 
 if __name__ == "__main__":
