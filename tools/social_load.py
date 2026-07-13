@@ -43,3 +43,17 @@ def tag_links(text: str, platform: str, brand: str, content_id: str,
     return _URL_RE.sub(
         lambda m: add_utm(m.group(0), platform, brand, content_id, entry_point, slot),
         text)
+
+
+# ---------------------------------------------------------------- registry
+def registry_path() -> str:
+    return os.environ.get("SOCIAL_REGISTRY_PATH") or os.path.expanduser(
+        "~/avo-telemetry/social_registry.jsonl")
+
+
+def append_registry(row: dict) -> None:
+    path = registry_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    out = {"ts": datetime.now(_tz.utc).isoformat(timespec="seconds"), **row}
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(out, ensure_ascii=False) + "\n")

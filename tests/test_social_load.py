@@ -37,5 +37,22 @@ class TestUtm(unittest.TestCase):
         self.assertEqual(tag_links(text, "facebook", "wd", "c", "studio", "0"), text)
 
 
+class TestRegistry(unittest.TestCase):
+    def test_append_registry_writes_jsonl(self):
+        from tools.social_load import append_registry
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "reg.jsonl")
+            os.environ["SOCIAL_REGISTRY_PATH"] = path
+            try:
+                append_registry({"brand": "avi", "platform": "twitter", "post_id": "p1"})
+                append_registry({"brand": "avi", "platform": "linkedin", "post_id": "p2"})
+                rows = [json.loads(l) for l in open(path)]
+            finally:
+                del os.environ["SOCIAL_REGISTRY_PATH"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["post_id"], "p1")
+        self.assertIn("ts", rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()
