@@ -29,8 +29,9 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.zernio import (  # noqa: E402
     zernio_ready, get_zernio_profiles, list_zernio_accounts,
-    upload_media_to_zernio, publish_to_zernio, use_api_key,
+    upload_media_to_zernio, use_api_key,
 )
+from tools.social_load import PostJob, load_jobs, canonical_brand  # noqa: E402
 
 # Brands that publish through a PARTNER's Zernio account via a SEPARATE API key.
 # Book'd is intentionally NOT here: we accepted Ryan's team invite, so our default
@@ -112,6 +113,8 @@ def main() -> int:
     ap.add_argument("--platforms", default="", help="comma list to limit platforms per CMO channel policy (e.g. linkedin,facebook)")
     ap.add_argument("--stagger", action="store_true", help="treat --when as a DATE; fire each platform at its file-103 native peak")
     ap.add_argument("--commit", action="store_true", help="actually schedule (else dry-run)")
+    ap.add_argument("--allow-stack", action="store_true",
+                    help="override the file-121 queue guard (deliberate same-day stack)")
     args = ap.parse_args()
 
     if not zernio_ready():
@@ -187,36 +190,46 @@ def main() -> int:
                 media_url = upload_media_to_zernio(open(img_path, "rb").read(),
                                                    os.path.basename(b["image"]), "image/png")
 
+            # All scheduling flows through the file-121 loader: UTM tagging, the
+            # queue-collision guard, the WD hard block, and the registry row live
+            # THERE, not here. This wrapper only parses, gates, and maps accounts.
+            jobs, skips = [], []
             for platform, content in b["posts"].items():
                 if plat_only and platform not in plat_only:
-                    print(f"    {platform:10} SKIP (not in --platforms channel policy)")
-                    continue
+                    skips.append((platform, "not in --platforms channel policy")); continue
                 # Per-platform native-peak time when staggering; else the single --when.
                 if args.stagger:
                     hhmm = STAGGER.get(name.lower(), {}).get(platform)
                     if not hhmm:
-                        print(f"    {platform:10} SKIP (no stagger slot in file-103 grid)")
-                        continue
+                        skips.append((platform, "no stagger slot in file-103 grid")); continue
                     when_post = f"{stagger_date}T{hhmm}:00"
                 else:
                     when_post = scheduled_for
                 aid = acct_by_plat.get(platform)
-                n = len(content)
                 if not aid:
-                    print(f"    {platform:10} SKIP (no {platform} account on this profile)")
-                    continue
-                if not args.commit:
-                    print(f"    {platform:10} OK  {n:>5} chars  -> {when_post}")
-                    continue
-                res = publish_to_zernio(content=content, platforms=[platform], account_ids=[aid],
-                                        scheduled_for=when_post, media_urls=[media_url] if media_url else None,
-                                        timezone=args.tz)
-                print(f"    {platform:10} SCHEDULED id={res.get('_id')} status={res.get('status')} @ {when_post}")
-                ledger.append({"brand": name, "platform": platform,
-                               "post_id": res.get("_id"), "status": res.get("status"),
-                               # the REAL per-post time (--stagger fires each platform at
-                               # its own native peak), not the top-level --when
-                               "scheduled_for": when_post})
+                    skips.append((platform, f"no {platform} account on this profile")); continue
+                jobs.append(PostJob(
+                    brand=canonical_brand(name), platform=platform, content=content,
+                    scheduled_for=when_post, tz=args.tz,
+                    media_urls=[media_url] if media_url else [],
+                    content_id=os.path.splitext(os.path.basename(args.batch))[0],
+                    entry_point="studio", account_id=aid))
+            for platform, why in skips:
+                print(f"    {platform:10} SKIP ({why})")
+            for r in load_jobs(jobs, commit=args.commit, allow_stack=args.allow_stack):
+                j, act = r["job"], r["action"]
+                if act == "dry-run":
+                    print(f"    {j.platform:10} OK  {len(j.content):>5} chars  -> {j.scheduled_for}")
+                elif act == "scheduled":
+                    res = r["detail"]
+                    print(f"    {j.platform:10} SCHEDULED id={res.get('_id')} status={res.get('status')} @ {j.scheduled_for}")
+                    ledger.append({"brand": name, "platform": j.platform,
+                                   "post_id": res.get("_id"), "status": res.get("status"),
+                                   # the REAL per-post time (--stagger fires each platform
+                                   # at its own native peak), not the top-level --when
+                                   "scheduled_for": j.scheduled_for})
+                else:
+                    print(f"    {j.platform:10} {act.upper()} {r.get('detail')}")
             print()
         finally:
             use_api_key(None)
