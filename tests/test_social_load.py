@@ -130,6 +130,21 @@ def _fake_rails(existing_zernio=None, existing_buffer=None):
 
 
 class TestLoadJobs(unittest.TestCase):
+    def setUp(self):
+        # EVERY test in this class writes registry rows through load_jobs; without
+        # this blanket override a commit-path test leaks fake rows into the REAL
+        # registry (it happened: 3x zp1 rows, purged 2026-07-13).
+        self._tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("SOCIAL_REGISTRY_PATH")
+        os.environ["SOCIAL_REGISTRY_PATH"] = os.path.join(self._tmp.name, "r.jsonl")
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("SOCIAL_REGISTRY_PATH", None)
+        else:
+            os.environ["SOCIAL_REGISTRY_PATH"] = self._prev
+        self._tmp.cleanup()
+
     def _job(self, **kw):
         from tools.social_load import PostJob
         base = dict(brand="avi", platform="twitter", content="Read https://a.io/p now",
