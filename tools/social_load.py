@@ -57,3 +57,52 @@ def append_registry(row: dict) -> None:
     out = {"ts": datetime.now(_tz.utc).isoformat(timespec="seconds"), **row}
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(out, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------- routing
+class WdBlockedError(RuntimeError):
+    """WD content refused: handles are still @callingdigital (file 120)."""
+
+
+class NoRailError(RuntimeError):
+    """Brand has no distribution rail yet (e.g. Book'd until Ryan's key)."""
+
+
+BRAND_ALIASES = {
+    "automotive intelligence": "avi",
+    "the ai phone guy": "aipg", "ai phone guy": "aipg",
+    "worship digital": "wd",
+    "agent empire": "agent_empire",
+    "book'd": "bookd",
+    "paper & purpose": "paperandpurpose", "paper and purpose": "paperandpurpose",
+}
+_CFG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "config", "social_load.json")
+
+
+def canonical_brand(brand: str) -> str:
+    b = brand.strip().lower()
+    return BRAND_ALIASES.get(b, b)
+
+
+def load_config() -> dict:
+    try:
+        return json.load(open(_CFG_PATH, encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def route_for_brand(brand: str, cfg: Optional[dict] = None) -> str:
+    b = canonical_brand(brand)
+    if b == "paperandpurpose":
+        return "buffer"
+    if b == "bookd":
+        raise NoRailError("Book'd has no rail: Ryan posts himself or issues a scoped key (file 121).")
+    if b == "wd":
+        conf = cfg if cfg is not None else load_config()
+        if not conf.get("wd_rename_done"):
+            raise WdBlockedError(
+                "WD is hard-blocked: handles are still @callingdigital. "
+                "Complete marketing_deliverables/120_wd_handle_rename_runbook.md, "
+                "then flip wd_rename_done in config/social_load.json.")
+    return "zernio"

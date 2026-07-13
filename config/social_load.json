@@ -1,0 +1,4 @@
+{
+  "_comment": "file-121 Pipe config. wd_rename_done flips true ONLY after the file-120 handle-rename runbook completes; until then the loader refuses WD content (never post WD assets to @callingdigital).",
+  "wd_rename_done": false
+}

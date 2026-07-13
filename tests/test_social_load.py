@@ -54,5 +54,28 @@ class TestRegistry(unittest.TestCase):
         self.assertIn("ts", rows[0])
 
 
+class TestRouting(unittest.TestCase):
+    def test_own_brand_routes_zernio(self):
+        from tools.social_load import route_for_brand
+        self.assertEqual(route_for_brand("avi"), "zernio")
+        self.assertEqual(route_for_brand("Automotive Intelligence"), "zernio")
+
+    def test_pp_routes_buffer(self):
+        from tools.social_load import route_for_brand
+        self.assertEqual(route_for_brand("paperandpurpose"), "buffer")
+        self.assertEqual(route_for_brand("Paper & Purpose"), "buffer")
+
+    def test_wd_blocked_until_rename(self):
+        from tools.social_load import route_for_brand, WdBlockedError
+        with self.assertRaises(WdBlockedError):
+            route_for_brand("wd", cfg={"wd_rename_done": False})
+        self.assertEqual(route_for_brand("wd", cfg={"wd_rename_done": True}), "zernio")
+
+    def test_bookd_has_no_rail(self):
+        from tools.social_load import route_for_brand, NoRailError
+        with self.assertRaises(NoRailError):
+            route_for_brand("bookd")
+
+
 if __name__ == "__main__":
     unittest.main()
