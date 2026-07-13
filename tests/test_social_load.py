@@ -106,5 +106,94 @@ class TestQueueGuard(unittest.TestCase):
         self.assertEqual(find_conflicts(existing, "facebook", "2026-07-14", "a"), [])
 
 
+def _fake_rails(existing_zernio=None, existing_buffer=None):
+    calls = {"publish": [], "draft": []}
+
+    def zernio_list():
+        return existing_zernio or []
+
+    def zernio_publish(content, platforms, account_ids, scheduled_for, media_urls, timezone):
+        calls["publish"].append(dict(content=content, platforms=platforms,
+                                     account_ids=account_ids, scheduled_for=scheduled_for,
+                                     media_urls=media_urls, timezone=timezone))
+        return {"_id": f"zp{len(calls['publish'])}", "status": "scheduled"}
+
+    def buffer_list(channel_id):
+        return existing_buffer or []
+
+    def buffer_draft(business_key, text, media_urls_csv):
+        calls["draft"].append(dict(business_key=business_key, text=text, media=media_urls_csv))
+        return json.dumps([{"channel_id": "c1", "post": {"id": "bp1", "status": "draft"}}])
+
+    return {"zernio_list": zernio_list, "zernio_publish": zernio_publish,
+            "buffer_list": buffer_list, "buffer_draft": buffer_draft}, calls
+
+
+class TestLoadJobs(unittest.TestCase):
+    def _job(self, **kw):
+        from tools.social_load import PostJob
+        base = dict(brand="avi", platform="twitter", content="Read https://a.io/p now",
+                    scheduled_for="2026-07-16T07:00:00", content_id="c9",
+                    entry_point="adhoc", account_id="acct1")
+        base.update(kw)
+        return PostJob(**base)
+
+    def test_dry_run_calls_no_rail(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        res = load_jobs([self._job()], commit=False, rails=rails)
+        self.assertEqual(res[0]["action"], "dry-run")
+        self.assertEqual(calls["publish"], [])
+
+    def test_commit_schedules_tags_utm_and_registers(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["SOCIAL_REGISTRY_PATH"] = os.path.join(d, "r.jsonl")
+            try:
+                res = load_jobs([self._job()], commit=True, rails=rails)
+                rows = [json.loads(l) for l in open(os.environ["SOCIAL_REGISTRY_PATH"])]
+            finally:
+                del os.environ["SOCIAL_REGISTRY_PATH"]
+        self.assertEqual(res[0]["action"], "scheduled")
+        self.assertIn("utm_source=twitter", calls["publish"][0]["content"])
+        self.assertEqual(rows[0]["post_id"], "zp1")
+        self.assertEqual(rows[0]["utm_campaign"], "avi_c9")
+
+    def test_conflict_blocks_without_allow_stack(self):
+        from tools.social_load import load_jobs
+        existing = [{"_id": "old", "status": "scheduled",
+                     "scheduledFor": "2026-07-16T12:00:00.000Z",
+                     "platforms": [{"platform": "twitter", "accountId": "acct1"}]}]
+        rails, calls = _fake_rails(existing_zernio=existing)
+        res = load_jobs([self._job()], commit=True, rails=rails)
+        self.assertEqual(res[0]["action"], "conflict")
+        self.assertEqual(calls["publish"], [])
+        res2 = load_jobs([self._job()], commit=True, allow_stack=True, rails=rails)
+        self.assertEqual(res2[0]["action"], "scheduled")
+
+    def test_wd_blocked(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        res = load_jobs([self._job(brand="wd")], commit=True, rails=rails)
+        self.assertEqual(res[0]["action"], "blocked")
+        self.assertEqual(calls["publish"], [])
+
+    def test_pp_goes_to_buffer_as_draft(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["SOCIAL_REGISTRY_PATH"] = os.path.join(d, "r.jsonl")
+            try:
+                res = load_jobs([self._job(brand="paperandpurpose", platform="instagram",
+                                           business_key="paperandpurpose", account_id=None)],
+                                commit=True, rails=rails)
+            finally:
+                del os.environ["SOCIAL_REGISTRY_PATH"]
+        self.assertEqual(res[0]["action"], "drafted")
+        self.assertEqual(len(calls["draft"]), 1)
+        self.assertEqual(calls["publish"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

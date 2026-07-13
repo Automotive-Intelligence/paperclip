@@ -148,3 +148,100 @@ def find_conflicts(existing: List[dict], platform: str, day: str,
             if account_id is None or str(p.get("channelId")) == str(account_id):
                 hits.append(p)
     return hits
+
+
+# ---------------------------------------------------------------- orchestrator
+@dataclass
+class PostJob:
+    brand: str
+    platform: str            # zernio id ("twitter") or buffer service ("instagram")
+    content: str
+    scheduled_for: str       # local ISO "YYYY-MM-DDTHH:MM:SS"
+    content_id: str
+    entry_point: str         # "studio" | "blog_engine" | "adhoc"
+    tz: str = "America/Chicago"
+    media_urls: List[str] = field(default_factory=list)
+    account_id: Optional[str] = None      # zernio account; resolved by the caller
+    business_key: str = ""                # buffer lane (e.g. "paperandpurpose")
+
+
+def _real_rails() -> Dict[str, Any]:
+    """Late imports so tests never touch the network or need API keys."""
+    from tools.zernio import list_zernio_posts, publish_to_zernio
+    from tools.buffer import buffer_create_draft_post, buffer_list_posts
+
+    return {
+        "zernio_list": list_zernio_posts,
+        "zernio_publish": lambda **kw: publish_to_zernio(**kw),
+        "buffer_list": lambda channel_id: json.loads(
+            buffer_list_posts.func(channel_id, "draft", 50) or "[]"),
+        "buffer_draft": lambda business_key, text, media_csv:
+            buffer_create_draft_post.func(business_key, text, media_csv, ""),
+    }
+
+
+def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = False,
+              rails: Optional[Dict[str, Any]] = None) -> List[dict]:
+    r = rails or _real_rails()
+    results: List[dict] = []
+    zernio_queue: Optional[List[dict]] = None      # fetched once per call
+    for i, job in enumerate(jobs):
+        brand = canonical_brand(job.brand)
+        try:
+            rail = route_for_brand(brand)
+        except (WdBlockedError, NoRailError) as e:
+            results.append({"job": job, "action": "blocked", "detail": str(e)})
+            continue
+
+        content = tag_links(job.content, job.platform, brand, job.content_id,
+                            job.entry_point, str(i))
+        day = job.scheduled_for.split("T")[0]
+
+        if rail == "zernio":
+            if zernio_queue is None:
+                zernio_queue = r["zernio_list"]()
+            hits = find_conflicts(zernio_queue, job.platform, day, job.account_id)
+            if hits and not allow_stack:
+                results.append({"job": job, "action": "conflict",
+                                "detail": [h.get("_id") for h in hits]})
+                continue
+            if not commit:
+                results.append({"job": job, "action": "dry-run", "detail": f"-> {job.scheduled_for}"})
+                continue
+            res = r["zernio_publish"](content=content, platforms=[job.platform],
+                                      account_ids=[job.account_id] if job.account_id else None,
+                                      scheduled_for=job.scheduled_for,
+                                      media_urls=job.media_urls or None, timezone=job.tz)
+            append_registry({"brand": brand, "rail": "zernio", "platform": job.platform,
+                             "account_id": job.account_id, "post_id": res.get("_id"),
+                             "scheduled_for": job.scheduled_for, "tz": job.tz,
+                             "content_id": job.content_id,
+                             "utm_campaign": f"{brand}_{job.content_id}",
+                             "entry_point": job.entry_point,
+                             "media_url": (job.media_urls or [None])[0]})
+            results.append({"job": job, "action": "scheduled", "detail": res})
+        else:  # buffer drafts (P&P and future clients); the draft IS the client gate
+            if not commit:
+                results.append({"job": job, "action": "dry-run", "detail": "buffer draft"})
+                continue
+            raw = r["buffer_draft"](job.business_key or brand, content,
+                                    ",".join(job.media_urls))
+            try:
+                out = json.loads(raw)
+            except ValueError:
+                results.append({"job": job, "action": "error", "detail": raw[:300]})
+                continue
+            errs = [o for o in out if o.get("error")]
+            ok = [o for o in out if o.get("post")]
+            for o in ok:
+                append_registry({"brand": brand, "rail": "buffer", "platform": job.platform,
+                                 "account_id": o.get("channel_id"),
+                                 "post_id": (o.get("post") or {}).get("id"),
+                                 "scheduled_for": job.scheduled_for, "tz": job.tz,
+                                 "content_id": job.content_id,
+                                 "utm_campaign": f"{brand}_{job.content_id}",
+                                 "entry_point": job.entry_point,
+                                 "media_url": (job.media_urls or [None])[0]})
+            results.append({"job": job, "action": "drafted" if ok and not errs else "error",
+                            "detail": out})
+    return results
