@@ -77,5 +77,34 @@ class TestRouting(unittest.TestCase):
             route_for_brand("bookd")
 
 
+class TestQueueGuard(unittest.TestCase):
+    def test_conflict_same_platform_same_local_day(self):
+        from tools.social_load import find_conflicts
+        existing = [{
+            "_id": "z1", "status": "scheduled",
+            "scheduledFor": "2026-07-14T11:30:00.000Z",   # 06:30 CDT
+            "platforms": [{"platform": "facebook", "accountId": {"_id": "acct9"}}],
+        }]
+        hits = find_conflicts(existing, "facebook", "2026-07-14", account_id="acct9")
+        self.assertEqual([h["_id"] for h in hits], ["z1"])
+
+    def test_no_conflict_different_day_after_tz_conversion(self):
+        from tools.social_load import find_conflicts
+        existing = [{
+            "_id": "z2", "status": "scheduled",
+            "scheduledFor": "2026-07-15T00:00:00.000Z",   # 19:00 CDT on the 14th
+            "platforms": [{"platform": "instagram", "accountId": "acct9"}],
+        }]
+        self.assertEqual(find_conflicts(existing, "instagram", "2026-07-15", "acct9"), [])
+        self.assertEqual(len(find_conflicts(existing, "instagram", "2026-07-14", "acct9")), 1)
+
+    def test_non_scheduled_rows_ignored(self):
+        from tools.social_load import find_conflicts
+        existing = [{"_id": "z3", "status": "failed",
+                     "scheduledFor": "2026-07-14T12:00:00.000Z",
+                     "platforms": [{"platform": "facebook", "accountId": "a"}]}]
+        self.assertEqual(find_conflicts(existing, "facebook", "2026-07-14", "a"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -106,3 +106,45 @@ def route_for_brand(brand: str, cfg: Optional[dict] = None) -> str:
                 "Complete marketing_deliverables/120_wd_handle_rename_runbook.md, "
                 "then flip wd_rename_done in config/social_load.json.")
     return "zernio"
+
+
+# ---------------------------------------------------------------- queue guard
+def _rail_local_day(iso_utc: str) -> Optional[str]:
+    if not iso_utc:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.astimezone(_CENTRAL).date().isoformat()
+
+
+def find_conflicts(existing: List[dict], platform: str, day: str,
+                   account_id: Optional[str] = None) -> List[dict]:
+    """Rows in the rail's live queue already occupying brand+platform+local-day.
+
+    Zernio rows carry scheduledFor (UTC) + platforms[{platform, accountId}] where
+    accountId may be an object (extract ._id). Buffer rows carry dueAt/scheduledAt
+    + channelId. The rail's calendar is the single source of truth; this guard is
+    why nobody cross-checks documents (file 121)."""
+    hits = []
+    for p in existing:
+        if (p.get("status") or "").lower() not in ("scheduled", "pending", "queued", "draft"):
+            continue
+        when = p.get("scheduledFor") or p.get("dueAt") or p.get("scheduledAt") or ""
+        if _rail_local_day(str(when)) != day:
+            continue
+        plats = p.get("platforms") or []
+        if plats:                                    # zernio shape
+            for c in plats:
+                if c.get("platform") != platform:
+                    continue
+                aid = c.get("accountId")
+                aid = aid.get("_id") if isinstance(aid, dict) else aid
+                if account_id is None or str(aid) == str(account_id):
+                    hits.append(p)
+                    break
+        else:                                        # buffer shape
+            if account_id is None or str(p.get("channelId")) == str(account_id):
+                hits.append(p)
+    return hits
