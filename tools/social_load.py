@@ -245,3 +245,40 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
             results.append({"job": job, "action": "drafted" if ok and not errs else "error",
                             "detail": out})
     return results
+
+
+# ---------------------------------------------------------------- CLI
+def _fake_rails_for_cli() -> Dict[str, Any]:
+    """SOCIAL_LOAD_FAKE_RAILS=1: offline rails so dry-runs need no keys."""
+    return {"zernio_list": lambda: [],
+            "zernio_publish": lambda **kw: {"_id": "fake", "status": "scheduled"},
+            "buffer_list": lambda cid: [],
+            "buffer_draft": lambda *a: json.dumps([])}
+
+
+def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="file-121 Pipe: the one social loader")
+    ap.add_argument("jobs", help="JSON file: list of PostJob dicts")
+    ap.add_argument("--commit", action="store_true")
+    ap.add_argument("--allow-stack", action="store_true")
+    args = ap.parse_args()
+    raw = json.load(open(args.jobs, encoding="utf-8"))
+    jobs = [PostJob(**{k: v for k, v in j.items() if k in PostJob.__dataclass_fields__})
+            for j in raw]
+    rails = _fake_rails_for_cli() if os.getenv("SOCIAL_LOAD_FAKE_RAILS") == "1" else None
+    results = load_jobs(jobs, commit=args.commit, allow_stack=args.allow_stack, rails=rails)
+    bad = 0
+    for res in results:
+        j = res["job"]
+        print(f"{j.brand:16} {j.platform:10} {res['action']:9} {res.get('detail')}")
+        if res["action"] in ("error", "conflict"):
+            bad += 1
+    if not args.commit:
+        print("DRY-RUN complete. Re-run with --commit to schedule.")
+    return 4 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    raise SystemExit(main())

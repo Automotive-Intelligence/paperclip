@@ -195,5 +195,23 @@ class TestLoadJobs(unittest.TestCase):
         self.assertEqual(calls["publish"], [])
 
 
+class TestCli(unittest.TestCase):
+    def test_cli_dry_run(self):
+        import subprocess, sys
+        import tempfile as tf
+        jobs = [{"brand": "avi", "platform": "twitter", "content": "hi https://a.io",
+                 "scheduled_for": "2026-07-16T07:00:00", "content_id": "c",
+                 "entry_point": "adhoc", "account_id": "a1"}]
+        with tf.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(jobs, f); path = f.name
+        env = {**os.environ, "SOCIAL_LOAD_FAKE_RAILS": "1"}
+        out = subprocess.run([sys.executable, "tools/social_load.py", path],
+                             capture_output=True, text=True, env=env,
+                             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        os.unlink(path)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("dry-run", out.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
