@@ -17,6 +17,8 @@
 import os
 import glob
 import hmac
+import base64
+import secrets
 import logging
 import sys
 import datetime
@@ -4292,6 +4294,88 @@ if pitwall_assets_mount.exists():
     app.mount("/assets", StaticFiles(directory=pitwall_assets_mount), name="pitwall-react-assets-root")
 
 
+# ── Dashboard Basic Auth (human Pit Wall pages + their data API ONLY) ──────────
+#
+# SCOPE IS SAFETY-CRITICAL. This gate is applied ONLY to the explicit set of
+# human-facing paths below and defaults OPEN for everything else, so no machine
+# webhook, health check, or integration endpoint can ever be caught behind auth.
+# (A false-open is recoverable; a false-closed takes down an integration.)
+#
+# PROTECTED (browser Basic Auth challenge on the page also covers same-origin
+# fetch/XHR the React app makes, so the data reads below are covered too):
+#   "/"                 React UI shell (root serves index.html in prod)
+#   "/dashboard"        Pit Wall dashboard page
+#   "/pit-wall"         alias page
+#   "/team/..."         React client-side team/agent routes
+#   "/assets/..."       built JS/CSS bundle for the React app
+#   "/pitwall-static/..." same bundle under its alternate mount
+#   "/api/pitwall/..."  all dashboard data reads + clear-alerts (POST)
+#   "/api/changelogs"   dashboard changelog viewer feed
+#   "/logs/..."         dashboard agent-log history reads
+#
+# LEFT OPEN (machine surfaces — do NOT protect): /health, /health/ready
+# (Railway healthcheck is /health), every /webhooks/*, /ape/webhook/*, /oauth/*,
+# /meta/*, /postal/*, /social/*, /admin/*, /bridge/*, /heartbeat/*, /handoffs/*,
+# /u/* tracking links, /m/* mobile approval magic-links, /chat, /rivers,
+# /paperclip*, /revenue*, /content/*, /pipeline, /ops-report, /tech/*, and every
+# /api/* route other than the two dashboard feeds named above.
+#
+# Credentials come from env (DASHBOARD_USER / DASHBOARD_PASS via Doppler ->
+# Railway) and are read at request time. If either is unset, the gate fails
+# CLOSED for these human paths only (returns 401) and never crashes the app.
+
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/api/changelogs"}
+_DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
+_DASH_AUTH_REALM = "AVO Pit Wall"
+
+
+def _dashboard_path_is_protected(path: str) -> bool:
+    """True only for the explicit human-facing dashboard surface. Default OPEN."""
+    if path in _DASH_AUTH_EXACT:
+        return True
+    return any(path.startswith(prefix) for prefix in _DASH_AUTH_PREFIXES)
+
+
+def _dashboard_auth_ok(authorization: Optional[str]) -> bool:
+    """Validate an HTTP Basic Authorization header against env credentials.
+
+    Fails closed (returns False) when DASHBOARD_USER / DASHBOARD_PASS are unset,
+    so a misconfigured env locks humans out rather than exposing the dashboard.
+    Uses constant-time comparison to avoid leaking the credential by timing.
+    """
+    expected_user = os.environ.get("DASHBOARD_USER", "")
+    expected_pass = os.environ.get("DASHBOARD_PASS", "")
+    if not expected_user or not expected_pass:
+        return False
+    if not authorization or not authorization.lower().startswith("basic "):
+        return False
+    try:
+        decoded = base64.b64decode(authorization.split(" ", 1)[1].strip()).decode("utf-8")
+    except Exception:
+        return False
+    user, sep, pwd = decoded.partition(":")
+    if not sep:
+        return False
+    user_ok = secrets.compare_digest(user, expected_user)
+    pass_ok = secrets.compare_digest(pwd, expected_pass)
+    return user_ok and pass_ok
+
+
+class DashboardBasicAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if _dashboard_path_is_protected(request.url.path):
+            if not _dashboard_auth_ok(request.headers.get("Authorization")):
+                return PlainTextResponse(
+                    "Authentication required.",
+                    status_code=401,
+                    headers={"WWW-Authenticate": f'Basic realm="{_DASH_AUTH_REALM}"'},
+                )
+        return await call_next(request)
+
+
+app.add_middleware(DashboardBasicAuthMiddleware)
+
+
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 class AuthRequest(BaseModel):
@@ -7545,6 +7629,13 @@ async def pitwall_ops_dashboard():
             "crm_today": crm_today,
             "crm_week": crm_week,
             "coo_report": coo_report,
+            # Fleet counts derived from the live registry (single source of truth)
+            # so the dashboard sidebar never drifts from what it actually renders.
+            # Attio + HubSpot retired 2026-06-27; WD + AvI both run on Twenty now.
+            "fleet": {
+                "rivers": len(_pitwall_team_ids()),
+                "agents": len(PITWALL_AGENT_META),
+            },
             "businesses": {
                 "aiphoneguy": {
                     "name": "The AI Phone Guy",
@@ -7554,12 +7645,12 @@ async def pitwall_ops_dashboard():
                 "callingdigital": {
                     "name": "Worship Digital",
                     "sales_agent": "marcus",
-                    "crm": "Attio",
+                    "crm": "Twenty",
                 },
                 "autointelligence": {
                     "name": "Automotive Intelligence",
                     "sales_agent": "ryan_data",
-                    "crm": "HubSpot",
+                    "crm": "Twenty",
                 },
             },
         })
@@ -7712,8 +7803,8 @@ async def paperclip_rivers():
     return {
         "rivers": [
             {"name": "AI Phone Guy", "crm": "GoHighLevel", "agents": ["Alex", "Tyler", "Zoe", "Jennifer", "Randy"], "revops": "Randy", "schedule": "Randy every 4h"},
-            {"name": "Worship Digital", "crm": "Attio", "agents": ["Dek", "Marcus", "Sofia", "Carlos", "Nova", "Brenda"], "revops": "Brenda", "schedule": "Brenda every 2h"},
-            {"name": "Automotive Intelligence", "crm": "HubSpot", "agents": ["Michael Meta", "Chase", "Atlas", "Ryan", "Phoenix", "Darrell"], "revops": "Darrell", "schedule": "Darrell every 1h"},
+            {"name": "Worship Digital", "crm": "Twenty", "agents": ["Dek", "Marcus", "Sofia", "Carlos", "Nova", "Brenda"], "revops": "Brenda", "schedule": "Brenda every 2h"},
+            {"name": "Automotive Intelligence", "crm": "Twenty", "agents": ["Michael Meta", "Chase", "Atlas", "Ryan", "Phoenix", "Darrell"], "revops": "Darrell", "schedule": "Darrell every 1h"},
             {"name": "Agent Empire", "platform": "Skool", "agents": ["Debra", "Wade", "Tammy", "Sterling"], "schedule": "Debra Mon 6am / Wade Mon 9am / Tammy 6hr / Sterling daily 7am"},
             {"name": "CustomerAdvocate", "platform": "Internal", "agents": ["Clint", "Sherry"], "components": ["VERA", "AATA", "The Exchange"], "schedule": "Clint 10am / Sherry 11am daily"},
         ],

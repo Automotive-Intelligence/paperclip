@@ -1,7 +1,9 @@
 """Project Paperclip — Main Entry Point.
 
 Starts all schedulers, runs initial enrollment pass, serves health endpoint.
-Deploy to Railway. $15K MRR. Michael shows up to close. Agents do everything else.
+Deploy to Railway. North Star: 20+ recurring-revenue clients on every car (MRR
+near zero today; earned one kept promise at a time). Michael shows up to close.
+Agents do everything else.
 """
 
 import os
@@ -82,8 +84,8 @@ async def rivers():
     return {
         "rivers": [
             {"name": "AI Phone Guy", "crm": "GoHighLevel", "agent": "Randy", "schedule": "every 4 hours"},
-            {"name": "Worship Digital", "crm": "Attio", "agent": "Brenda", "schedule": "every 2 hours"},
-            {"name": "Automotive Intelligence", "crm": "HubSpot", "agent": "Darrell", "schedule": "every 1 hour"},
+            {"name": "Worship Digital", "crm": "Twenty", "agent": "Brenda", "schedule": "every 2 hours"},
+            {"name": "Automotive Intelligence", "crm": "Twenty", "agent": "Darrell", "schedule": "every 1 hour"},
             {"name": "Agent Empire", "platform": "Skool", "agents": ["Tammy", "Wade", "Debra"], "schedule": "Tammy 6hr / Wade Mon 9am"},
             {"name": "CustomerAdvocate", "components": ["VERA", "AATA", "The Exchange"], "agents": ["Clint", "Sherry"]},
         ]

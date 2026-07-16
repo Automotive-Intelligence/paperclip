@@ -2,7 +2,8 @@
 # Changelog Generator
 # Built live for Agent Empire Skool community
 # Salesdroid — April 2026
-# North Star: $15,000 MRR
+# North Star: 20+ recurring-revenue clients on every car (MRR near zero today;
+# earned one kept promise at a time). See config/principles.py DIRECTION.
 
 """Weekly changelog generator.
 
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 LOGS_DIR = os.path.join(REPO_ROOT, "logs")
+
+# Fleet size shown in the weekly Revenue Impact summary. Source of truth is the
+# live Pit Wall registry in app.py (_pitwall_team_ids + PITWALL_AGENT_META): 5
+# rivers, 23 agents as of 2026-07. Kept as named constants (not a magic number)
+# so the count is honest and easy to reconcile against the registry. If the
+# fleet changes, update these to match app.py — never inflate.
+_FLEET_RIVERS = 5
+_FLEET_AGENTS = 23
 
 
 def _get_week_number() -> int:
@@ -130,8 +139,8 @@ def _render_pipeline_section(by_business: dict) -> str:
     }
     biz_display = {
         "aiphoneguy": "AI Phone Guy (GoHighLevel)",
-        "callingdigital": "Worship Digital (Attio)",
-        "autointelligence": "Automotive Intelligence (HubSpot)",
+        "callingdigital": "Worship Digital (Twenty)",
+        "autointelligence": "Automotive Intelligence (Twenty)",
     }
     revenue_rivers = ["aiphoneguy", "callingdigital", "autointelligence"]
 
@@ -332,8 +341,8 @@ Generated: {now.strftime("%Y-%m-%d %H:%M CST")}
 ## Revenue Impact
 - Total prospects created: {pipeline['total_created']}
 - Businesses active: {len(by_biz)}
-- Active rivers: 5
-- Active agents: 22
+- Active rivers: {_FLEET_RIVERS}
+- Active agents: {_FLEET_AGENTS}
 
 ---
 
@@ -364,7 +373,7 @@ Generated: {now.strftime("%Y-%m-%d %H:%M CST")}
 
 ---
 
-*AVO — AI Business Operating System. $15,000 MRR across 5 rivers.*
+*AVO — AI Business Operating System. North Star: 20+ recurring clients on every car. MRR today: near zero, earned one kept promise at a time.*
 *Michael shows up to close. Agents do everything else.*
 *Built live for Agent Empire Skool community.*
 *Named from Avoda — work is worship.*

@@ -1,12 +1,19 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Sidebar, Menu, MenuItem } from 'react-pro-sidebar';
+import { api, OpsFleet } from '../lib/api';
 
 type NavItem = {
   label: string;
   to: string;
   icon: string;
 };
+
+// Honest fallback fleet size, matching the live Pit Wall registry in app.py
+// (_pitwall_team_ids + PITWALL_AGENT_META). Used only until the live count
+// loads (or if the API is unreachable) so the sidebar never shows a made-up
+// number. The live value from /api/pitwall/ops-dashboard overrides this.
+const FALLBACK_FLEET: OpsFleet = { rivers: 5, agents: 23 };
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Overview', to: '/', icon: 'O' },
@@ -20,6 +27,22 @@ const NAV_ITEMS: NavItem[] = [
 export default function DashboardShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [fleet, setFleet] = useState<OpsFleet>(FALLBACK_FLEET);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .opsDashboard()
+      .then((data) => {
+        if (active && data.fleet) setFleet(data.fleet);
+      })
+      .catch(() => {
+        // Keep the honest fallback; never show a fabricated number.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-pitbg">
@@ -84,8 +107,13 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
         {!collapsed && (
           <div className="mt-auto border-t border-pitborder px-4 py-3 text-[10px] uppercase tracking-wider text-pitmuted">
             <div>North Star</div>
-            <div className="text-pittext normal-case tracking-normal text-xs mt-1">$15,000 MRR</div>
-            <div className="mt-2">5 Rivers · 24 Agents</div>
+            <div className="text-pittext normal-case tracking-normal text-xs mt-1">
+              20+ recurring clients on every car
+            </div>
+            <div className="normal-case tracking-normal text-[11px] mt-1">MRR today: $0</div>
+            <div className="mt-2">
+              {fleet.rivers} Rivers · {fleet.agents} Agents
+            </div>
           </div>
         )}
       </Sidebar>

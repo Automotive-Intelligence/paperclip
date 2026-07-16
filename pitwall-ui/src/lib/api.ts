@@ -92,6 +92,11 @@ export type OpsReport = {
   business_summary?: Record<string, OpsBusinessSummary>;
 };
 
+export type OpsFleet = {
+  rivers: number;
+  agents: number;
+};
+
 export type PitWallOpsDashboard = {
   timestamp: string;
   refresh_seconds: number;
@@ -99,6 +104,7 @@ export type PitWallOpsDashboard = {
   crm_today: Record<string, { created?: number; duplicate_skipped?: number }>;
   crm_week: Record<string, { created?: number; duplicate_skipped?: number }>;
   coo_report: OpsReport | null;
+  fleet?: OpsFleet;
   businesses: Record<string, OpsBusinessMeta>;
 };
 
