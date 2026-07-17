@@ -6108,11 +6108,23 @@ async def instantly_webhook(payload: dict, request: Request):
     if "reply" not in event or not email:
         return {"status": "ignored", "event": event}
 
-    # ── P1: hot-reply → SMS alert to Michael ────────────────────────────────
-    # A genuine reply just landed. Text Michael. Guarded + no-ops until Twilio
-    # creds land; de-duped in the helper so the intent-inbound shim below does
-    # not double-fire. Bounces/unsubs never reach here (this endpoint only
-    # fires on Instantly reply events; "reply" not in event returned above).
+    # ── Brand routing (2026-07-15) ──────────────────────────────────────────
+    # Instantly's payload carries NO "brand" field, so the old default of
+    # "aipg" mislabelled every non-AIPG reply and sent it down the GHL path.
+    # Derive the brand from the campaign id instead. AIPG stays on GHL
+    # (_BRAND_TO_TWENTY_KEY["aipg"] is None); every other brand routes to its
+    # own Twenty workspace via the intent_inbound shim below.
+    _CAMPAIGN_TO_BRAND = {
+        "c557a7d5-f4a2-441b-86ed-fc721284d862": "avi",   # AvI Dealer Outreach #1
+    }
+    _campaign_id = str(payload.get("campaign_id") or payload.get("campaign") or "").strip()
+    _brand = _CAMPAIGN_TO_BRAND.get(_campaign_id) or (payload.get("brand") or "aipg").strip().lower()
+
+    # ── P1: hot-reply → alert Michael ───────────────────────────────────────
+    # A genuine reply just landed. Fires SMS + email (email is the live channel
+    # while SMS is gated on A2P 10DLC). De-duped in the helper so the
+    # intent-inbound shim below does not double-fire. Bounces/unsubs never
+    # reach here (this endpoint only fires on reply events).
     try:
         from core.notifier import notify_hot_reply
         _reply_snippet = str(
@@ -6122,10 +6134,29 @@ async def instantly_webhook(payload: dict, request: Request):
             or payload.get("message")
             or ""
         ).strip()
-        shim_brand_for_alert = (payload.get("brand") or "aipg").strip().lower()
-        notify_hot_reply(shim_brand_for_alert, email, "cold_email", _reply_snippet)
+        notify_hot_reply(_brand, email, "cold_email", _reply_snippet)
     except Exception as e:
-        logging.warning("[instantly_webhook] hot-reply SMS non-fatal: %s", e)
+        logging.warning("[instantly_webhook] hot-reply alert non-fatal: %s", e)
+
+    # Non-AIPG brands do not live in GHL. Send them straight to their own
+    # Twenty workspace via the unified inbound pipeline and return, rather than
+    # falling through to the tyler/aiphoneguy GHL opportunity logic below.
+    if _brand != "aipg":
+        try:
+            from services.intent_inbound import (
+                handle_event as _intent_handle_event,
+                instantly_reply_to_event as _instantly_to_event,
+            )
+            _evt = _instantly_to_event(_brand, payload)
+            if _evt is None:
+                logging.warning("[instantly_webhook] %s: payload not convertible", _brand)
+                return {"status": "not_convertible", "brand": _brand, "email": email}
+            _res = _intent_handle_event(_evt.model_dump(mode="json"))
+            logging.info("[instantly_webhook] %s reply -> Twenty: %s", _brand, email)
+            return {"status": "routed_to_twenty", "brand": _brand, "email": email, "result": _res}
+        except Exception as e:
+            logging.error("[instantly_webhook] %s twenty push failed: %s", _brand, e)
+            return {"status": "twenty_push_failed", "brand": _brand, "error": str(e)}
 
     contact = search_contact(email=email)
     if not contact:
