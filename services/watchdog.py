@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Set, Tuple
@@ -33,6 +34,25 @@ from typing import List, Optional, Set, Tuple
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Network / time seams (patched in tests; real callers hit the wire)
+# ---------------------------------------------------------------------------
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _fetch_text(url: str, timeout: int = 15) -> str:
+    r = requests.get(url, timeout=timeout, allow_redirects=True)
+    r.raise_for_status()
+    return r.text
+
+
+def _http_status(url: str, timeout: int = 15) -> int:
+    return requests.get(url, timeout=timeout, allow_redirects=True).status_code
 
 
 BRAND_URLS: List[str] = [
@@ -137,10 +157,83 @@ def _check_telemetry_freshness() -> List[Anomaly]:
     return []
 
 
+def _newest_blog_post(sitemap_xml: str) -> Optional[Tuple[str, str]]:
+    """Return (iso_date, url) for the newest <loc> that is a real blog post
+    (contains '/blog/<slug>', not the '/blog' index). None if none found.
+    Sitemap lastmod is the truth signal here: verified 2026-07-18 that AvI,
+    AIPG, and BAE all carry per-post /blog/<slug> lastmod dates.
+    """
+    best: Optional[Tuple[str, str]] = None
+    for entry in re.findall(r"<url>(.*?)</url>", sitemap_xml, re.S):
+        loc = re.search(r"<loc>(.*?)</loc>", entry)
+        lm = re.search(r"<lastmod>(.*?)</lastmod>", entry)
+        if not loc or "/blog/" not in loc.group(1) or not lm:
+            continue
+        d = lm.group(1).strip()[:10]
+        if best is None or d > best[0]:
+            best = (d, loc.group(1).strip())
+    return best
+
+
+def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Per brand: is the newest LIVE blog post within its expected cadence, and
+    does it actually serve 200? A receipt-only check would have false-alarmed on
+    2026-07-18 (posts shipped, receipt did not); the live site is the truth.
+    """
+    if cfg is None:
+        from config.watchdog_config import load_watchdog_config
+        cfg = load_watchdog_config()
+    out: List[Anomaly] = []
+    for brand, b in (cfg.get("brands") or {}).items():
+        max_h = int(b.get("blog_max_age_hours") or 0)
+        if max_h <= 0:
+            continue  # disabled: content HELD or no blog engine (GAP)
+        sev = b.get("severity", "warn")
+        try:
+            xml = _fetch_text(b["sitemap_url"])
+        except requests.RequestException as e:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"Cannot fetch sitemap for {brand}: {type(e).__name__}", sev))
+            continue
+        newest = _newest_blog_post(xml)
+        if not newest:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"No per-post /blog/ entries in {brand} sitemap; cannot verify freshness.",
+                sev))
+            continue
+        d, url = newest
+        try:
+            post_dt = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+        except ValueError:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"Unparseable newest post date for {brand}: {d!r}", sev))
+            continue
+        age_h = (_now_utc() - post_dt).total_seconds() / 3600
+        if age_h > max_h:
+            out.append(Anomaly(
+                f"blog-stale-{brand}",
+                f"{brand} newest blog post is {int(age_h)}h old (> {max_h}h): {url}", sev))
+        try:
+            if _http_status(url) != 200:
+                out.append(Anomaly(
+                    f"blog-404-{brand}",
+                    f"{brand} sitemap advertises a post that does not serve 200: {url}",
+                    "critical"))
+        except requests.RequestException as e:
+            out.append(Anomaly(
+                f"blog-404-{brand}",
+                f"{brand} newest post URL failed to load ({type(e).__name__}): {url}",
+                "critical"))
+    return out
+
+
 def _all_anomalies() -> List[Anomaly]:
     """Composite check. Add more callables here as coverage expands."""
     out: List[Anomaly] = []
-    for check in (_check_brand_sites, _check_telemetry_freshness):
+    for check in (_check_brand_sites, _check_telemetry_freshness, _check_blog_freshness):
         try:
             out.extend(check())
         except Exception as e:
