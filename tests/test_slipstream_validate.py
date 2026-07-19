@@ -73,3 +73,12 @@ def test_missing_pullquote_flagged():
     bad = GOOD.replace("<PullQuote>You cannot fix a handoff you never measured.</PullQuote>", "")
     v = validate_post(bad)
     assert any("pullquote" in x.lower() for x in v)
+
+
+def test_unclosed_answerfirst_flagged():
+    # the real 2026-07-19 build-breaker: <AnswerFirst> opened, never closed
+    bad = GOOD.replace(
+        "<AnswerFirst>Map the handoffs first. Most dealership AI fails at the seams between systems, not inside them.</AnswerFirst>",
+        "Map the handoffs first.<AnswerFirst>")
+    v = validate_post(bad)
+    assert any("answerfirst" in x.lower() and ("unbalanced" in x.lower() or "closed" in x.lower()) for x in v)

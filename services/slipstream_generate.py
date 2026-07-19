@@ -71,6 +71,13 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         f"{brand_cfg.get('voice', 'restrained, diagnostic, anti-hype, operator-grounded')}.\n\n"
         "HARD RULES: no em-dashes anywhere; no fabricated metrics or unsourced industry numbers "
         "(cite real published sources or stay qualitative); 1200-1800 words.\n\n"
+        "MDX STRUCTURE RULES (a broken tag crashes the build, so obey exactly):\n"
+        "- The FIRST characters of body_mdx MUST be a complete, CLOSED AnswerFirst: "
+        "<AnswerFirst>your 2-4 sentence answer here</AnswerFirst>. Never leave it empty or unclosed.\n"
+        "- EVERY component you open must be closed: <PullQuote>text</PullQuote>, <Callout>text</Callout>. "
+        "<EntityDefinition term=\"X\">definition text</EntityDefinition> (with children, not self-closing). "
+        "<ConsoleDiagram steps=\"A | B | C\" /> is the only self-closing one.\n"
+        "- Section headings use EXACTLY two hashes: ## Question-shaped heading. Never ### or ####.\n\n"
         "The JSON object must have EXACTLY these keys:\n"
         '- "title": string\n'
         '- "description": string (<=160 chars)\n'
