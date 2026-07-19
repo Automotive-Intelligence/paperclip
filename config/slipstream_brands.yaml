@@ -1,0 +1,25 @@
+# Slipstream engine brand config. Adding a brand = a config edit, not code.
+# Only Next.js/Vercel brands with the MDX component kit. WD excluded (no blog
+# subsystem yet, mid-rebuild).
+brands:
+  autointelligence:
+    repo: salesdroid/automotive-intelligence
+    blog_dir: src/content/blog
+    business_key: autointelligence
+    voice: "restrained, diagnostic, anti-hype, operator-grounded"
+    money_pages: ["/ai-reality-check", "/diagnostic-call", "/lead-intelligence", "/services"]
+    queue_path: automation/content-queue.md
+  aiphoneguy:
+    repo: salesdroid/ai-phone-guy-site
+    blog_dir: src/content/blog
+    business_key: aiphoneguy
+    voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
+    money_pages: ["/book", "/services"]
+    queue_path: automation/content-queue.md
+  agentempire:
+    repo: salesdroid/buildagentempire
+    blog_dir: src/content/blog
+    business_key: agentempire
+    voice: "builder field-notes, honest, ledger-only numbers, no income claims"
+    money_pages: ["/build", "/blog"]
+    queue_path: automation/content-queue.md
