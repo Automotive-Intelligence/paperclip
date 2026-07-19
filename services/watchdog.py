@@ -33,6 +33,8 @@ from typing import List, Optional, Set, Tuple
 
 import requests
 
+from config.watchdog_config import load_watchdog_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,9 +69,6 @@ BRAND_URLS: List[str] = [
 TELEMETRY_REPO = "salesdroid/avo-telemetry"
 TELEMETRY_MAX_STALE_HOURS = 48
 
-SLACK_CHANNEL = "build-tech"
-SLACK_API = "https://slack.com/api/chat.postMessage"
-
 
 # ---------------------------------------------------------------------------
 # Anomaly datatype
@@ -92,9 +91,11 @@ class Anomaly:
 
 
 def _check_brand_sites() -> List[Anomaly]:
-    """HEAD each brand URL; any non-2xx/3xx is an anomaly."""
+    """HEAD each brand URL; any non-2xx/3xx is an anomaly.
+    Coverage list is config-driven (config/watchdog.yaml site_urls)."""
     out: List[Anomaly] = []
-    for url in BRAND_URLS:
+    urls = (load_watchdog_config().get("site_urls") or BRAND_URLS)
+    for url in urls:
         try:
             r = requests.get(url, timeout=15, allow_redirects=True)
             code = r.status_code
@@ -181,7 +182,6 @@ def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
     2026-07-18 (posts shipped, receipt did not); the live site is the truth.
     """
     if cfg is None:
-        from config.watchdog_config import load_watchdog_config
         cfg = load_watchdog_config()
     out: List[Anomaly] = []
     for brand, b in (cfg.get("brands") or {}).items():
@@ -241,7 +241,6 @@ def _check_emails_sent(cfg: Optional[dict] = None) -> List[Anomaly]:
     an empty book never cries wolf.
     """
     if cfg is None:
-        from config.watchdog_config import load_watchdog_config
         cfg = load_watchdog_config()
     es = cfg.get("emails_sent") or {}
     days = int(es.get("window_days", 7))
@@ -258,10 +257,43 @@ def _check_emails_sent(cfg: Optional[dict] = None) -> List[Anomaly]:
     return []
 
 
+def _current_environment() -> Optional[str]:
+    """The service's own declared environment (config.runtime SETTINGS)."""
+    try:
+        from config.runtime import get_settings
+        return get_settings().environment
+    except Exception:
+        return None
+
+
+def _check_env_truth() -> List[Anomaly]:
+    """Pillar-4 fold-in: the live service should call itself 'production' in
+    production. A surface that disagrees with reality is exactly what the
+    (unscheduled) truth-pass used to catch by hand.
+    """
+    env = _current_environment()
+    if env and env != "production":
+        return [Anomaly(
+            "env-mislabelled",
+            f"Live service reports environment={env!r} (expected 'production').",
+            "warn")]
+    return []
+
+
+# Registry of every check the watchdog runs. Extend here as coverage grows.
+_CHECKS = (
+    _check_brand_sites,
+    _check_telemetry_freshness,
+    _check_blog_freshness,
+    _check_emails_sent,
+    _check_env_truth,
+)
+
+
 def _all_anomalies() -> List[Anomaly]:
-    """Composite check. Add more callables here as coverage expands."""
+    """Composite check. One check raising never sinks the others."""
     out: List[Anomaly] = []
-    for check in (_check_brand_sites, _check_telemetry_freshness, _check_blog_freshness):
+    for check in _CHECKS:
         try:
             out.extend(check())
         except Exception as e:
@@ -319,42 +351,13 @@ def _record_active(anomalies: List[Anomaly]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slack alert
-# ---------------------------------------------------------------------------
-
-
-def _post_to_slack(new_anomalies: List[Anomaly]) -> Optional[str]:
-    """Post ONE consolidated message per run summarizing new anomalies."""
-    if not new_anomalies:
-        return None
-    token = (os.environ.get("SLACK_BOT_TOKEN") or "").strip()
-    if not token:
-        logger.error("[watchdog] SLACK_BOT_TOKEN missing -- alert skipped")
-        return None
-    lines = ["🩺 *AVO Watchdog*: new infrastructure anomaly detected"]
-    for a in new_anomalies:
-        icon = "🚨" if a.severity == "critical" else "⚠️"
-        lines.append(f"{icon} {a.human}")
-    text = "\n".join(lines)
-    try:
-        r = requests.post(
-            SLACK_API,
-            headers={"Authorization": f"Bearer {token}"},
-            json={"channel": SLACK_CHANNEL, "text": text, "unfurl_links": False},
-            timeout=15,
-        )
-    except requests.RequestException as e:
-        logger.warning("[watchdog] slack post failed: %s", e)
-        return None
-    if not r.ok or not r.json().get("ok"):
-        logger.warning("[watchdog] slack error: %s %s", r.status_code, r.text[:200])
-        return None
-    return r.json().get("ts")
-
-
-# ---------------------------------------------------------------------------
 # Public entry
 # ---------------------------------------------------------------------------
+#
+# Alerting is NOT done here. Detection records anomalies to watchdog_state; the
+# GitHub Actions workflow (avo-telemetry/.github/workflows/watchdog.yml) polls
+# GET /health/watchdog and opens/closes a GitHub issue -> emails Michael. That
+# keeps the alert lifecycle (dedup, recovery, audit trail) on a rail, not Slack.
 
 
 def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
@@ -368,8 +371,6 @@ def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
         logger.warning("[watchdog] state fetch failed (assuming fresh): %s", e)
         active = set()
     new = [a for a in anomalies if a.fingerprint not in active]
-    if new:
-        _post_to_slack(new)
     try:
         _record_active(anomalies)
     except Exception as e:
