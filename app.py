@@ -5254,6 +5254,16 @@ async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
     return JSONResponse(content=result)
 
 
+@app.get("/health/watchdog")
+async def health_watchdog():
+    """Read-only snapshot of currently-active watchdog anomalies (from the last
+    hourly sweep). Public + cheap (no fresh sweep). The avo-telemetry GitHub
+    Actions workflow polls this and opens/closes a GitHub issue -> emails
+    Michael, so the alert path lives on a rail, not Slack."""
+    from services.watchdog import current_state_json
+    return JSONResponse(content=await asyncio.to_thread(current_state_json))
+
+
 @app.post("/admin/run-watchdog")
 async def run_watchdog_now(authorization: Optional[str] = Header(None)):
     """Fire the AVO Watchdog sweep immediately (same code path as the

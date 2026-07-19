@@ -1,0 +1,44 @@
+# Watchdog coverage config. Brand/threshold specifics live here, not in code,
+# so extending coverage to a new business is a config edit, not a rewrite.
+#
+# blog_max_age_hours: 0 disables the blog-freshness check for that brand
+# (content HELD, or no blog engine yet). Everything else stays covered.
+brands:
+  automotive_intelligence:
+    sitemap_url: https://automotiveintelligence.io/sitemap.xml
+    blog_max_age_hours: 96      # cadence ~ every 2 days + headroom
+    severity: warn
+  ai_phone_guy:
+    sitemap_url: https://theaiphoneguy.com/sitemap.xml
+    blog_max_age_hours: 96
+    severity: warn
+  agent_empire:
+    sitemap_url: https://buildagentempire.com/sitemap.xml
+    blog_max_age_hours: 168     # weekly-ish; social distribution still a GAP
+    severity: warn
+  worship_digital:
+    sitemap_url: https://worshipdigital.co/sitemap.xml
+    blog_max_age_hours: 0       # blog HELD (branch drift + rename); Studio owns cadence
+    severity: warn
+  paper_and_purpose:
+    sitemap_url: https://paperandpurpose.co/sitemap.xml
+    blog_max_age_hours: 0       # no blog engine on P&P (GAP per rails ledger)
+    severity: warn
+  bookd:
+    sitemap_url: https://bookd.cx/sitemap.xml
+    blog_max_age_hours: 0       # staged, holds for Ryan
+    severity: warn
+site_urls:
+  - https://automotiveintelligence.io
+  - https://theaiphoneguy.com
+  - https://worshipdigital.co
+  - https://crm.worshipdigital.co
+  - https://buildagentempire.com
+  - https://bookd.cx
+  - https://paperandpurpose.co
+emails_sent:
+  window_days: 7
+  min_prospects_for_alert: 25
+telemetry:
+  repo: salesdroid/avo-telemetry
+  max_stale_hours: 48

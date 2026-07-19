@@ -1,38 +1,59 @@
 """services/watchdog.py -- AVO Watchdog, Railway edition.
 
-Port of ~/.local/bin/avo-watchdog.sh to run in the paperclip service instead
-of on the local Mac via launchd. Local can't catch a 3am outage while the
-laptop sleeps; this runs on Railway's uptime and posts anomalies to
-#build-tech via the existing SLACK_BOT_TOKEN.
+Runs in the paperclip service (not the laptop, which can't catch a 3am outage
+while it sleeps). The hourly scheduler DETECTS anomalies and records them to the
+watchdog_state table. It does NOT deliver alerts. Delivery is a rail: the
+avo-telemetry GitHub Actions workflow polls GET /health/watchdog and opens/closes
+a GitHub issue -> emails Michael. Keeping the alert lifecycle in the issue (dedup,
+recovery, audit trail) is why there is no Slack here.
 
-Three families of checks (dropped: launchd-job health, since Railway has
-no launchd — paperclip's own scheduler health surfaces via /health):
+Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
 
-  1. Brand-site health: HTTP status on each brand URL. Anything other than
-     2xx/3xx = anomaly.
-  2. avo-telemetry freshness: last commit older than N hours = anomaly.
-     Coordination layer stalling is a leading indicator of a persona chat
-     going dark.
-  3. Extension slot: add more checks over time (Vercel deploys, Doppler
-     token expiry, etc.) inside `_all_anomalies`.
+  1. Brand-site health: HTTP status on each configured site URL (non-2xx/3xx = anomaly).
+  2. avo-telemetry freshness: last commit older than N hours = coordination layer stalled.
+  3. Blog freshness: per brand, is the newest LIVE blog post within its cadence, and
+     does it serve 200? Catches "engine exited 0 but shipped nothing / a 404" -- the
+     silent failure a receipt-only check misses (verified 2026-07-18).
+  4. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
+  5. env-truth: the live service should call itself 'production' in production.
 
 Anomaly deduplication:
-  Fingerprint-based, stored in a small watchdog_state table so a persistent
-  anomaly doesn't spam Slack every hour. Only NEW fingerprints alert.
-  When the underlying anomaly resolves, its fingerprint drops from the
-  active set on the next run.
+  Fingerprint-based in watchdog_state. current_state_json() reads this table for
+  the poller; the GitHub issue is the alert-level dedup.
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Set, Tuple
 
 import requests
 
+from config.watchdog_config import load_watchdog_config
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Network / time seams (patched in tests; real callers hit the wire)
+# ---------------------------------------------------------------------------
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _fetch_text(url: str, timeout: int = 15) -> str:
+    r = requests.get(url, timeout=timeout, allow_redirects=True)
+    r.raise_for_status()
+    return r.text
+
+
+def _http_status(url: str, timeout: int = 15) -> int:
+    return requests.get(url, timeout=timeout, allow_redirects=True).status_code
 
 
 BRAND_URLS: List[str] = [
@@ -46,9 +67,6 @@ BRAND_URLS: List[str] = [
 
 TELEMETRY_REPO = "salesdroid/avo-telemetry"
 TELEMETRY_MAX_STALE_HOURS = 48
-
-SLACK_CHANNEL = "build-tech"
-SLACK_API = "https://slack.com/api/chat.postMessage"
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +90,11 @@ class Anomaly:
 
 
 def _check_brand_sites() -> List[Anomaly]:
-    """HEAD each brand URL; any non-2xx/3xx is an anomaly."""
+    """HEAD each brand URL; any non-2xx/3xx is an anomaly.
+    Coverage list is config-driven (config/watchdog.yaml site_urls)."""
     out: List[Anomaly] = []
-    for url in BRAND_URLS:
+    urls = (load_watchdog_config().get("site_urls") or BRAND_URLS)
+    for url in urls:
         try:
             r = requests.get(url, timeout=15, allow_redirects=True)
             code = r.status_code
@@ -137,10 +157,142 @@ def _check_telemetry_freshness() -> List[Anomaly]:
     return []
 
 
-def _all_anomalies() -> List[Anomaly]:
-    """Composite check. Add more callables here as coverage expands."""
+def _newest_blog_post(sitemap_xml: str) -> Optional[Tuple[str, str]]:
+    """Return (iso_date, url) for the newest <loc> that is a real blog post
+    (contains '/blog/<slug>', not the '/blog' index). None if none found.
+    Sitemap lastmod is the truth signal here: verified 2026-07-18 that AvI,
+    AIPG, and BAE all carry per-post /blog/<slug> lastmod dates.
+    """
+    best: Optional[Tuple[str, str]] = None
+    for entry in re.findall(r"<url>(.*?)</url>", sitemap_xml, re.S):
+        loc = re.search(r"<loc>(.*?)</loc>", entry)
+        lm = re.search(r"<lastmod>(.*?)</lastmod>", entry)
+        if not loc or "/blog/" not in loc.group(1) or not lm:
+            continue
+        d = lm.group(1).strip()[:10]
+        if best is None or d > best[0]:
+            best = (d, loc.group(1).strip())
+    return best
+
+
+def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Per brand: is the newest LIVE blog post within its expected cadence, and
+    does it actually serve 200? A receipt-only check would have false-alarmed on
+    2026-07-18 (posts shipped, receipt did not); the live site is the truth.
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
     out: List[Anomaly] = []
-    for check in (_check_brand_sites, _check_telemetry_freshness):
+    for brand, b in (cfg.get("brands") or {}).items():
+        max_h = int(b.get("blog_max_age_hours") or 0)
+        if max_h <= 0:
+            continue  # disabled: content HELD or no blog engine (GAP)
+        sev = b.get("severity", "warn")
+        try:
+            xml = _fetch_text(b["sitemap_url"])
+        except requests.RequestException as e:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"Cannot fetch sitemap for {brand}: {type(e).__name__}", sev))
+            continue
+        newest = _newest_blog_post(xml)
+        if not newest:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"No per-post /blog/ entries in {brand} sitemap; cannot verify freshness.",
+                sev))
+            continue
+        d, url = newest
+        try:
+            post_dt = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+        except ValueError:
+            out.append(Anomaly(
+                f"blog-freshness-unknown-{brand}",
+                f"Unparseable newest post date for {brand}: {d!r}", sev))
+            continue
+        age_h = (_now_utc() - post_dt).total_seconds() / 3600
+        if age_h > max_h:
+            out.append(Anomaly(
+                f"blog-stale-{brand}",
+                f"{brand} newest blog post is {int(age_h)}h old (> {max_h}h): {url}", sev))
+        try:
+            if _http_status(url) != 200:
+                out.append(Anomaly(
+                    f"blog-404-{brand}",
+                    f"{brand} sitemap advertises a post that does not serve 200: {url}",
+                    "critical"))
+        except requests.RequestException as e:
+            out.append(Anomaly(
+                f"blog-404-{brand}",
+                f"{brand} newest post URL failed to load ({type(e).__name__}): {url}",
+                "critical"))
+    return out
+
+
+def _revenue_summary(days: int) -> dict:
+    from tools.revenue_tracker import get_revenue_summary
+    return get_revenue_summary(days=days) or {}
+
+
+def _check_emails_sent(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """The standing silent failure: the agent send rail shows emails_sent=0 for
+    30 days while the pipeline fills. Alert only when a real pipeline exists, so
+    an empty book never cries wolf.
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    es = cfg.get("emails_sent") or {}
+    days = int(es.get("window_days", 7))
+    floor = int(es.get("min_prospects_for_alert", 25))
+    summ = _revenue_summary(days)
+    if summ.get("error"):
+        return []
+    prospects = int(summ.get("prospects_created") or summ.get("total_prospects") or 0)
+    if int(summ.get("emails_sent") or 0) == 0 and prospects > floor:
+        return [Anomaly(
+            "emails-sent-zero",
+            f"emails_sent is 0 over {days}d while {prospects} prospects were created "
+            f"-- the agent send rail may be dead.", "warn")]
+    return []
+
+
+def _current_environment() -> Optional[str]:
+    """The service's own declared environment (config.runtime SETTINGS)."""
+    try:
+        from config.runtime import get_settings
+        return get_settings().environment
+    except Exception:
+        return None
+
+
+def _check_env_truth() -> List[Anomaly]:
+    """Pillar-4 fold-in: the live service should call itself 'production' in
+    production. A surface that disagrees with reality is exactly what the
+    (unscheduled) truth-pass used to catch by hand.
+    """
+    env = _current_environment()
+    if env and env != "production":
+        return [Anomaly(
+            "env-mislabelled",
+            f"Live service reports environment={env!r} (expected 'production').",
+            "warn")]
+    return []
+
+
+# Registry of every check the watchdog runs. Extend here as coverage grows.
+_CHECKS = (
+    _check_brand_sites,
+    _check_telemetry_freshness,
+    _check_blog_freshness,
+    _check_emails_sent,
+    _check_env_truth,
+)
+
+
+def _all_anomalies() -> List[Anomaly]:
+    """Composite check. One check raising never sinks the others."""
+    out: List[Anomaly] = []
+    for check in _CHECKS:
         try:
             out.extend(check())
         except Exception as e:
@@ -198,42 +350,13 @@ def _record_active(anomalies: List[Anomaly]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slack alert
-# ---------------------------------------------------------------------------
-
-
-def _post_to_slack(new_anomalies: List[Anomaly]) -> Optional[str]:
-    """Post ONE consolidated message per run summarizing new anomalies."""
-    if not new_anomalies:
-        return None
-    token = (os.environ.get("SLACK_BOT_TOKEN") or "").strip()
-    if not token:
-        logger.error("[watchdog] SLACK_BOT_TOKEN missing -- alert skipped")
-        return None
-    lines = ["🩺 *AVO Watchdog*: new infrastructure anomaly detected"]
-    for a in new_anomalies:
-        icon = "🚨" if a.severity == "critical" else "⚠️"
-        lines.append(f"{icon} {a.human}")
-    text = "\n".join(lines)
-    try:
-        r = requests.post(
-            SLACK_API,
-            headers={"Authorization": f"Bearer {token}"},
-            json={"channel": SLACK_CHANNEL, "text": text, "unfurl_links": False},
-            timeout=15,
-        )
-    except requests.RequestException as e:
-        logger.warning("[watchdog] slack post failed: %s", e)
-        return None
-    if not r.ok or not r.json().get("ok"):
-        logger.warning("[watchdog] slack error: %s %s", r.status_code, r.text[:200])
-        return None
-    return r.json().get("ts")
-
-
-# ---------------------------------------------------------------------------
 # Public entry
 # ---------------------------------------------------------------------------
+#
+# Alerting is NOT done here. Detection records anomalies to watchdog_state; the
+# GitHub Actions workflow (avo-telemetry/.github/workflows/watchdog.yml) polls
+# GET /health/watchdog and opens/closes a GitHub issue -> emails Michael. That
+# keeps the alert lifecycle (dedup, recovery, audit trail) on a rail, not Slack.
 
 
 def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
@@ -247,8 +370,6 @@ def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
         logger.warning("[watchdog] state fetch failed (assuming fresh): %s", e)
         active = set()
     new = [a for a in anomalies if a.fingerprint not in active]
-    if new:
-        _post_to_slack(new)
     try:
         _record_active(anomalies)
     except Exception as e:
@@ -263,6 +384,31 @@ def run_hourly() -> None:
         "[watchdog] cycle done: %d active, %d new anomalies",
         len(anomalies), len(new),
     )
+
+
+def current_state_json() -> dict:
+    """Read-only snapshot of currently-active anomalies from watchdog_state.
+    No fresh sweep: cheap and safe for a public GET the GitHub Action polls.
+    The hourly scheduler populates the table.
+    """
+    try:
+        from services.database import fetch_all
+        rows = fetch_all(
+            "SELECT fingerprint, human, severity FROM watchdog_state "
+            "ORDER BY severity DESC, fingerprint"
+        )
+    except Exception as e:
+        # Watchdog's own store being down is itself surfaced by the uptime
+        # watcher (/health/ready); here we fail soft so the poller can tell
+        # "no anomalies" from "watchdog broken".
+        return {"ok": False, "error": str(e), "active_anomalies": []}
+    return {
+        "ok": True,
+        "checked_at": _now_utc().isoformat(),
+        "active_anomalies": [
+            {"fingerprint": r[0], "human": r[1], "severity": r[2]} for r in rows
+        ],
+    }
 
 
 def run_now_json() -> dict:
@@ -287,4 +433,4 @@ def run_now_json() -> dict:
     }
 
 
-__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json"]
+__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json", "current_state_json"]
