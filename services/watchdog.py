@@ -387,6 +387,31 @@ def run_hourly() -> None:
     )
 
 
+def current_state_json() -> dict:
+    """Read-only snapshot of currently-active anomalies from watchdog_state.
+    No fresh sweep: cheap and safe for a public GET the GitHub Action polls.
+    The hourly scheduler populates the table.
+    """
+    try:
+        from services.database import fetch_all
+        rows = fetch_all(
+            "SELECT fingerprint, human, severity FROM watchdog_state "
+            "ORDER BY severity DESC, fingerprint"
+        )
+    except Exception as e:
+        # Watchdog's own store being down is itself surfaced by the uptime
+        # watcher (/health/ready); here we fail soft so the poller can tell
+        # "no anomalies" from "watchdog broken".
+        return {"ok": False, "error": str(e), "active_anomalies": []}
+    return {
+        "ok": True,
+        "checked_at": _now_utc().isoformat(),
+        "active_anomalies": [
+            {"fingerprint": r[0], "human": r[1], "severity": r[2]} for r in rows
+        ],
+    }
+
+
 def run_now_json() -> dict:
     """Manual-trigger admin endpoint response."""
     anomalies, new = run_once()
@@ -409,4 +434,4 @@ def run_now_json() -> dict:
     }
 
 
-__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json"]
+__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json", "current_state_json"]
