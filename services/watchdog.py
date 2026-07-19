@@ -1,26 +1,25 @@
 """services/watchdog.py -- AVO Watchdog, Railway edition.
 
-Port of ~/.local/bin/avo-watchdog.sh to run in the paperclip service instead
-of on the local Mac via launchd. Local can't catch a 3am outage while the
-laptop sleeps; this runs on Railway's uptime and posts anomalies to
-#build-tech via the existing SLACK_BOT_TOKEN.
+Runs in the paperclip service (not the laptop, which can't catch a 3am outage
+while it sleeps). The hourly scheduler DETECTS anomalies and records them to the
+watchdog_state table. It does NOT deliver alerts. Delivery is a rail: the
+avo-telemetry GitHub Actions workflow polls GET /health/watchdog and opens/closes
+a GitHub issue -> emails Michael. Keeping the alert lifecycle in the issue (dedup,
+recovery, audit trail) is why there is no Slack here.
 
-Three families of checks (dropped: launchd-job health, since Railway has
-no launchd — paperclip's own scheduler health surfaces via /health):
+Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
 
-  1. Brand-site health: HTTP status on each brand URL. Anything other than
-     2xx/3xx = anomaly.
-  2. avo-telemetry freshness: last commit older than N hours = anomaly.
-     Coordination layer stalling is a leading indicator of a persona chat
-     going dark.
-  3. Extension slot: add more checks over time (Vercel deploys, Doppler
-     token expiry, etc.) inside `_all_anomalies`.
+  1. Brand-site health: HTTP status on each configured site URL (non-2xx/3xx = anomaly).
+  2. avo-telemetry freshness: last commit older than N hours = coordination layer stalled.
+  3. Blog freshness: per brand, is the newest LIVE blog post within its cadence, and
+     does it serve 200? Catches "engine exited 0 but shipped nothing / a 404" -- the
+     silent failure a receipt-only check misses (verified 2026-07-18).
+  4. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
+  5. env-truth: the live service should call itself 'production' in production.
 
 Anomaly deduplication:
-  Fingerprint-based, stored in a small watchdog_state table so a persistent
-  anomaly doesn't spam Slack every hour. Only NEW fingerprints alert.
-  When the underlying anomaly resolves, its fingerprint drops from the
-  active set on the next run.
+  Fingerprint-based in watchdog_state. current_state_json() reads this table for
+  the poller; the GitHub issue is the alert-level dedup.
 """
 from __future__ import annotations
 
