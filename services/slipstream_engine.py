@@ -72,7 +72,8 @@ def _brand_cfg(brand_key: str) -> dict:
 
 def _next_topic(cfg: dict, token: str) -> str:
     """Read the brand's queue via GitHub REST and return the first unchecked topic."""
-    url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['queue_path']}"
+    qrepo = cfg.get("queue_repo", cfg["repo"])
+    url = f"https://api.github.com/repos/{qrepo}/contents/{cfg['queue_path']}"
     r = requests.get(url, headers={"Authorization": f"Bearer {token}",
                                    "Accept": "application/vnd.github+json"}, timeout=30)
     if not r.ok:
@@ -89,7 +90,8 @@ def _checkoff_topic(cfg: dict, topic: str, live_url: str, token: str) -> bool:
     scheduled run never republishes the same topic. Best-effort (returns False
     if the topic is not a queue line, e.g. an on-demand explicit topic)."""
     try:
-        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['queue_path']}"
+        qrepo = cfg.get("queue_repo", cfg["repo"])
+        url = f"https://api.github.com/repos/{qrepo}/contents/{cfg['queue_path']}"
         h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
         r = requests.get(url, headers=h, timeout=30)
         if not r.ok:

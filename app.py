@@ -5364,8 +5364,10 @@ async def run_slipstream_endpoint(
     queue topic is used. Runs synchronously (1-3 min); the caller gets the receipt."""
     validate_key(authorization)
     from services.slipstream_engine import run_brand
-    topic = (payload or {}).get("topic")
-    result = await asyncio.to_thread(run_brand, brand_key, topic=topic)
+    payload = payload or {}
+    topic = payload.get("topic")
+    auto_merge = payload.get("auto_merge", True)
+    result = await asyncio.to_thread(run_brand, brand_key, topic=topic, auto_merge=auto_merge)
     return JSONResponse(content=result)
 
 
