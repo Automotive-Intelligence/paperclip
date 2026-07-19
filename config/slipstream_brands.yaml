@@ -18,8 +18,9 @@ brands:
     blog_dir: src/content/blog
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
-    money_pages: ["/book", "/services"]
-    queue_path: automation/content-queue.md
+    money_pages: ["/discovery", "/how-it-works", "/contact"]
+    queue_repo: salesdroid/avo-telemetry
+    queue_path: scripts/blog_queues/aipg_topics.md
   agentempire:
     repo: salesdroid/buildagentempire
     domain: buildagentempire.com
@@ -27,5 +28,6 @@ brands:
     blog_dir: src/content/blog
     business_key: agentempire
     voice: "builder field-notes, honest, ledger-only numbers, no income claims"
-    money_pages: ["/build", "/blog"]
-    queue_path: automation/content-queue.md
+    money_pages: ["/10-agents", "/blog"]
+    queue_repo: salesdroid/avo-telemetry
+    queue_path: scripts/blog_queues/bae_topics.md
