@@ -12,10 +12,17 @@ from typing import Any, Dict, List, Tuple
 from services.slipstream_validate import validate_post
 
 
+def _quote(s: str) -> str:
+    """Double-quote a YAML scalar, escaping backslashes and quotes. Required
+    because titles/descriptions contain colons ('Signal vs. Noise: How...') which
+    are invalid unquoted YAML and crash the frontmatter parse (build failure)."""
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _fm_value(v: Any) -> str:
     if isinstance(v, list):
-        return "[" + ", ".join(str(x) for x in v) + "]"
-    return str(v)
+        return "[" + ", ".join(_quote(x) for x in v) + "]"
+    return _quote(v)
 
 
 def assemble_mdx(post: Dict[str, Any], date_str: str) -> Tuple[str, List[str]]:
