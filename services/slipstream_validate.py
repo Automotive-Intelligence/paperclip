@@ -49,6 +49,15 @@ def validate_post(mdx: str) -> List[str]:
     if re.search(r"<ConsoleDiagram[^>]*steps=\{\[", body):
         violations.append("ConsoleDiagram steps is an array literal (crashes the build); use a pipe string")
 
+    # 4b. Paired components must be CLOSED. An opened-but-unclosed <AnswerFirst> etc.
+    #     is a JSX parse error that crashes the Vercel build (caught 2026-07-19).
+    for comp in ("AnswerFirst", "PullQuote", "Callout"):
+        opens = len(re.findall(rf"<{comp}\b[^>]*>", body))
+        selfclosed = len(re.findall(rf"<{comp}\b[^>]*/>", body))
+        closes = len(re.findall(rf"</{comp}>", body))
+        if (opens - selfclosed) != closes:
+            violations.append(f"unbalanced <{comp}> tags (opened but not closed; breaks the build)")
+
     # 5. Visual system: a hero image in frontmatter + >=2 in-body images.
     if not re.search(r"^heroImage\s*:\s*\S+", fm, re.M):
         violations.append("missing heroImage in frontmatter (zero-image = auto-HOLD)")
