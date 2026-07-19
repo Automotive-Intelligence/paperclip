@@ -84,6 +84,33 @@ def _next_topic(cfg: dict, token: str) -> str:
     return m.group(1).strip()
 
 
+def _checkoff_topic(cfg: dict, topic: str, live_url: str, token: str) -> bool:
+    """Mark '- [ ] {topic}' as '- [x] {topic} -> {live_url}' in the queue so a
+    scheduled run never republishes the same topic. Best-effort (returns False
+    if the topic is not a queue line, e.g. an on-demand explicit topic)."""
+    try:
+        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['queue_path']}"
+        h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+        r = requests.get(url, headers=h, timeout=30)
+        if not r.ok:
+            return False
+        data = r.json()
+        text = base64.b64decode(data["content"]).decode("utf-8")
+        pattern = re.compile(r"^- \[ \]\s*" + re.escape(topic) + r".*$", re.M)
+        if not pattern.search(text):
+            return False
+        new_text = pattern.sub(f"- [x] {topic} → {live_url}", text, count=1)
+        requests.put(url, headers=h, timeout=30, json={
+            "message": f"content-queue: mark shipped ({topic[:50]})",
+            "content": base64.b64encode(new_text.encode("utf-8")).decode("ascii"),
+            "sha": data["sha"],
+        })
+        return True
+    except Exception as e:
+        logger.warning("[slipstream] queue check-off failed (non-fatal): %s", e)
+        return False
+
+
 def _social_md(post: Dict[str, Any]) -> str:
     s = post.get("social") or {}
     return (f"# Social pack: {post['title']}\n\n## LinkedIn\n\n{s.get('linkedin','')}\n\n"
@@ -161,6 +188,7 @@ def run_brand(
     domain = cfg.get("domain", "")
     live_url = f"https://{domain}/blog/{slug}" if domain else pr_url
     result["live_url"] = live_url
+    result["topic_checked_off"] = _checkoff_topic(cfg, topic, live_url, token)
     result["social"] = _distribute_social(cfg, post, slug, live_url)
     logger.info("[slipstream] %s PUBLISHED LIVE %s", brand_key, live_url)
     return result

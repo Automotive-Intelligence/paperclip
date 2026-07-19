@@ -61,7 +61,8 @@ def test_auto_merge_publishes_and_distributes():
     ps = _patch_all([])
     with ps[0], ps[1], ps[2], ps[3], ps[4], \
          mock.patch.object(se, "merge_when_green", return_value={"merged": True, "pr_url": "https://gh/pull/1"}) as mw, \
-         mock.patch.object(se, "_distribute_social", return_value={"ok": True}) as ds:
+         mock.patch.object(se, "_distribute_social", return_value={"ok": True}) as ds, \
+         mock.patch.object(se, "_checkoff_topic", return_value=True):
         out = se.run_brand("autointelligence", topic="t", token="tok", date_str="2026-07-19")
     assert out["published"] is True
     assert out["live_url"] == "https://automotiveintelligence.io/blog/my-post"
@@ -73,7 +74,8 @@ def test_red_build_holds_pr_no_social():
     ps = _patch_all([])
     with ps[0], ps[1], ps[2], ps[3], ps[4], \
          mock.patch.object(se, "merge_when_green", return_value={"merged": False, "reason": "vercel build failure"}), \
-         mock.patch.object(se, "_distribute_social") as ds:
+         mock.patch.object(se, "_distribute_social") as ds, \
+         mock.patch.object(se, "_checkoff_topic", return_value=False):
         out = se.run_brand("autointelligence", topic="t", token="tok", date_str="2026-07-19")
     assert out["published"] is False
     assert "held" in out["note"].lower()
