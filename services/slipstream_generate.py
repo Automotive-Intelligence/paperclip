@@ -51,8 +51,14 @@ def _llm_json(system: str, user: str) -> Dict[str, Any]:
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
         text = m.group(1)
+    # Parse the FIRST complete JSON object; models often append trailing prose
+    # after it, which json.loads() rejects with "Extra data".
+    start = text.find("{")
+    if start < 0:
+        raise GenerationError("no JSON object in LLM response")
     try:
-        return json.loads(text)
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        return obj
     except json.JSONDecodeError as e:
         raise GenerationError(f"model did not return valid JSON: {e}")
 
