@@ -82,3 +82,12 @@ def test_unclosed_answerfirst_flagged():
         "Map the handoffs first.<AnswerFirst>")
     v = validate_post(bad)
     assert any("answerfirst" in x.lower() and ("unbalanced" in x.lower() or "closed" in x.lower()) for x in v)
+
+
+def test_unclosed_entitydefinition_flagged():
+    # the BAE 2026-07-19 build-breaker: <EntityDefinition ...> opened, never closed
+    bad = GOOD.replace(
+        '<EntityDefinition term="Orchestration">The layer that routes a customer between systems without dropping context.</EntityDefinition>',
+        '<EntityDefinition term="Orchestration">The layer that routes a customer.')
+    v = validate_post(bad)
+    assert any("entitydefinition" in x.lower() and "unbalanced" in x.lower() for x in v)

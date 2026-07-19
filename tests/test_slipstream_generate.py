@@ -87,3 +87,19 @@ def test_llm_json_ignores_trailing_prose(monkeypatch):
     with mock.patch.object(sg.requests, "post", return_value=_Resp()):
         out = sg._llm_json("s", "u")
     assert out == {"ok": 1, "a": "b"}
+
+
+def test_llm_json_none_content_raises(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+
+    class _Resp:
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": None}, "finish_reason": "content_filter"}]}
+
+    with mock.patch.object(sg.requests, "post", return_value=_Resp()):
+        try:
+            sg._llm_json("s", "u")
+            assert False, "expected GenerationError on None content"
+        except sg.GenerationError as e:
+            assert "empty" in str(e).lower()
