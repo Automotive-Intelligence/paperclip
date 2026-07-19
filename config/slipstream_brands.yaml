@@ -9,6 +9,7 @@ brands:
     blog_dir: src/content/blog
     business_key: autointelligence
     voice: "restrained, diagnostic, anti-hype, operator-grounded"
+    components: ["AnswerFirst", "EntityDefinition", "Callout", "ConsoleDiagram", "PullQuote", "KeyTakeaway", "StatRow"]
     money_pages: ["/ai-reality-check", "/diagnostic-call", "/lead-intelligence", "/services"]
     queue_path: automation/content-queue.md
   aiphoneguy:
@@ -18,6 +19,7 @@ brands:
     blog_dir: src/content/blog
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
+    components: ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote", "KeyTakeaway", "StatRow"]
     money_pages: ["/discovery", "/how-it-works", "/contact"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/aipg_topics.md
@@ -28,6 +30,7 @@ brands:
     blog_dir: src/content/blog
     business_key: agentempire
     voice: "builder field-notes, honest, ledger-only numbers, no income claims"
+    components: ["AnswerFirst", "EntityDefinition", "Callout", "ConsoleDiagram", "PullQuote", "KeyTakeaway", "StatRow", "HeroBanner"]
     money_pages: ["/10-agents", "/blog"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bae_topics.md
