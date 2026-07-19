@@ -5311,6 +5311,27 @@ async def blog_image_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/social-load")
+async def social_load_endpoint(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    """Distribute a Slipstream social pack for the web-based blog routine, which
+    cannot hold ZERNIO_API_KEY (paperclip does). Runs the ONE loader
+    (tools/social_load): UTM tagging, queue-guard, attribution registry, Zernio
+    scheduling. Body: {jobs:[{brand,platform,content,scheduled_for,content_id,
+    entry_point,media_urls?,account_id?}], allow_stack?}. Never 500s."""
+    validate_routine_or_key(authorization)
+    from services.social_load_service import run_social_load
+    result = await asyncio.to_thread(
+        run_social_load,
+        payload.get("jobs") or [],
+        commit=True,
+        allow_stack=bool(payload.get("allow_stack")),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/cmo-daily-email-now")
 async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     """Send the CMO Daily email immediately. Mirrors the 7:00 AM CT scheduler
