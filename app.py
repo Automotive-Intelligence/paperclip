@@ -5276,6 +5276,29 @@ async def run_watchdog_now(authorization: Optional[str] = Header(None)):
     return JSONResponse(content=result)
 
 
+@app.post("/admin/blog-image")
+async def blog_image_endpoint(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    """Generate on-brand blog image(s) via fal for the web-based Slipstream
+    routine, which cannot hold FAL_KEY (paperclip does). Returns fal image
+    URL(s) the routine downloads and commits into the brand repo's public/blog
+    dir, so cloud posts are image-rich (Slipstream: hero + in-body, zero-image
+    = auto-HOLD). Never 500s; a fal error comes back as {ok:false,error}."""
+    validate_key(authorization)
+    from services.blog_image import blog_image
+    result = await asyncio.to_thread(
+        blog_image,
+        (payload.get("prompt") or ""),
+        business_key=(payload.get("business_key") or ""),
+        aspect_ratio=(payload.get("aspect_ratio") or ""),
+        pro=bool(payload.get("pro")),
+        reference_image_urls=payload.get("reference_image_urls"),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/cmo-daily-email-now")
 async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     """Send the CMO Daily email immediately. Mirrors the 7:00 AM CT scheduler
