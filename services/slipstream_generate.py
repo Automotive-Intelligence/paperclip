@@ -88,6 +88,8 @@ def _llm_json(system: str, user: str, *, retries: int = 2) -> Dict[str, Any]:
 
 def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
     money = ", ".join(brand_cfg.get("money_pages") or [])
+    comps = brand_cfg.get("components") or ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote"]
+    comps_str = ", ".join(comps)
     return (
         "You write ONE agency-standard, AEO-maximized blog post for a brand, and return "
         "ONLY a JSON object (no prose, no fence). Brand voice: "
@@ -100,7 +102,8 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         "- EVERY component you open must be closed: <PullQuote>text</PullQuote>, <Callout>text</Callout>. "
         "<EntityDefinition term=\"X\">definition text</EntityDefinition> (with children, not self-closing). "
         "<ConsoleDiagram steps=\"A | B | C\" /> is the only self-closing one.\n"
-        "- Section headings use EXACTLY two hashes: ## Question-shaped heading. Never ### or ####.\n\n"
+        "- Section headings use EXACTLY two hashes: ## Question-shaped heading. Never ### or ####.\n"
+        f"- Use ONLY these components, they are the only ones this repo defines: {comps_str}. NEVER use a component not in that list (it crashes the build). Keep each component's content on ONE line with no blank line inside it.\n\n"
         "The JSON object must have EXACTLY these keys:\n"
         '- "title": string\n'
         '- "description": string (<=160 chars)\n'
@@ -108,7 +111,7 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         '- "body_mdx": the MDX body (NO frontmatter). It MUST contain, in order: an <AnswerFirst>'
         " 2-4 sentence direct answer as the FIRST element; one <EntityDefinition term=\"...\">"
         " early; at least one <Callout> or <ConsoleDiagram steps=\"A | B | C\" /> (steps is a"
-        " pipe-delimited STRING, never an array); one <PullQuote>; a scannable list or table;"
+        " pipe-delimited STRING, never an array) ONLY IF it is in the available list; one <PullQuote>; at least one <Callout>; a scannable list or table;"
         " question-shaped ## H2 headings each opening with a 1-2 sentence direct answer; "
         f"2-3 internal money-page links ({money}); 1-2 real external authority links. "
         "Reference exactly 2-3 in-body images as <img src=\"/blog/{slug}-{name}.png\" alt=\"...\"/>"
