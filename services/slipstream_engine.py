@@ -18,10 +18,39 @@ from typing import Any, Dict, Optional
 import requests
 import yaml
 
+from datetime import timedelta
+
 from services.slipstream_assemble import assemble_mdx
 from services.slipstream_generate import generate_post
-from services.slipstream_github import publish_post
+from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
+
+
+def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
+    """Best-effort: schedule the social pack via the ONE loader. NEVER fails the
+    post (Zernio limits / not-connected are non-fatal)."""
+    try:
+        from services.social_load_service import run_social_load
+        social = post.get("social") or {}
+        base = datetime.now(timezone.utc) + timedelta(days=1)
+        jobs = []
+        for i, (platform, text) in enumerate((("linkedin", social.get("linkedin")),
+                                               ("x", social.get("x")))):
+            if not text:
+                continue
+            when = (base + timedelta(days=i, hours=i * 4)).strftime("%Y-%m-%dT%H:%M:%S")
+            jobs.append({
+                "brand": cfg["business_key"], "platform": platform,
+                "content": f"{text}\n\n{live_url}", "scheduled_for": when,
+                "content_id": slug, "entry_point": "blog_engine",
+                "media_urls": [f"{live_url.rsplit('/blog/', 1)[0]}/blog/{slug}-hero.png"],
+            })
+        if not jobs:
+            return {"ok": False, "note": "no social drafts"}
+        return run_social_load(jobs, commit=True)
+    except Exception as e:
+        logger.warning("[slipstream] social distribution failed (non-fatal): %s", e)
+        return {"ok": False, "error": str(e)}
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +102,11 @@ def run_brand(
     topic: Optional[str] = None,
     token: Optional[str] = None,
     date_str: Optional[str] = None,
+    auto_merge: bool = True,
 ) -> Dict[str, Any]:
-    """Produce + publish one post (as a PR), or HOLD on any gate violation.
-    Returns a structured receipt (never raises to the caller for expected holds)."""
+    """Produce a post, open a PR, then (if auto_merge) merge it once the Vercel
+    build is green and distribute social. HOLDS on any gate violation or a red
+    build. Returns a structured receipt (never raises for expected holds)."""
     if token is None:
         token = os.getenv("SLIPSTREAM_GH_TOKEN", "").strip()
     if not token:
@@ -114,5 +145,22 @@ def run_brand(
         return {"ok": False, "held": False, "violations": [], "slug": slug,
                 "error": f"publish failed: {type(e).__name__}: {e}"}
 
-    logger.info("[slipstream] %s PUBLISHED PR %s (%d images)", brand_key, pr_url, len(images))
-    return {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
+    logger.info("[slipstream] %s PR opened %s (%d images)", brand_key, pr_url, len(images))
+    result = {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
+
+    if not auto_merge:
+        return {**result, "published": False, "note": "PR opened (auto_merge off)"}
+
+    # Auto-publish, gated on the Vercel preview build. A red build HOLDS the PR.
+    m = merge_when_green(cfg["repo"], pr_url, token)
+    result["published"] = m["merged"]
+    if not m["merged"]:
+        logger.warning("[slipstream] %s NOT merged: %s", brand_key, m.get("reason"))
+        return {**result, "note": f"held for review: {m.get('reason')}"}
+
+    domain = cfg.get("domain", "")
+    live_url = f"https://{domain}/blog/{slug}" if domain else pr_url
+    result["live_url"] = live_url
+    result["social"] = _distribute_social(cfg, post, slug, live_url)
+    logger.info("[slipstream] %s PUBLISHED LIVE %s", brand_key, live_url)
+    return result

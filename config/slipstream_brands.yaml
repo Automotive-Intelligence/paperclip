@@ -4,6 +4,8 @@
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence
+    domain: automotiveintelligence.io
+    enabled: true
     blog_dir: src/content/blog
     business_key: autointelligence
     voice: "restrained, diagnostic, anti-hype, operator-grounded"
@@ -11,6 +13,8 @@ brands:
     queue_path: automation/content-queue.md
   aiphoneguy:
     repo: salesdroid/ai-phone-guy-site
+    domain: theaiphoneguy.com
+    enabled: false
     blog_dir: src/content/blog
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
@@ -18,6 +22,8 @@ brands:
     queue_path: automation/content-queue.md
   agentempire:
     repo: salesdroid/buildagentempire
+    domain: buildagentempire.com
+    enabled: false
     blog_dir: src/content/blog
     business_key: agentempire
     voice: "builder field-notes, honest, ledger-only numbers, no income claims"

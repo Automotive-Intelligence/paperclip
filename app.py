@@ -3126,6 +3126,25 @@ scheduler.add_job(_watchdog_hourly, CronTrigger(minute=0, timezone=CST),
     id="avo_watchdog_hourly", name="AVO Watchdog — Hourly Infra Sweep",
     replace_existing=True, misfire_grace_time=1800)
 
+
+def _run_slipstream_mwf():
+    """Railway Slipstream engine: one full-Slipstream post per ENABLED brand,
+    auto-published on a green Vercel build. Replaces the laptop blog engine,
+    brand by brand (config/slipstream_brands.yaml enabled flag)."""
+    from services.slipstream_engine import run_brand, _load_cfg
+    for brand_key, bcfg in (_load_cfg().get("brands") or {}).items():
+        if not bcfg.get("enabled"):
+            continue
+        try:
+            result = run_brand(brand_key)
+            logging.info("[slipstream] %s: %s", brand_key, result.get("note") or result.get("live_url") or result)
+        except Exception as e:
+            logging.error("[slipstream] %s run failed: %s", brand_key, e)
+
+scheduler.add_job(_run_slipstream_mwf, CronTrigger(day_of_week="mon,wed,fri", hour=14, minute=15, timezone=CST),
+    id="slipstream_engine_mwf", name="Slipstream Blog Engine — MWF (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
