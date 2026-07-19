@@ -24,10 +24,10 @@ def test_assemble_produces_valid_mdx_with_frontmatter():
     mdx, violations = assemble_mdx(POST, date_str="2026-07-19")
     assert violations == [], f"unexpected violations: {violations}"
     assert mdx.startswith("---\n")
-    assert "title: What Should a Dealer Map Before Buying AI" in mdx
-    assert "author: Michael Rodriguez" in mdx
-    assert "heroImage: /blog/what-to-map-before-buying-ai-hero.png" in mdx
-    assert "date: 2026-07-19" in mdx
+    assert 'title: "What Should a Dealer Map Before Buying AI"' in mdx
+    assert 'author: "Michael Rodriguez"' in mdx
+    assert 'heroImage: "/blog/what-to-map-before-buying-ai-hero.png"' in mdx
+    assert 'date: "2026-07-19"' in mdx
     assert "<AnswerFirst>" in mdx
 
 
@@ -39,4 +39,13 @@ def test_assemble_surfaces_gate_violations():
 
 def test_assemble_hero_image_path_matches_slug():
     mdx, _ = assemble_mdx(POST, date_str="2026-07-19")
-    assert "/blog/what-to-map-before-buying-ai-hero.png" in mdx
+    assert "/blog/what-to-map-before-buying-ai-hero.png" in mdx  # path present
+
+
+def test_colon_in_title_produces_valid_yaml():
+    import yaml
+    post = dict(POST, title="Signal vs. Noise: How to Tell if AI Works")
+    mdx, violations = assemble_mdx(post, date_str="2026-07-19")
+    fm = mdx.split("---", 2)[1]
+    loaded = yaml.safe_load(fm)  # must not raise (the real build-breaker)
+    assert loaded["title"] == "Signal vs. Noise: How to Tell if AI Works"
