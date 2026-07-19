@@ -13,6 +13,8 @@ import os
 import re
 from typing import Any, Dict
 
+import logging
+
 import requests
 
 # Route through OpenRouter (same provider paperclip's agents use, and the one
@@ -24,11 +26,14 @@ _MAX_TOKENS = 8000
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
 
 
+logger = logging.getLogger(__name__)
+
+
 class GenerationError(Exception):
     pass
 
 
-def _llm_json(system: str, user: str) -> Dict[str, Any]:
+def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
     """Call the LLM (OpenRouter, OpenAI-compatible) and parse a single JSON
     object from its text response. Tolerates a ```json ... ``` fence."""
     key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
@@ -40,6 +45,7 @@ def _llm_json(system: str, user: str) -> Dict[str, Any]:
         json={
             "model": _MODEL,
             "max_tokens": _MAX_TOKENS,
+            "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
         },
@@ -65,6 +71,19 @@ def _llm_json(system: str, user: str) -> Dict[str, Any]:
         return obj
     except json.JSONDecodeError as e:
         raise GenerationError(f"model did not return valid JSON: {e}")
+
+
+def _llm_json(system: str, user: str, *, retries: int = 2) -> Dict[str, Any]:
+    """Retry the LLM call on transient errors / malformed JSON (models
+    occasionally return finish_reason=error or a JSON syntax slip)."""
+    last: Exception = GenerationError("no attempt")
+    for attempt in range(retries + 1):
+        try:
+            return _llm_json_once(system, user)
+        except GenerationError as e:
+            last = e
+            logger.warning("[slipstream] LLM attempt %d/%d failed: %s", attempt + 1, retries + 1, e)
+    raise last
 
 
 def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
