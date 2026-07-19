@@ -230,6 +230,34 @@ def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+def _revenue_summary(days: int) -> dict:
+    from tools.revenue_tracker import get_revenue_summary
+    return get_revenue_summary(days=days) or {}
+
+
+def _check_emails_sent(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """The standing silent failure: the agent send rail shows emails_sent=0 for
+    30 days while the pipeline fills. Alert only when a real pipeline exists, so
+    an empty book never cries wolf.
+    """
+    if cfg is None:
+        from config.watchdog_config import load_watchdog_config
+        cfg = load_watchdog_config()
+    es = cfg.get("emails_sent") or {}
+    days = int(es.get("window_days", 7))
+    floor = int(es.get("min_prospects_for_alert", 25))
+    summ = _revenue_summary(days)
+    if summ.get("error"):
+        return []
+    prospects = int(summ.get("prospects_created") or summ.get("total_prospects") or 0)
+    if int(summ.get("emails_sent") or 0) == 0 and prospects > floor:
+        return [Anomaly(
+            "emails-sent-zero",
+            f"emails_sent is 0 over {days}d while {prospects} prospects were created "
+            f"-- the agent send rail may be dead.", "warn")]
+    return []
+
+
 def _all_anomalies() -> List[Anomaly]:
     """Composite check. Add more callables here as coverage expands."""
     out: List[Anomaly] = []
