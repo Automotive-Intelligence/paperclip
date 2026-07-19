@@ -47,7 +47,11 @@ def _llm_json(system: str, user: str) -> Dict[str, Any]:
     )
     if not r.ok:
         raise GenerationError(f"LLM {r.status_code}: {r.text[:300]}")
-    text = r.json()["choices"][0]["message"]["content"].strip()
+    j = r.json()
+    choice = (j.get("choices") or [{}])[0]
+    text = ((choice.get("message") or {}).get("content") or "").strip()
+    if not text:
+        raise GenerationError(f"empty LLM response (finish_reason={choice.get('finish_reason')})")
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
         text = m.group(1)

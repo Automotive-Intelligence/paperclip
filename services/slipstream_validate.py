@@ -51,7 +51,7 @@ def validate_post(mdx: str) -> List[str]:
 
     # 4b. Paired components must be CLOSED. An opened-but-unclosed <AnswerFirst> etc.
     #     is a JSX parse error that crashes the Vercel build (caught 2026-07-19).
-    for comp in ("AnswerFirst", "PullQuote", "Callout"):
+    for comp in ("AnswerFirst", "PullQuote", "Callout", "EntityDefinition"):
         opens = len(re.findall(rf"<{comp}\b[^>]*>", body))
         selfclosed = len(re.findall(rf"<{comp}\b[^>]*/>", body))
         closes = len(re.findall(rf"</{comp}>", body))
