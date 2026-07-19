@@ -1,7 +1,7 @@
 """services/slipstream_generate.py -- deterministic content generation for the
 Railway Slipstream engine.
 
-ONE Anthropic Messages API call returns the post as structured JSON (frontmatter
+ONE LLM call (via OpenRouter) returns the post as structured JSON (frontmatter
 fields + MDX body + image prompts + social drafts). No agentic loop: a single,
 observable, testable call. The assembled MDX is checked by
 services/slipstream_validate.validate_post before anything publishes.
@@ -9,10 +9,16 @@ services/slipstream_validate.validate_post before anything publishes.
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, Dict
 
-_MODEL = "claude-sonnet-5"
+import requests
+
+# Route through OpenRouter (same provider paperclip's agents use, and the one
+# with credit) rather than the raw Anthropic API. Model is env-overridable.
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_MODEL = os.getenv("SLIPSTREAM_MODEL", "google/gemini-2.5-flash")
 _MAX_TOKENS = 8000
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
@@ -22,21 +28,26 @@ class GenerationError(Exception):
     pass
 
 
-def _client():
-    from anthropic import Anthropic
-    return Anthropic()
-
-
-def _anthropic_json(system: str, user: str) -> Dict[str, Any]:
-    """Call the model and parse a single JSON object from its text response.
-    Tolerates a ```json ... ``` fence."""
-    resp = _client().messages.create(
-        model=_MODEL,
-        max_tokens=_MAX_TOKENS,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+def _llm_json(system: str, user: str) -> Dict[str, Any]:
+    """Call the LLM (OpenRouter, OpenAI-compatible) and parse a single JSON
+    object from its text response. Tolerates a ```json ... ``` fence."""
+    key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    if not key:
+        raise GenerationError("OPENROUTER_API_KEY missing")
+    r = requests.post(
+        _OPENROUTER_URL,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={
+            "model": _MODEL,
+            "max_tokens": _MAX_TOKENS,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+        },
+        timeout=180,
     )
-    text = resp.content[0].text.strip()
+    if not r.ok:
+        raise GenerationError(f"LLM {r.status_code}: {r.text[:300]}")
+    text = r.json()["choices"][0]["message"]["content"].strip()
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
         text = m.group(1)
@@ -76,7 +87,7 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     """Generate one structured post for `topic`. Raises GenerationError on a
     malformed result. The MDX is assembled + gated downstream."""
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    post = _anthropic_json(_system_prompt(brand_cfg), user)
+    post = _llm_json(_system_prompt(brand_cfg), user)
 
     for field in _REQUIRED_FIELDS:
         if field not in post:
