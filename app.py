@@ -4399,6 +4399,18 @@ def validate_key(authorization: Optional[str] = Header(None)):
     return True
 
 
+def validate_routine_or_key(authorization: Optional[str] = Header(None)):
+    """Auth for the web-based Slipstream routine endpoints (blog-image + social
+    publish). Accepts the master API key OR the scoped SLIPSTREAM_ROUTINE_TOKEN,
+    which the cloud routines carry (they cannot hold API_KEYS). Least privilege:
+    the scoped token only works on endpoints that call THIS helper, never on the
+    endpoints gated by validate_key."""
+    from services.routine_auth import routine_token_valid
+    if routine_token_valid(authorization, os.getenv("SLIPSTREAM_ROUTINE_TOKEN", "")):
+        return True
+    return validate_key(authorization)
+
+
 def get_agent_business(agent_id: str) -> str:
     for biz_key, biz in BUSINESSES.items():
         if agent_id in biz["agents"]:
@@ -4788,7 +4800,7 @@ async def publish_content_to_zernio_endpoint(
 ):
     """Publish queued social content via Zernio to 14+ platforms (Twitter/X, Instagram, Facebook, LinkedIn, TikTok, YouTube, etc.)"""
     logging.info(f"[Zernio] Endpoint called for business_key={business_key}, limit={limit}")
-    validate_key(authorization)
+    validate_routine_or_key(authorization)
     
     if not zernio_ready():
         raise HTTPException(
@@ -5286,7 +5298,7 @@ async def blog_image_endpoint(
     URL(s) the routine downloads and commits into the brand repo's public/blog
     dir, so cloud posts are image-rich (Slipstream: hero + in-body, zero-image
     = auto-HOLD). Never 500s; a fal error comes back as {ok:false,error}."""
-    validate_key(authorization)
+    validate_routine_or_key(authorization)
     from services.blog_image import blog_image
     result = await asyncio.to_thread(
         blog_image,
