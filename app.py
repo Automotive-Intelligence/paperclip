@@ -5332,6 +5332,24 @@ async def social_load_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-slipstream/{brand_key}")
+async def run_slipstream_endpoint(
+    brand_key: str,
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the Railway Slipstream engine for ONE brand on demand: produce a
+    full-Slipstream post + images and open a PR, or HOLD on a gate. Fully
+    observable in railway logs (this is the reliability win over cloud routines).
+    Body optional: {"topic": "..."} to force a topic; otherwise the next unchecked
+    queue topic is used. Runs synchronously (1-3 min); the caller gets the receipt."""
+    validate_key(authorization)
+    from services.slipstream_engine import run_brand
+    topic = (payload or {}).get("topic")
+    result = await asyncio.to_thread(run_brand, brand_key, topic=topic)
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/cmo-daily-email-now")
 async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     """Send the CMO Daily email immediately. Mirrors the 7:00 AM CT scheduler
