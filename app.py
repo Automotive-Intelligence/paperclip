@@ -6163,8 +6163,13 @@ async def instantly_webhook(payload: dict, request: Request):
     Auth: shared secret in X-Instantly-Secret header (env INSTANTLY_WEBHOOK_SECRET).
     Dedup: skips if the contact already has an opp in the pipeline.
     """
+    # Instantly's webhook cannot send custom headers, so it authenticates via a
+    # ?token=<secret> query param on the registered URL (matches this codebase's
+    # other path-secret webhooks). Header still accepted for backward compat.
     secret = os.getenv("INSTANTLY_WEBHOOK_SECRET", "").strip()
-    sent = (request.headers.get("X-Instantly-Secret") or "").strip()
+    sent = (request.headers.get("X-Instantly-Secret")
+            or request.query_params.get("token")
+            or "").strip()
     if secret and sent != secret:
         logging.warning("[instantly_webhook] auth failed")
         return JSONResponse(status_code=401, content={"status": "unauthorized"})
@@ -6181,7 +6186,8 @@ async def instantly_webhook(payload: dict, request: Request):
     # (_BRAND_TO_TWENTY_KEY["aipg"] is None); every other brand routes to its
     # own Twenty workspace via the intent_inbound shim below.
     _CAMPAIGN_TO_BRAND = {
-        "c557a7d5-f4a2-441b-86ed-fc721284d862": "avi",   # AvI Dealer Outreach #1
+        "c557a7d5-f4a2-441b-86ed-fc721284d862": "avi",    # AvI Dealer Outreach #1
+        "e1698ca4-a994-4384-9d8a-8b72ba8ce58b": "bookd",  # Book'd ICP-A young producers
     }
     _campaign_id = str(payload.get("campaign_id") or payload.get("campaign") or "").strip()
     _brand = _CAMPAIGN_TO_BRAND.get(_campaign_id) or (payload.get("brand") or "aipg").strip().lower()
