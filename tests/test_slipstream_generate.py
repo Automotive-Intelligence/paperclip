@@ -73,3 +73,17 @@ def test_llm_json_extracts_json_from_openrouter(monkeypatch):
     with mock.patch.object(sg.requests, "post", return_value=_Resp()):
         out = sg._llm_json("system", "user")
     assert out == {"ok": 1}
+
+
+def test_llm_json_ignores_trailing_prose(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+
+    class _Resp:
+        ok = True
+        def json(self):
+            # a valid JSON object followed by trailing prose (the real 07-19 failure)
+            return {"choices": [{"message": {"content": '{"ok": 1, "a": "b"}\n\nHope this helps!'}}]}
+
+    with mock.patch.object(sg.requests, "post", return_value=_Resp()):
+        out = sg._llm_json("s", "u")
+    assert out == {"ok": 1, "a": "b"}
