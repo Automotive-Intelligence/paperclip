@@ -33,7 +33,7 @@ def _brand_cfg():
 
 
 def test_generate_post_parses_structured_output():
-    with mock.patch.object(sg, "_anthropic_json", return_value=VALID_PAYLOAD):
+    with mock.patch.object(sg, "_llm_json", return_value=VALID_PAYLOAD):
         post = sg.generate_post(_brand_cfg(), topic="What to map before buying AI")
     assert post["slug"] == "what-to-map-before-buying-ai"
     assert post["title"].startswith("What Should a Dealer")
@@ -44,7 +44,7 @@ def test_generate_post_parses_structured_output():
 
 def test_generate_post_requires_hero_image_prompt():
     bad = dict(VALID_PAYLOAD, image_prompts=[{"name": "gap", "prompt": "x"}])
-    with mock.patch.object(sg, "_anthropic_json", return_value=bad):
+    with mock.patch.object(sg, "_llm_json", return_value=bad):
         try:
             sg.generate_post(_brand_cfg(), topic="t")
             assert False, "expected a hero-missing error"
@@ -54,7 +54,7 @@ def test_generate_post_requires_hero_image_prompt():
 
 def test_generate_post_missing_field_raises():
     bad = {k: v for k, v in VALID_PAYLOAD.items() if k != "body_mdx"}
-    with mock.patch.object(sg, "_anthropic_json", return_value=bad):
+    with mock.patch.object(sg, "_llm_json", return_value=bad):
         try:
             sg.generate_post(_brand_cfg(), topic="t")
             assert False, "expected a missing-field error"
@@ -62,10 +62,14 @@ def test_generate_post_missing_field_raises():
             assert "body_mdx" in str(e).lower()
 
 
-def test_anthropic_json_extracts_json_from_response():
-    # _anthropic_json should call the client and json-parse the text block.
-    fake_client = mock.Mock()
-    fake_client.messages.create.return_value = _fake_anthropic_response({"ok": 1})
-    with mock.patch.object(sg, "_client", return_value=fake_client):
-        out = sg._anthropic_json("system", "user")
+def test_llm_json_extracts_json_from_openrouter(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+
+    class _Resp:
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": '```json\n{"ok": 1}\n```'}}]}
+
+    with mock.patch.object(sg.requests, "post", return_value=_Resp()):
+        out = sg._llm_json("system", "user")
     assert out == {"ok": 1}
