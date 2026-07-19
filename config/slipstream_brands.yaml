@@ -15,7 +15,7 @@ brands:
   aiphoneguy:
     repo: salesdroid/ai-phone-guy-site
     domain: theaiphoneguy.com
-    enabled: false
+    enabled: true
     blog_dir: src/content/blog
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
@@ -26,7 +26,7 @@ brands:
   agentempire:
     repo: salesdroid/buildagentempire
     domain: buildagentempire.com
-    enabled: false
+    enabled: true
     blog_dir: src/content/blog
     business_key: agentempire
     voice: "builder field-notes, honest, ledger-only numbers, no income claims"
