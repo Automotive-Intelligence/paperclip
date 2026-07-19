@@ -101,10 +101,14 @@ def verify_path_secret(secret_from_url: str) -> bool:
 
 # ---------- Event-type handlers ----------
 
-# Smartlead webhook event types we suppress on (any of these = do-not-contact)
-SUPPRESS_EVENTS = {"lead_unsubscribed", "lead_bounced"}
-# lead_replied is logged but does NOT suppress — replies are a SIGNAL, not opt-out
-LOG_EVENTS = {"lead_replied"}
+# Smartlead webhook event types we suppress on (any of these = do-not-contact).
+# VERIFIED against Smartlead's live API 2026-07-19: the real event strings are
+# EMAIL_REPLY / EMAIL_BOUNCE / LEAD_UNSUBSCRIBED (lowercased below). The old
+# names (lead_replied / lead_bounced) never matched, so replies + bounces
+# silently hit the unknown-event branch. Keep both spellings for safety.
+SUPPRESS_EVENTS = {"lead_unsubscribed", "email_bounce", "lead_bounced"}
+# reply is logged + alerts, but does NOT suppress — a reply is a SIGNAL, not opt-out
+LOG_EVENTS = {"email_reply", "lead_replied"}
 
 
 def _suppress_in_twenty(email: str, reason: str) -> str:
