@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from typing import Any, Callable, Dict, Union
 
 import requests
@@ -70,3 +71,33 @@ def publish_post(
     pr = http("POST", f"{repo_api}/pulls", token,
               {"title": pr_title, "head": branch, "base": base, "body": pr_body})
     return pr["html_url"]
+
+
+def merge_when_green(
+    repo: str,
+    pr_url: str,
+    token: str,
+    *,
+    timeout_polls: int = 40,
+    poll_sleep: float = 15.0,
+    http: Callable = _default_http,
+    sleep: Callable = time.sleep,
+) -> Dict[str, Any]:
+    """Poll the PR's Vercel build check; squash-merge on success, HOLD on failure
+    or timeout. This is auto-publish gated on the build-gate, so a broken post is
+    never merged to main."""
+    pr_num = int(pr_url.rstrip("/").split("/")[-1])
+    repo_api = f"{_API}/{repo}"
+    sha = http("GET", f"{repo_api}/pulls/{pr_num}", token)["head"]["sha"]
+    for _ in range(timeout_polls):
+        runs = http("GET", f"{repo_api}/commits/{sha}/check-runs", token).get("check_runs", [])
+        vercel = [r for r in runs if r.get("name") == "Vercel"]
+        if vercel:
+            concl = vercel[0].get("conclusion")
+            if concl == "success":
+                http("PUT", f"{repo_api}/pulls/{pr_num}/merge", token, {"merge_method": "squash"})
+                return {"merged": True, "pr_url": pr_url}
+            if concl in ("failure", "cancelled", "timed_out", "action_required", "startup_failure"):
+                return {"merged": False, "reason": f"vercel build {concl}", "pr_url": pr_url}
+        sleep(poll_sleep)
+    return {"merged": False, "reason": "vercel build timeout (still pending)", "pr_url": pr_url}
