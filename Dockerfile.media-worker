@@ -1,0 +1,38 @@
+# Dockerfile.media-worker
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg git build-essential cmake ca-certificates fonts-dejavu-core curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# whisper.cpp (pinned to match the Mac that produced the working .words JSON: 1.9.1)
+# -> whisper-cli on PATH. The whisper-cli cmake target exists at this tag (it did
+# NOT at v1.7.2, where the CLI example was still named "main").
+ARG WHISPER_REF=v1.9.1
+RUN git clone --depth 1 --branch ${WHISPER_REF} https://github.com/ggerganov/whisper.cpp /tmp/whisper \
+    && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    && cmake --build /tmp/whisper/build --target whisper-cli -j"$(nproc)" \
+    && CLI="$(find /tmp/whisper/build -type f -name whisper-cli | head -1)" \
+    && test -n "$CLI" \
+    && cp "$CLI" /usr/local/bin/whisper-cli \
+    && chmod +x /usr/local/bin/whisper-cli \
+    && rm -rf /tmp/whisper
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir Pillow requests
+
+# fonts (bundled) + the pipeline scripts + the worker package
+COPY assets/fonts/ /opt/media/fonts/
+COPY scripts/ /app/scripts/
+COPY tools/ /app/tools/
+COPY services/ /app/services/
+
+ENV FONTS_DIR=/opt/media/fonts \
+    WHISPER_MODEL=/opt/media/cache/whisper/ggml-small.en.bin \
+    STOCK_LIB=/opt/media/cache/stock_library \
+    BRAND_ASSETS=/opt/media/cache/brand_assets \
+    RENDERS_OUT=/opt/media/out
+
+RUN python -c "import PIL; print('pillow', PIL.__version__)"
+CMD ["python", "tools/media_worker/smoke.py"]

@@ -25,6 +25,14 @@ from zoneinfo import ZoneInfo
 
 _URL_RE = re.compile(r"https?://[^\s\)\]\}>\"']+")
 _CENTRAL = ZoneInfo("America/Chicago")
+_TCO_LEN = 23  # Twitter wraps every URL to a fixed-width t.co link
+
+
+def tweet_length(text: str) -> int:
+    """Twitter weighted length for English brand copy: each URL counts as 23
+    (t.co), so UTM params do not lengthen the tweet. Code-point length is exact
+    for Latin copy; CJK weighting is not needed for our brands."""
+    return len(_URL_RE.sub("x" * _TCO_LEN, text))
 
 
 # ---------------------------------------------------------------- UTM
@@ -206,6 +214,11 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
 
         content = tag_links(job.content, job.platform, brand, job.content_id,
                             job.entry_point, str(i))
+        tlen = tweet_length(content)
+        if job.platform == "twitter" and tlen > 280:
+            results.append({"job": job, "action": "too_long",
+                            "detail": f"twitter post is {tlen} chars (>280) after UTM tagging"})
+            continue
         day = job.scheduled_for.split("T")[0]
 
         if rail == "zernio":
@@ -283,7 +296,7 @@ def main() -> int:
     for res in results:
         j = res["job"]
         print(f"{j.brand:16} {j.platform:10} {res['action']:9} {res.get('detail')}")
-        if res["action"] in ("error", "conflict"):
+        if res["action"] in ("error", "conflict", "too_long"):
             bad += 1
     if not args.commit:
         print("DRY-RUN complete. Re-run with --commit to schedule.")

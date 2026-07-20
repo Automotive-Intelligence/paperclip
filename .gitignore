@@ -74,3 +74,6 @@ scripts/outputs/*_backup_*.json
 
 # Large local AV / brand-film working assets (270MB+ media, not for git)
 Avo/
+
+# media_worker package tests must be tracked despite the repo-wide test_*.py ignore
+!tests/media_worker/test_*.py
