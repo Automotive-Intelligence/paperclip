@@ -1,0 +1,48 @@
+# Studio weekly SOCIAL engine brand config (the cloud port of studio_weekly_prep).
+# Adding/adjusting a brand = a config edit, not a code change (mirrors
+# config/slipstream_brands.yaml). The engine produces next week's posts, gates
+# them (Iris visual / Scrutineer copy / Conversion), and schedules the gap-fill
+# via tools/social_load into each platform's file-103 native-peak window.
+#
+# enabled: false keeps a brand OUT of an engine run entirely (not connected /
+# held). Connectivity is ALSO re-checked live against Zernio at run time (the
+# live check overrides this file, same as the laptop engine's STEP 2); a brand
+# with no live account for a platform is skipped for that platform, never forced.
+#
+# business_key = the fal image key (NOT the display name); zernio_profile = the
+# Zernio profile display name (WD posts through the legacy Calling Digital
+# profile). platforms = the platforms to PRODUCE for; the live account set still
+# gates what actually schedules.
+brands:
+  automotive_intelligence:
+    display_name: "Automotive Intelligence"
+    business_key: autointelligence
+    zernio_profile: "Automotive Intelligence"
+    enabled: true
+    posts_per_run: 3
+    platforms: ["linkedin", "x", "facebook", "instagram"]
+    voice: "restrained, diagnostic, anti-hype, operator-grounded; speaks to dealership GMs and dealers"
+    # No Agent-Empire jargon (22 agents / 5 rivers / 3 live CRMs) -- translate to dealer value.
+    themes_note: "dealer AI value: lead response, un-worked equity, vendor-guarantee scrutiny, time saved. No OEM vehicle hero shots (recognizable-OEM = hard fail); prefer abstract data/interior/operator scenes."
+  ai_phone_guy:
+    display_name: "The AI Phone Guy"
+    business_key: aiphoneguy
+    zernio_profile: "AI Phone Guy"
+    enabled: true
+    posts_per_run: 3
+    platforms: ["facebook", "instagram"]   # only FB+IG connected (live check confirms)
+    voice: "plainspoken, trade-savvy, anti-hype, for home-service owners (HVAC, plumbing, electrical)"
+    themes_note: "never-miss-a-call, after-hours booking, one-truck shops. Show the buyer's world (vans/ladders/phones), not a desk. No brand badges on vehicles."
+  worship_digital:
+    display_name: "Worship Digital"
+    business_key: worshipdigital
+    zernio_profile: "Calling Digital"   # WD routes through the legacy Calling Digital profile
+    enabled: true
+    posts_per_run: 3
+    platforms: ["facebook", "linkedin", "instagram", "x"]
+    voice: "full-service SMB marketing agency for the 380 corridor; practical, results-first; NOT faith-centered"
+    themes_note: "SMB marketing: reporting clarity, stop-boosting-random-posts, local lead gen. Not churchy."
+  # agent_empire + book'd are intentionally NOT enabled here:
+  #  - agent_empire: zero connected Zernio accounts (OAuth, Michael's scope).
+  #  - book'd: always Ryan's sign-off; tools/social_load raises NoRailError for it,
+  #    so it is structurally held even if produced. Stage-and-flag only.
