@@ -5371,6 +5371,31 @@ async def run_slipstream_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-social")
+async def run_social_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the Railway Studio weekly SOCIAL engine on demand (the cloud port of
+    the laptop's studio_weekly_prep). Produces next week's posts per connected
+    brand, runs the 3 gates (Iris visual / Scrutineer / Conversion), and schedules
+    the gap-fill into file-103 windows via the ONE loader. DRY-RUN by default;
+    pass {"commit": true} to actually schedule. Book'd is always held (loader
+    NoRail). Fully observable in railway logs; returns the structured receipt with
+    a post-run verification (ok=false, never a silent success, if nothing landed).
+    NOTE: no weekly cron is registered until the laptop cron is retired, so the two
+    rails never double-fire. Body optional: {"commit": bool, "brands": ["key",...]}."""
+    validate_key(authorization)
+    from services.studio_social_engine import run_week
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        run_week,
+        brands=payload.get("brands"),
+        commit=bool(payload.get("commit")),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/cmo-daily-email-now")
 async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     """Send the CMO Daily email immediately. Mirrors the 7:00 AM CT scheduler
