@@ -1,0 +1,9 @@
+.git
+__pycache__
+.superpowers
+Avo/
+node_modules
+*.pyc
+.venv
+.blogimg-venv
+pitwall-ui/node_modules
