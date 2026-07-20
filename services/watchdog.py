@@ -14,8 +14,12 @@ Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
   3. Blog freshness: per brand, is the newest LIVE blog post within its cadence, and
      does it serve 200? Catches "engine exited 0 but shipped nothing / a 404" -- the
      silent failure a receipt-only check misses (verified 2026-07-18).
-  4. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
-  5. env-truth: the live service should call itself 'production' in production.
+  4. Weekly-social freshness: is the newest committed Studio weekly SOCIAL batch
+     (marketing_deliverables/*studio_weekly_<date>*) within cadence? The batch has
+     no live URL, so the committed folder is the truth signal. Disabled until the
+     social-engine cloud cutover (the laptop engine does not commit its folder).
+  5. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
+  6. env-truth: the live service should call itself 'production' in production.
 
 Anomaly deduplication:
   Fingerprint-based in watchdog_state. current_state_json() reads this table for
@@ -67,6 +71,12 @@ BRAND_URLS: List[str] = [
 
 TELEMETRY_REPO = "salesdroid/avo-telemetry"
 TELEMETRY_MAX_STALE_HOURS = 48
+
+# The Studio weekly social batch is staged as a deliverable folder whose name
+# embeds the target Monday, e.g. `141_studio_weekly_2026-07-20` (or the older
+# `..._2026-07-06_to_2026-07-12` variant -- we take the FIRST date, the Monday).
+WEEKLY_BATCH_DIR = "marketing_deliverables"
+_WEEKLY_BATCH_RE = re.compile(r"studio_weekly_(\d{4}-\d{2}-\d{2})")
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +239,85 @@ def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+def _latest_weekly_batch_monday() -> Optional[str]:
+    """ISO date (YYYY-MM-DD) of the week covered by the newest committed
+    `marketing_deliverables/*studio_weekly_<date>*` folder in avo-telemetry, or
+    None if none can be read. The Studio weekly engine stages one gated batch
+    folder per run whose name embeds the target Monday; the cloud engine commits
+    it every run (being stateless, it must). Uses the GitHub Contents API so this
+    works from a stateless container, the same rail as _check_telemetry_freshness.
+    """
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{TELEMETRY_REPO}/contents/{WEEKLY_BATCH_DIR}",
+            headers=headers, timeout=15,
+        )
+    except requests.RequestException as e:
+        logger.warning("[watchdog] weekly-batch listing failed: %s", e)
+        return None
+    if not r.ok:
+        logger.warning("[watchdog] weekly-batch listing HTTP %s: %s", r.status_code, r.text[:120])
+        return None
+    best: Optional[str] = None
+    for entry in (r.json() or []):
+        if entry.get("type") != "dir":
+            continue  # a stray file named studio_weekly must not count as a batch
+        m = _WEEKLY_BATCH_RE.search(entry.get("name") or "")
+        if not m:
+            continue
+        d = m.group(1)
+        if best is None or d > best:
+            best = d
+    return best
+
+
+def _check_weekly_social_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Is the newest committed Studio weekly SOCIAL batch within cadence?
+
+    The batch has no live URL (posts schedule into Zernio, not a public page),
+    so the truth signal is the committed deliverable folder, not the engine's
+    own on-disk receipt (which a stateless watcher cannot see). Disabled while
+    max_age_hours is 0 -- the current laptop engine does not reliably commit its
+    folder, so leaving it 0 avoids a false alarm; ENABLE at the cloud cutover,
+    when the stateless cloud engine commits every run. This is the outside check
+    that catches the exit-0-shipped-nothing case (the 2026-07-11 failure mode).
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    ws = cfg.get("weekly_social") or {}
+    max_h = int(ws.get("max_age_hours") or 0)
+    if max_h <= 0:
+        return []  # disabled until the social-engine cloud cutover
+    sev = ws.get("severity", "warn")
+    monday = _latest_weekly_batch_monday()
+    if not monday:
+        return [Anomaly(
+            "weekly-social-freshness-unknown",
+            "No marketing_deliverables/*studio_weekly_<date>* folder found in "
+            "avo-telemetry; cannot verify the weekly social batch shipped.", sev)]
+    try:
+        batch_dt = datetime.fromisoformat(monday).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return [Anomaly(
+            "weekly-social-freshness-unknown",
+            f"Unparseable weekly-batch date {monday!r}; cannot verify freshness.", sev)]
+    # The folder date is the batch's TARGET Monday. A batch for the upcoming week
+    # is future-dated (negative age) and healthy; a missed run lets the newest
+    # Monday recede into the past until it crosses the threshold.
+    age_h = (_now_utc() - batch_dt).total_seconds() / 3600
+    if age_h > max_h:
+        return [Anomaly(
+            "weekly-social-stale",
+            f"Newest Studio weekly social batch covers week of {monday} "
+            f"({int(age_h)}h old, > {max_h}h) -- the weekly engine may have "
+            f"silently missed a run.", sev)]
+    return []
+
+
 def _revenue_summary(days: int) -> dict:
     from tools.revenue_tracker import get_revenue_summary
     return get_revenue_summary(days=days) or {}
@@ -284,6 +373,7 @@ _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
     _check_blog_freshness,
+    _check_weekly_social_freshness,
     _check_emails_sent,
     _check_env_truth,
 )
