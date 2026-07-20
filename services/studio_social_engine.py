@@ -134,9 +134,22 @@ def _upload_media(png: bytes, name: str) -> str:
 
 
 def _hero_image(image_prompt: str, business_key: str) -> Optional[bytes]:
-    from services.slipstream_images import generate_images
-    imgs = generate_images([{"name": "hero", "prompt": image_prompt}], business_key)
-    return imgs.get("hero")
+    """One on-brand hero via fal, STEERED by the brand's approved references so
+    yield stays on-palette and OEM/off-brand renders stop getting gate-dropped
+    (the WD-yield-0 root cause). references_for returns a list of URL STRINGS;
+    pass it STRAIGHT THROUGH -- a dict-shaped extraction silently yields 0 refs
+    (the URL-strings trap, per the Studio flag). blog_image forwards
+    reference_image_urls into generate_nano_banana_image."""
+    from services.blog_image import blog_image
+    from tools.fal_assets import references_for
+    refs = references_for(business_key)  # List[str]; empty if the brand has no collection
+    res = blog_image(image_prompt, business_key=business_key, aspect_ratio="16:9",
+                     pro=True, reference_image_urls=refs or None)
+    if not res.get("ok") or not res.get("urls"):
+        return None
+    r = requests.get(res["urls"][0], timeout=120)
+    r.raise_for_status()
+    return r.content
 
 
 # --------------------------------------------------------------------------- per-brand
@@ -261,7 +274,8 @@ def _verify(batch_md: str, receipt_md: str, scheduled_any: bool) -> List[str]:
 
 # --------------------------------------------------------------------------- orchestrator
 def run_week(*, brands: Optional[List[str]] = None, commit: bool = False,
-             token: Optional[str] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+             force: bool = False, token: Optional[str] = None,
+             now: Optional[datetime] = None) -> Dict[str, Any]:
     """Produce + gate + schedule next week's social for every connected brand,
     stage the deliverable, and self-verify. Returns a structured receipt; never
     raises for expected holds."""
@@ -271,9 +285,9 @@ def run_week(*, brands: Optional[List[str]] = None, commit: bool = False,
     week_monday = upcoming_monday(now)
     content_id = f"studio_weekly_{week_monday}"
 
-    if commit and week_already_published(week_monday, token):
+    if commit and not force and week_already_published(week_monday, token):
         return {"ok": True, "skipped": True, "week": week_monday,
-                "note": "refusing to double-publish (week already staged)"}
+                "note": "refusing to double-publish (week already staged); pass force=true to re-run"}
 
     cfg = _load_cfg()
     selected = {k: v for k, v in (cfg.get("brands") or {}).items()

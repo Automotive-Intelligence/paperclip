@@ -92,7 +92,7 @@ def llm_json(
     user: str,
     *,
     images: Optional[List[bytes]] = None,
-    retries: int = 2,
+    retries: int = 3,
     model: Optional[str] = None,
     max_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -101,19 +101,16 @@ def llm_json(
     content: List[Dict[str, Any]] = [{"type": "text", "text": user}]
     if images:
         content = _image_blocks(images) + content  # images first, then the ask
+    # NB: no assistant-message prefill. claude-sonnet-5 REJECTS it (HTTP 400
+    # "This model does not support assistant message prefill"), so we force JSON
+    # via the system/user instruction + defensive parse + retries instead. The
+    # malformed-JSON slips this guards against are intermittent; retries clear them
+    # (proven live: the 2026-07-20 real fire recovered on retry and shipped).
     body = {
         "model": model or _MODEL,
         "max_tokens": max_tokens or _MAX_TOKENS,
         "system": system,
-        "messages": [
-            {"role": "user", "content": content},
-            # Prefill the assistant turn with "{" -- Anthropic's documented way to
-            # force a JSON object. Without it, sonnet occasionally emits a stray
-            # malformed object (observed live: "Expecting ':' delimiter"); the
-            # prefill makes valid JSON the only continuation. The response is the
-            # continuation AFTER the brace, so we re-attach "{" before parsing.
-            {"role": "assistant", "content": "{"},
-        ],
+        "messages": [{"role": "user", "content": content}],
     }
     last: Exception = LLMError("no attempt")
     for attempt in range(retries + 1):
@@ -122,7 +119,7 @@ def llm_json(
             text = _content_text(resp)
             if not text:
                 raise LLMError(f"empty LLM response (stop_reason={resp.get('stop_reason')})")
-            return _first_json_object("{" + text)
+            return _first_json_object(text)
         except LLMError as e:
             last = e
             logger.warning("[studio-social] LLM attempt %d/%d failed: %s",
