@@ -83,6 +83,31 @@ def test_latest_batch_monday_picks_newest_dir_ignores_files_and_non_matches():
         assert watchdog._latest_weekly_batch_monday() == "2026-07-20"
 
 
+def test_latest_batch_monday_falls_back_to_slipstream_token(monkeypatch):
+    # GITHUB_TOKEN/GH_TOKEN are absent on Railway; SLIPSTREAM_GH_TOKEN reads the
+    # private avo-telemetry repo. The seam must use it, or the check 404s (the
+    # real cutover bug 2026-07-20).
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "slip_tok")
+    captured = {}
+
+    class _R:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return [{"type": "dir", "name": "144_studio_weekly_2026-07-27"}]
+
+    def fake_get(url, headers=None, timeout=None):
+        captured["auth"] = (headers or {}).get("Authorization")
+        return _R()
+
+    with mock.patch.object(watchdog.requests, "get", side_effect=fake_get):
+        assert watchdog._latest_weekly_batch_monday() == "2026-07-27"
+    assert captured["auth"] == "Bearer slip_tok"
+
+
 def test_latest_batch_monday_none_on_http_error():
     class _R:
         ok = False

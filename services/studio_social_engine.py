@@ -214,7 +214,7 @@ def _batch_md(week_monday: str, per_brand: Dict[str, Any]) -> str:
         if b.get("stamps"):
             lines.append("Gates cleared: " + " | ".join(b["stamps"]))
         for post in b.get("kept", []):
-            lines.append(f"\n## {post['key']} — {post.get('theme','')}")
+            lines.append(f"\n## {post['key']}: {post.get('theme','')}")
             for plat, text in post["platforms"].items():
                 lines.append(f"\n### {plat}\n{text}")
         if b.get("dropped"):
@@ -226,17 +226,17 @@ def _batch_md(week_monday: str, per_brand: Dict[str, Any]) -> str:
 
 def _receipt_md(week_monday: str, per_brand: Dict[str, Any], commit: bool) -> str:
     mode = "COMMIT" if commit else "DRY-RUN"
-    lines = [f"# 🏁 STUDIO WEEKLY RECEIPT — week of {week_monday}", "",
+    lines = [f"# 🏁 STUDIO WEEKLY RECEIPT: week of {week_monday}", "",
              f"Run: Railway studio-social engine [{mode}], "
              f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}.",
              "This is a receipt of what actually shipped, not a request to approve.", ""]
     for bkey, b in per_brand.items():
         cfg = b["cfg"]
         if b.get("held"):
-            lines.append(f"- **{cfg['display_name']}** — HELD ({b.get('reason','')})")
+            lines.append(f"- **{cfg['display_name']}**: HELD ({b.get('reason','')})")
         else:
             n = sum(1 for r in b.get("scheduled", []) if r.get("action") in ("scheduled", "dry-run"))
-            lines.append(f"- **{cfg['display_name']}** — {'SCHEDULED' if commit else 'DRY-RUN'} "
+            lines.append(f"- **{cfg['display_name']}**: {'SCHEDULED' if commit else 'DRY-RUN'} "
                          f"{n} post-slots; skips: {len(b.get('skips', []))}")
         for d in b.get("dropped", []):
             lines.append(f"    - dropped {d['key']}: {d['reason']}")
