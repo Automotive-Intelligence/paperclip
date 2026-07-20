@@ -74,22 +74,31 @@ def generate_posts(brand_cfg: Dict[str, Any], week_label: str, count: int) -> Li
     posts = obj.get("posts")
     if not isinstance(posts, list) or not posts:
         raise GenerationError("no posts in generated batch")
+    # Resilient parse: SKIP a malformed post (the LLM intermittently drops a field
+    # like image_prompt or a platform string), keep the good ones. One bad post must
+    # not sink the whole brand (it did: "post p2: no image_prompt" held all of WD).
+    # Only fail the brand if NOTHING valid survives.
     clean: List[Dict[str, Any]] = []
+    skipped: List[str] = []
     for i, post in enumerate(posts):
         key = str(post.get("key") or f"p{i + 1}")
         plats = post.get("platforms")
         if not isinstance(plats, dict):
-            raise GenerationError(f"post {key}: platforms missing")
-        for p in platforms:
-            text = plats.get(p)
-            if not isinstance(text, str) or not text.strip():
-                raise GenerationError(f"post {key}: empty copy for {p}")
-        if not (post.get("image_prompt") or "").strip():
-            raise GenerationError(f"post {key}: no image_prompt")
+            skipped.append(f"{key}: platforms missing"); continue
+        if any(not isinstance(plats.get(p), str) or not str(plats.get(p, "")).strip()
+               for p in platforms):
+            skipped.append(f"{key}: empty platform copy"); continue
+        if not str(post.get("image_prompt") or "").strip():
+            skipped.append(f"{key}: no image_prompt"); continue
         clean.append({
             "key": key,
             "theme": str(post.get("theme") or "").strip(),
             "platforms": {p: plats[p].strip() for p in platforms},
             "image_prompt": post["image_prompt"].strip(),
         })
+    if skipped:
+        logger.warning("[studio-social] %s: skipped %d malformed post(s): %s",
+                       brand_cfg.get("display_name"), len(skipped), "; ".join(skipped))
+    if not clean:
+        raise GenerationError(f"no valid posts in generated batch (skipped: {'; '.join(skipped)})")
     return clean
