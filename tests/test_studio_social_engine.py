@@ -81,6 +81,32 @@ def test_missing_token_is_loud():
     assert r["ok"] is False and "SLIPSTREAM_GH_TOKEN" in r["error"]
 
 
+def test_hero_image_passes_brand_references_straight_through():
+    # The WD-yield-0 fix: references_for's list of URL STRINGS must reach
+    # blog_image as reference_image_urls unchanged (no dict extraction).
+    import services.blog_image as BI
+    import tools.fal_assets as FA
+    captured = {}
+
+    def fake_blog_image(prompt, *, business_key="", aspect_ratio="", pro=False,
+                        reference_image_urls=None):
+        captured["refs"] = reference_image_urls
+        return {"ok": True, "urls": ["https://img/x.png"]}
+
+    class _R:
+        content = b"PNG"
+
+        def raise_for_status(self):
+            return None
+
+    with mock.patch.object(FA, "references_for", lambda bk: ["u1", "u2", "u3", "u4"]), \
+         mock.patch.object(BI, "blog_image", fake_blog_image), \
+         mock.patch.object(E.requests, "get", lambda url, timeout=0: _R()):
+        out = E._hero_image("a scene", "worshipdigital")
+    assert out == b"PNG"
+    assert captured["refs"] == ["u1", "u2", "u3", "u4"]
+
+
 def test_upcoming_monday_is_a_future_monday():
     # 2026-07-20 is a Monday; the upcoming Monday from it is 2026-07-27 (never today).
     got = E.upcoming_monday(datetime(2026, 7, 20, 12, tzinfo=timezone.utc))
