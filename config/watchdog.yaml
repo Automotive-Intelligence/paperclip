@@ -36,6 +36,16 @@ site_urls:
   - https://buildagentempire.com
   - https://bookd.cx
   - https://paperandpurpose.co
+# weekly_social: the Studio weekly SOCIAL batch. Unlike blog freshness (a live
+# URL), the batch's landed signal is the committed deliverable folder
+# marketing_deliverables/<n>_studio_weekly_<Mon-date>. max_age_hours: 0 disables
+# it (default) -- the current LAPTOP engine does not reliably commit its folder,
+# so enabling now would false-alarm on a healthy run. ENABLE at the social-engine
+# cloud cutover (the stateless cloud engine commits every run); suggested 240
+# (10 days: comfortably clears a weekly cadence, fires only on a genuine miss).
+weekly_social:
+  max_age_hours: 0
+  severity: warn
 emails_sent:
   window_days: 7
   min_prospects_for_alert: 25
