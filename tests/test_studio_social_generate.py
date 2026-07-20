@@ -25,6 +25,19 @@ def test_generate_returns_clean_posts():
     assert posts[0]["image_prompt"] == "abstract data scene"
 
 
+def test_one_bad_post_is_skipped_not_fatal():
+    # A batch with one good + one field-missing post must keep the good one, not
+    # sink the whole brand (the WD "post p2: no image_prompt" incident).
+    mixed = {"posts": [
+        {"key": "p1", "theme": "good", "image_prompt": "scene",
+         "platforms": {"linkedin": "LI", "x": "X"}},
+        {"key": "p2", "theme": "bad-no-img", "platforms": {"linkedin": "LI", "x": "X"}},
+    ]}
+    with mock.patch.object(G, "llm_json", return_value=mixed):
+        posts = G.generate_posts(CFG, "2026-07-27", 2)
+    assert [p["key"] for p in posts] == ["p1"]
+
+
 def test_missing_platform_copy_raises():
     bad = {"posts": [{"key": "p1", "image_prompt": "x", "platforms": {"linkedin": "only LI"}}]}
     with mock.patch.object(G, "llm_json", return_value=bad):
