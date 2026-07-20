@@ -3145,6 +3145,25 @@ scheduler.add_job(_run_slipstream_mwf, CronTrigger(day_of_week="mon,wed,fri", ho
     id="slipstream_engine_mwf", name="Slipstream Blog Engine — MWF (Railway)",
     replace_existing=True, misfire_grace_time=3600)
 
+
+def _run_studio_social_weekly():
+    """Railway Studio weekly SOCIAL engine (cloud port of studio_weekly_prep).
+    Produces next week's gated social for every connected brand and schedules the
+    gap-fill into file-103 windows. Replaces the laptop com.studio.weekly-content-
+    engine, which is RETIRED at this cutover so the two never double-fire. Same
+    Sun 16:50 CT slot; idempotency + post-run verification live inside run_week."""
+    from services.studio_social_engine import run_week
+    try:
+        result = run_week(commit=True)
+        logging.info("[studio-social] weekly run: %s", result)
+    except Exception as e:
+        logging.error("[studio-social] weekly run failed: %s", e)
+
+
+scheduler.add_job(_run_studio_social_weekly, CronTrigger(day_of_week="sun", hour=16, minute=50, timezone=CST),
+    id="studio_social_weekly", name="Studio Weekly Social Engine (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",

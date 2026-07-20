@@ -44,7 +44,9 @@ site_urls:
 # cloud cutover (the stateless cloud engine commits every run); suggested 240
 # (10 days: comfortably clears a weekly cadence, fires only on a genuine miss).
 weekly_social:
-  max_age_hours: 0
+  max_age_hours: 240   # ENABLED at cutover 2026-07-20: the cloud engine commits its
+                       # deliverable folder every run, so 240h (10 days) clears a weekly
+                       # cadence and fires only on a genuine miss.
   severity: warn
 emails_sent:
   window_days: 7
