@@ -129,7 +129,8 @@ def _check_telemetry_freshness() -> List[Anomaly]:
     Uses GitHub REST rather than a local git clone so this survives running
     inside a stateless container.
     """
-    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -247,7 +248,8 @@ def _latest_weekly_batch_monday() -> Optional[str]:
     it every run (being stateless, it must). Uses the GitHub Contents API so this
     works from a stateless container, the same rail as _check_telemetry_freshness.
     """
-    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
