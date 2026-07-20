@@ -274,7 +274,8 @@ def _verify(batch_md: str, receipt_md: str, scheduled_any: bool) -> List[str]:
 
 # --------------------------------------------------------------------------- orchestrator
 def run_week(*, brands: Optional[List[str]] = None, commit: bool = False,
-             token: Optional[str] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+             force: bool = False, token: Optional[str] = None,
+             now: Optional[datetime] = None) -> Dict[str, Any]:
     """Produce + gate + schedule next week's social for every connected brand,
     stage the deliverable, and self-verify. Returns a structured receipt; never
     raises for expected holds."""
@@ -284,9 +285,9 @@ def run_week(*, brands: Optional[List[str]] = None, commit: bool = False,
     week_monday = upcoming_monday(now)
     content_id = f"studio_weekly_{week_monday}"
 
-    if commit and week_already_published(week_monday, token):
+    if commit and not force and week_already_published(week_monday, token):
         return {"ok": True, "skipped": True, "week": week_monday,
-                "note": "refusing to double-publish (week already staged)"}
+                "note": "refusing to double-publish (week already staged); pass force=true to re-run"}
 
     cfg = _load_cfg()
     selected = {k: v for k, v in (cfg.get("brands") or {}).items()

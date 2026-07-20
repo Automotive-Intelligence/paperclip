@@ -5411,6 +5411,7 @@ async def run_social_endpoint(
         run_week,
         brands=payload.get("brands"),
         commit=bool(payload.get("commit")),
+        force=bool(payload.get("force")),
     )
     return JSONResponse(content=result)
 

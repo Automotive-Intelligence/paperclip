@@ -67,6 +67,22 @@ def test_idempotency_refuses_double_publish():
     assert r.get("skipped") is True
 
 
+def test_force_bypasses_idempotency():
+    commit_spy = mock.MagicMock()
+    with ExitStack() as s:
+        _patch(s, load=lambda jobs, commit=False: {"ok": True, "counts": {"scheduled": len(jobs)},
+               "results": [{"brand": j["brand"], "platform": j["platform"],
+                            "action": "scheduled"} for j in jobs]})
+        # Week IS already published, but force=True must proceed anyway (re-run to
+        # un-dark a brand after a fix), not skip.
+        s.enter_context(mock.patch.object(E, "week_already_published", lambda wk, tok: True))
+        s.enter_context(mock.patch.object(E, "_next_deliverable_number", lambda tok: 145))
+        s.enter_context(mock.patch.object(E, "_commit_files_to_main", commit_spy))
+        r = E.run_week(brands=["automotive_intelligence"], commit=True, force=True, token="tok")
+    assert not r.get("skipped")
+    assert r["ok"] is True and r["staged"] is True
+
+
 def test_iris_drops_all_posts_holds_brand_and_flags_loud():
     with ExitStack() as s:
         _patch(s, iris_pass=False)
