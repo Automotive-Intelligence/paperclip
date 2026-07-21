@@ -47,8 +47,12 @@ def ensure_model(model_prefix: str, work: str, token: str, lister, downloader) -
 
 def fetch_take(take_pathname: str, work: str, token: str, lister, downloader) -> str:
     """Download the raw take at the exact Blob pathname `take_pathname` to
-    WORK/take.mp4 and return the local path."""
-    blobs = lister(take_pathname, token)
+    WORK/take.mp4 and return the local path. Lists the PARENT prefix, not the
+    full pathname: Vercel Blob's prefix filter returns the children under a
+    prefix and excludes an exact full-key match, so listing the full pathname
+    returns 0 results."""
+    parent = take_pathname.rsplit("/", 1)[0] + "/" if "/" in take_pathname else ""
+    blobs = lister(parent, token)
     match = next((b for b in blobs if b["pathname"] == take_pathname), None)
     if not match:
         raise RuntimeError(f"take not found on Blob: {take_pathname!r}")
