@@ -5358,6 +5358,22 @@ async def run_watchdog_now(authorization: Optional[str] = Header(None)):
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-video")
+async def run_video_now(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    """Trigger the media worker's stage-and-flag video pipeline immediately.
+    Body: {take, edit}. Renders one take (tools.media_worker.render.render_one)
+    then stages the master + review sheet (Blob push when a token is
+    configured, REVIEW_LOG entry, CMO flag) and returns. Never schedules or
+    publishes outward; a human decides from the flag whether the take ships."""
+    validate_key(authorization)
+    from services.media_worker import run_video
+    result = await asyncio.to_thread(run_video, payload.get("take"), payload.get("edit") or {})
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/blog-image")
 async def blog_image_endpoint(
     payload: Dict[str, Any] = Body(...),

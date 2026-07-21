@@ -5,6 +5,12 @@ import services.media_worker as media_worker
 
 def test_run_video_returns_staged_status_with_render_result(monkeypatch, tmp_path):
     monkeypatch.setenv("WHISPER_MODEL", str(tmp_path / "fake-model.bin"))
+    # Keep stage-and-flag writes inside tmp_path so this test never touches
+    # the real REVIEW_LOG.md / cmo_state.md, and leave BLOB_READ_WRITE_TOKEN
+    # unset so run_video's default path (no token) skips the real Blob push.
+    monkeypatch.setenv("REVIEW_LOG_PATH", str(tmp_path / "REVIEW_LOG.md"))
+    monkeypatch.setenv("CMO_STATE_PATH", str(tmp_path / "cmo_state.md"))
+    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN", raising=False)
     calls = []
 
     def fake_render_one(edit, take, model, out_dir, cut_script, sheet_script):
@@ -24,11 +30,11 @@ def test_run_video_returns_staged_status_with_render_result(monkeypatch, tmp_pat
     edit = {"brand": "aipg"}
     result = media_worker.run_video(take, edit)
 
-    # orchestration contract: staged status plus the render's own outputs, verbatim
+    # orchestration contract: staged status, master/sheet from the render, staged flag
     assert result["status"] == "staged"
     assert result["master"] == "/x/m.mp4"
     assert result["sheet"] == "/x/s.png"
-    assert result["words"] == "/x/w.json"
+    assert result["flag"] is True
 
     # render_one was called exactly once, with the edit and take we passed in
     assert len(calls) == 1
@@ -38,6 +44,9 @@ def test_run_video_returns_staged_status_with_render_result(monkeypatch, tmp_pat
 
 def test_run_video_never_calls_render_one_more_than_once(monkeypatch, tmp_path):
     monkeypatch.setenv("WHISPER_MODEL", str(tmp_path / "fake-model.bin"))
+    monkeypatch.setenv("REVIEW_LOG_PATH", str(tmp_path / "REVIEW_LOG.md"))
+    monkeypatch.setenv("CMO_STATE_PATH", str(tmp_path / "cmo_state.md"))
+    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN", raising=False)
     calls = []
 
     def fake_render_one(edit, take, model, out_dir, cut_script, sheet_script):

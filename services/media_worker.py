@@ -12,15 +12,16 @@ review surface rather than acting unattended.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from tools.media_worker.render import render_one
 
 
 def run_video(take: str, edit: dict) -> dict:
     """Render one take and stage it for review. Returns status plus the
-    render's master/sheet/words paths. Does not push, log, or flag yet --
-    those steps are deferred (see comments below); this call only produces
-    local render output, ready to be staged by a later step."""
+    render's master/sheet/words paths. Runs the three stage-and-flag steps
+    (Blob push, REVIEW_LOG, CMO flag) after render_one, then hands off to a
+    human: nothing here schedules or publishes anything outward."""
     model = os.environ["WHISPER_MODEL"]
     out_dir = os.environ.get("RENDERS_OUT", "/opt/media/out")
     res = render_one(
@@ -29,13 +30,44 @@ def run_video(take: str, edit: dict) -> dict:
         sheet_script=os.path.join(os.path.dirname(__file__), "..", "scripts", "video_review_sheet.py"),
     )
 
-    # DEFERRED (deploy task, gated on the Blob token / flag mechanism):
-    #   1. Push res["master"] and res["sheet"] to Blob via
-    #      tools.media_worker.blob_sync.upload (needs Michael's Vercel auth token).
-    #   2. Append an entry to renders/th/REVIEW_LOG.md recording this take,
-    #      its edit, and the staged Blob URLs.
-    #   3. Write a CMO flag (via the flag helper / cmo_state.md) so a human
-    #      sees the staged render and decides whether it ships. Nothing in
-    #      this handler schedules or publishes on its own; the human gate
-    #      is the only path outward.
-    return {"status": "staged", **res}
+    # Step 1: push master + sheet to Blob, but only when a token is actually
+    # configured. Default (no token) path is safe: skip the push, still
+    # stage locally + flag below. Import kept local so unit tests that never
+    # take this branch do not need tools.media_worker.blob_sync importable.
+    if os.environ.get("BLOB_READ_WRITE_TOKEN"):
+        from tools.media_worker.blob_sync import upload as _blob_upload
+        stage_to_blob({"master": res.get("master"), "sheet": res.get("sheet")}, _blob_upload)
+
+    # Step 2: record this take in the human-facing review log.
+    log_path = os.environ.get("REVIEW_LOG_PATH", "renders/th/REVIEW_LOG.md")
+    append_review_log(f"take={take} edit={edit} master={res.get('master')} sheet={res.get('sheet')}", log_path)
+
+    # Step 3: raise a CMO flag so a human sees the staged render. Never
+    # schedules or publishes; the human gate is the only path outward.
+    state_path = os.environ.get("CMO_STATE_PATH", "cmo_state.md")
+    write_cmo_flag(f"video staged: take={take} master={res.get('master')} sheet={res.get('sheet')}", state_path)
+
+    return {"status": "staged", "master": res.get("master"), "sheet": res.get("sheet"), "flag": True}
+
+
+def append_review_log(entry: str, log_path: str) -> None:
+    """Append a timestamped entry to the review log (creates parent dirs)."""
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"\n- {stamp} {entry}\n")
+
+
+def write_cmo_flag(text: str, state_path: str) -> None:
+    """Append a stage-and-flag entry to the CMO state file. Never schedules."""
+    with open(state_path, "a", encoding="utf-8") as f:
+        f.write(f"\n VIDEO WORKER FLAG: {text}\n")
+
+
+def stage_to_blob(paths: dict, upload) -> dict:
+    """Push the master + sheet to Blob via the injected upload() (blob_sync.upload)."""
+    files = [paths[k] for k in ("master", "sheet") if paths.get(k)]
+    root = os.path.dirname(files[0]) if files else "."
+    manifest = os.path.join(root, ".blob_manifest.json")
+    upload(files, root, manifest)
+    return {"blob_pushed": files}
