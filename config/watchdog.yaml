@@ -53,8 +53,9 @@ weekly_social:
 # the newest block is the signal. 0 disables (default) -- ENABLE each to ~30h at its
 # cloud cutover (30h clears a daily cadence, fires on a genuine missed run).
 monitors:
-  tp_daily_max_age_hours: 0
-  growth_monitor_max_age_hours: 0
+  tp_daily_max_age_hours: 30       # ENABLED at cutover 2026-07-20 (both proven green
+  growth_monitor_max_age_hours: 30 # in the cloud; laptop plists retired). 30h clears a
+                                   # daily cadence, fires on a genuine missed cron run.
 emails_sent:
   window_days: 7
   min_prospects_for_alert: 25
