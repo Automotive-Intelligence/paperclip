@@ -28,6 +28,7 @@ Anomaly deduplication:
 from __future__ import annotations
 
 import logging
+import base64
 import os
 import re
 from dataclasses import dataclass
@@ -320,6 +321,73 @@ def _check_weekly_social_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
     return []
 
 
+# The two Railway-ported laptop monitors write a dated block into an avo-telemetry
+# state file each run; the newest block's date is the freshness signal. Disabled
+# (max_age_hours 0) until each job's cloud cutover, then ~30h catches a missed daily.
+_MONITOR_BLOCKS = {
+    "tp_daily": ("team_principal_state.md",
+                 re.compile(r"##\s*🏁\s*TP daily\s*[-—]+\s*(\d{4}-\d{2}-\d{2})")),
+    "growth_monitor": ("growth_analytics_state.md",
+                       re.compile(r"##\s*📈\s*Outbound monitor\s*[-—]+\s*(\d{4}-\d{2}-\d{2})")),
+}
+
+
+def _latest_dated_block(path: str, pattern: "re.Pattern") -> Optional[str]:
+    """Newest YYYY-MM-DD stamped in `path`'s matching block headers, via the GitHub
+    Contents API (SLIPSTREAM_GH_TOKEN reads the private repo; GITHUB/GH_TOKEN are
+    unset on Railway). None if unreadable or no block found."""
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(f"https://api.github.com/repos/{TELEMETRY_REPO}/contents/{path}",
+                         headers=headers, timeout=15)
+    except requests.RequestException as e:
+        logger.warning("[watchdog] monitor freshness fetch failed for %s: %s", path, e)
+        return None
+    if not r.ok:
+        logger.warning("[watchdog] monitor freshness HTTP %s for %s", r.status_code, path)
+        return None
+    try:
+        content = base64.b64decode(r.json().get("content", "")).decode("utf-8")
+    except (ValueError, KeyError):
+        return None
+    dates = pattern.findall(content)
+    return max(dates) if dates else None
+
+
+def _check_monitor_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Did each Railway-ported daily monitor land a fresh block? Config-driven per
+    monitor (monitors.<key>_max_age_hours; 0 disables until that job's cutover)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mon = cfg.get("monitors") or {}
+    out: List[Anomaly] = []
+    for key, (path, pattern) in _MONITOR_BLOCKS.items():
+        max_h = int(mon.get(f"{key}_max_age_hours") or 0)
+        if max_h <= 0:
+            continue  # disabled until this monitor's cloud cutover
+        newest = _latest_dated_block(path, pattern)
+        if not newest:
+            out.append(Anomaly(f"monitor-freshness-unknown-{key}",
+                               f"No dated {key} block found in {path}; cannot verify it ran.", "warn"))
+            continue
+        try:
+            dt = datetime.fromisoformat(newest).replace(tzinfo=timezone.utc)
+        except ValueError:
+            out.append(Anomaly(f"monitor-freshness-unknown-{key}",
+                               f"Unparseable {key} date {newest!r}.", "warn"))
+            continue
+        age_h = (_now_utc() - dt).total_seconds() / 3600
+        if age_h > max_h:
+            out.append(Anomaly(f"monitor-stale-{key}",
+                               f"{key} newest entry is {newest} ({int(age_h)}h old, > {max_h}h) "
+                               f"-- the Railway cron may have missed a run.", "warn"))
+    return out
+
+
 def _revenue_summary(days: int) -> dict:
     from tools.revenue_tracker import get_revenue_summary
     return get_revenue_summary(days=days) or {}
@@ -376,6 +444,7 @@ _CHECKS = (
     _check_telemetry_freshness,
     _check_blog_freshness,
     _check_weekly_social_freshness,
+    _check_monitor_freshness,
     _check_emails_sent,
     _check_env_truth,
 )

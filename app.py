@@ -3164,6 +3164,38 @@ scheduler.add_job(_run_studio_social_weekly, CronTrigger(day_of_week="sun", hour
     id="studio_social_weekly", name="Studio Weekly Social Engine (Railway)",
     replace_existing=True, misfire_grace_time=3600)
 
+
+def _run_tp_daily():
+    """Railway port of the laptop TP daily heartbeat (com.avo.tp-daily, 07:15 CT).
+    Reads live Instantly numbers, commits ONE honest block to team_principal_state.md.
+    Idempotent (refuses a second block for a day already written)."""
+    from services.tp_daily_engine import run_tp_daily
+    try:
+        logging.info("[tp-daily] %s", run_tp_daily(commit=True))
+    except Exception as e:
+        logging.error("[tp-daily] run failed: %s", e)
+
+
+scheduler.add_job(_run_tp_daily, CronTrigger(hour=7, minute=15, timezone=CST),
+    id="tp_daily_railway", name="TP Daily Heartbeat (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
+
+def _run_growth_monitor():
+    """Railway port of the laptop outbound monitor (com.avo.growth-monitor, 18:00 CT).
+    Bounce/reply/warmup alarms via Instantly, appended to growth_analytics_state.md.
+    Idempotent per day."""
+    from services.growth_monitor_engine import run_growth_monitor
+    try:
+        logging.info("[growth-monitor] %s", run_growth_monitor(commit=True))
+    except Exception as e:
+        logging.error("[growth-monitor] run failed: %s", e)
+
+
+scheduler.add_job(_run_growth_monitor, CronTrigger(hour=18, minute=0, timezone=CST),
+    id="growth_monitor_railway", name="Growth Outbound Monitor (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -5413,6 +5445,36 @@ async def run_social_endpoint(
         commit=bool(payload.get("commit")),
         force=bool(payload.get("force")),
     )
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-tp-daily")
+async def run_tp_daily_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the TP daily heartbeat on demand (Railway port of com.avo.tp-daily).
+    Reads live Instantly numbers, commits the honest block to team_principal_state.md.
+    DRY-RUN by default (returns a preview); pass {"commit": true} to write. Idempotent."""
+    validate_key(authorization)
+    from services.tp_daily_engine import run_tp_daily
+    payload = payload or {}
+    result = await asyncio.to_thread(run_tp_daily, commit=bool(payload.get("commit")))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-growth-monitor")
+async def run_growth_monitor_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the outbound health monitor on demand (Railway port of
+    com.avo.growth-monitor). Bounce/reply/warmup alarms via Instantly, appended to
+    growth_analytics_state.md. DRY-RUN by default; {"commit": true} to write. Idempotent."""
+    validate_key(authorization)
+    from services.growth_monitor_engine import run_growth_monitor
+    payload = payload or {}
+    result = await asyncio.to_thread(run_growth_monitor, commit=bool(payload.get("commit")))
     return JSONResponse(content=result)
 
 
