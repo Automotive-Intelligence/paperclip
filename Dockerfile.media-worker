@@ -22,16 +22,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir Pillow requests
 
-# fonts (bundled) + the pipeline scripts + the worker package
-COPY assets/fonts/ /opt/media/fonts/
+# static brand assets baked at the HOME-relative paths the ported scripts hardcode
+# (container HOME=/root): fonts at /root/avo-telemetry/assets/fonts, brand logos at
+# /root/<brand>-site/public and /root/avo-telemetry/assets/brand. No mounts needed to render.
+COPY assets/home_stage/ /root/
+# the pipeline scripts + the worker package
 COPY scripts/ /app/scripts/
 COPY tools/ /app/tools/
 COPY services/ /app/services/
 
-ENV FONTS_DIR=/opt/media/fonts \
-    WHISPER_MODEL=/opt/media/cache/whisper/ggml-small.en.bin \
-    STOCK_LIB=/opt/media/cache/stock_library \
-    BRAND_ASSETS=/opt/media/cache/brand_assets \
+ENV WHISPER_MODEL=/opt/media/cache/whisper/ggml-small.en.bin \
+    STOCK_LIB=/root/stock_library \
     RENDERS_OUT=/opt/media/out
 
 RUN python -c "import PIL; print('pillow', PIL.__version__)"
