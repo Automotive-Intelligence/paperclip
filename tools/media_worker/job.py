@@ -83,9 +83,13 @@ def run_job(env: dict) -> dict:
     out_prefix = env.get("OUT_PREFIX", "renders_th/")
     edit = json.loads(env["EDIT_JSON"]) if env.get("EDIT_JSON") else {"brand": brand}
 
+    print(f"[job] pulling whisper model from {model_prefix}", flush=True)
     model = ensure_model(model_prefix, work, token, blob_list, blob_download)
+    print(f"[job] pulling take {take_pathname}", flush=True)
     take = fetch_take(take_pathname, work, token, blob_list, blob_download)
+    print(f"[job] rendering brand={brand} edit={edit}", flush=True)
     res = render_one(edit, take, model, work, cut_script=CUT_SCRIPT, sheet_script=SHEET_SCRIPT)
+    print(f"[job] pushing master + sheet to {out_prefix}", flush=True)
     urls = push_outputs(res, out_prefix, take_pathname, token, blob_put)
 
     print(f"MASTER_URL={urls['master_url']}")
