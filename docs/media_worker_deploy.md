@@ -28,13 +28,17 @@ mount-free deploy, [BUILD] one of:
 - **(B) make the scripts env-driven** (FONTS_DIR / BRAND_ASSETS). More correct long-term but
   edits the ported scripts; defer unless the Studio wants it.
 
-## Maintainability: vendored scripts can drift
-`scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py` are COPIES of
-`~/avo-telemetry/scripts/*.py` staged into the build context. Only `video_review_sheet.py`
-was intentionally edited here (the LABEL_FONT path). These copies can drift from the canonical
-avo-telemetry versions the Studio maintains. Also: the canonical `video_review_sheet.py` still
-has the Mac-only Arial path and should get the same LABEL_FONT fix to stay in sync. Longer term,
-decide vendor-vs-submodule (raised in the plan) so there is one source of truth.
+## Single-source rule for the 4 pipeline scripts (TP ruling 2026-07-20)
+`scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py` are baked into the
+image and are the PRODUCTION producer. RULING: **paperclip/scripts/ is canonical.** These 4 are
+single-source in paperclip; **no forking.** The `~/avo-telemetry/scripts/` copies now carry a
+`# MIRROR ONLY` header pointing here (edit here, never there). After the worker builds an
+AIPG-class video end to end in the cloud (the laptop-off proof), RETIRE the avo-telemetry copies.
+Do NOT delete them before that proof.
+
+### Merge checklist
+- [ ] These 4 scripts are single-source in paperclip; no forking. The avo-telemetry copies are MIRROR ONLY.
+- [ ] After the first cloud end-to-end AIPG render, retire `~/avo-telemetry/scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py`.
 
 ## Deploy steps
 1. [MICHAEL] Blob token: `cd ~/worship-digital-site && vercel env pull` -> `BLOB_READ_WRITE_TOKEN`,
