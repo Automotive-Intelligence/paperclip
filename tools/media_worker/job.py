@@ -21,6 +21,9 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
+import traceback
+from datetime import datetime, timezone
 
 from tools.media_worker.blob_http import blob_list, blob_download, blob_put
 from tools.media_worker.render import render_one
@@ -70,6 +73,44 @@ def push_outputs(res: dict, out_prefix: str, take_pathname: str, token: str, put
     return {"master_url": master_url, "sheet_url": sheet_url}
 
 
+def append_blob_review_log(entry: str, token: str, prefix: str = "renders_th/") -> None:
+    """Append a timestamped `entry` line to the Blob object `<prefix>REVIEW_LOG.md`,
+    mirroring services.media_worker.append_review_log's local-file format
+    (`\\n- <utc iso> <entry>\\n`) but backed by Blob instead of a local path.
+    Downloads the existing REVIEW_LOG.md first (empty string if it does not
+    exist yet on Blob), appends, and pushes the combined content back. This
+    is the stage-and-flag: a human/watchdog reads it later, nothing here
+    schedules or publishes anything. datetime.now() is called here, inside
+    the function, not at module scope or as a default-argument value."""
+    pathname = f"{prefix}REVIEW_LOG.md"
+    existing = ""
+    blobs = blob_list(prefix, token)
+    match = next((b for b in blobs if b["pathname"] == pathname), None)
+    if match:
+        fd, tmp_dest = tempfile.mkstemp(suffix=".md")
+        os.close(fd)
+        try:
+            blob_download(match["url"], tmp_dest, token)
+            with open(tmp_dest, "r", encoding="utf-8") as f:
+                existing = f.read()
+        finally:
+            if os.path.exists(tmp_dest):
+                os.remove(tmp_dest)
+
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    updated = existing + f"\n- {stamp} {entry}\n"
+
+    fd, local_path = tempfile.mkstemp(suffix=".md")
+    os.close(fd)
+    try:
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(updated)
+        blob_put(local_path, pathname, token)
+    finally:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+
 def run_job(env: dict) -> dict:
     """The full one-shot flow, env-driven so main() and tests share one
     path. References blob_list/blob_download/blob_put/render_one by module
@@ -96,6 +137,17 @@ def run_job(env: dict) -> dict:
     print(f"SHEET_URL={urls['sheet_url']}")
     print(f"REVIEW_LOG: take={take_pathname} edit={edit} "
           f"master={urls['master_url']} sheet={urls['sheet_url']}")
+
+    entry = (f"STAGED brand={brand} take={take_pathname} master={urls['master_url']} "
+             f"sheet={urls['sheet_url']} :: awaiting file-133/117 + CMO gate, NOT scheduled")
+    try:
+        append_blob_review_log(entry, token, out_prefix)
+    except Exception:
+        # The master is already safely on Blob; a REVIEW_LOG write failure
+        # must not fail the job, only get logged for follow-up.
+        print("[job] REVIEW_LOG update FAILED (non-fatal)", flush=True)
+        traceback.print_exc()
+
     return urls
 
 
