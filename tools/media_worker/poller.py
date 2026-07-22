@@ -65,7 +65,11 @@ def poll_once(env: dict) -> dict:
     """List the queue, render up to POLL_MAX_PER_CYCLE unrendered takes via
     run_job (brand parsed from the path), and return a summary. Guarded per
     take: one take's render failing never sinks the others (the master-exists
-    check re-picks it next cycle). Never raises."""
+    check re-picks it next cycle). Setup (a missing BLOB_READ_WRITE_TOKEN, a
+    non-numeric POLL_MAX_PER_CYCLE, or a Blob listing error in pick_next) can
+    still raise before the per-take loop; the asgi caller runs this inside a
+    try/except/finally that logs and always releases the render lock, so a
+    setup failure is logged, not a wedge."""
     token = env["BLOB_READ_WRITE_TOKEN"]
     queue_prefix = env.get("RENDER_QUEUE_PREFIX", DEFAULT_QUEUE_PREFIX)
     out_prefix = env.get("OUT_PREFIX", "renders_th/")

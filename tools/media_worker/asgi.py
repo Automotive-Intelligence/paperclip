@@ -44,9 +44,16 @@ _render_lock = threading.Lock()
 
 
 def _render_once() -> None:
+    # The startup render is the THIRD render entrypoint (with /run-video and
+    # /poll); it must share _render_lock too, or a boot render could run
+    # concurrently with a poll/manual render and contend for the container.
     try:
         print("[asgi] render job starting", flush=True)
-        urls = run_job(os.environ)
+        _render_lock.acquire()
+        try:
+            urls = run_job(os.environ)
+        finally:
+            _render_lock.release()
         print(f"[asgi] render job DONE master={urls.get('master_url')}", flush=True)
     except Exception:
         print("[asgi] render job FAILED", flush=True)
@@ -173,7 +180,14 @@ async def _handle_poll(scope: dict, receive, send) -> None:
         finally:
             _render_lock.release()
 
-    threading.Thread(target=_run_poll, daemon=True).start()
+    # The background thread's finally releases the lock -- but only if the thread
+    # actually starts. If start() itself raises (e.g. thread exhaustion), release
+    # here so the lock is never leaked into a permanent 'busy' wedge.
+    try:
+        threading.Thread(target=_run_poll, daemon=True).start()
+    except BaseException:
+        _render_lock.release()
+        raise
     await _send_json(send, 200, {"status": "polling"})
 
 

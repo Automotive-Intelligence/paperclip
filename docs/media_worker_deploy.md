@@ -57,7 +57,7 @@ proof is DONE, so the avo-telemetry copies are now cleared to RETIRE (see checkl
 5. Watchdog: `services/watchdog.py` health-checks the service (config `media_worker.health_url`,
    critical severity, GitHub-issue alert rail).
 
-## Auto-trigger (Blob-poll) — doc-142 fast-follow
+## Auto-trigger (Blob-poll) -- doc-142 fast-follow
 So the worker is not only manual `POST /run-video`: a take dropped under the Blob render queue
 gets rendered + staged automatically.
 - **Queue:** upload a take to `render_queue/<brand>/<name>.mp4` on Blob (the `<brand>` folder sets
@@ -67,7 +67,7 @@ gets rendered + staged automatically.
   take whose master `renders_th/<stem>.mp4` already exists is skipped. A shared render lock means
   `/poll` and `/run-video` never run two renders at once (the second gets `busy`).
 - **Clock:** the paperclip scheduler POSTs `${MEDIA_WORKER_URL}/poll` every 15 min (job
-  `media_worker_poll`). **Inert until `MEDIA_WORKER_URL` is set on the paperclip service** — set it
+  `media_worker_poll`). **Inert until `MEDIA_WORKER_URL` is set on the paperclip service** -- set it
   (+ `VIDEO_ROUTINE_TOKEN`) to activate the auto-trigger; leave unset to keep manual-only.
 - **Config (worker):** `RENDER_QUEUE_PREFIX` (default `render_queue/`), `POLL_MAX_PER_CYCLE`
   (default 1). Stage-and-flag preserved: auto-renders stage + flag, never publish.

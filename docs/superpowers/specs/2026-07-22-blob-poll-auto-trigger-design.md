@@ -1,4 +1,4 @@
-# Blob-poll auto-trigger — design
+# Blob-poll auto-trigger -- design
 
 **Goal:** Make the cloud media worker render new takes WITHOUT a manual `POST /run-video`. A take
 dropped on Blob gets rendered + staged automatically, on a schedule, preserving stage-and-flag.
@@ -14,7 +14,7 @@ authenticated `POST /run-video`. Today a human must fire that. This adds the aut
 
 2. **The clock is a paperclip APScheduler job** that POSTs `media-worker/poll` on a cadence,
    reusing the proven pattern (`scheduler.add_job(..., CronTrigger(...))`, same as the watchdog).
-   No new Railway cron service (Railway cron replaces a web service's start command — wrong shape
+   No new Railway cron service (Railway cron replaces a web service's start command -- wrong shape
    for a service that must also serve `/run-video`). Fire-and-forget: paperclip does not wait for
    the render.
 
@@ -37,40 +37,42 @@ authenticated `POST /run-video`. Today a human must fire that. This adds the aut
 
 6. **Stage-and-flag preserved.** Each auto-render is a normal `run_job` call: render → push master +
    sheet → append REVIEW_LOG `NOT scheduled`. The poller NEVER publishes or schedules outward. It
-   only decides WHICH take to render, not whether it ships — the file-133/117 + CMO gate is
+   only decides WHICH take to render, not whether it ships -- the file-133/117 + CMO gate is
    untouched.
 
 ## Components
 - `tools/media_worker/poller.py`
-  - `list_queue(prefix, token) -> [take_pathname,...]` — Blob list under the queue prefix, `.mp4` only.
-  - `is_rendered(take_pathname, out_prefix, token) -> bool` — does `renders_th/<stem>.mp4` exist?
-  - `pick_next(prefix, out_prefix, token, limit) -> [take,...]` — eligible (unrendered), capped at `limit`.
-  - `poll_once(env) -> dict` — pick_next, render up to `limit` via `run_job` (per-take env overlay,
+  - `list_queue(prefix, token) -> [take_pathname,...]`: Blob list under the queue prefix, `.mp4` only.
+  - `rendered_stems(out_prefix, token) -> set`: one batch list of the output prefix; pick_next diffs stems against this whole set rather than probing per take.
+  - `pick_next(prefix, out_prefix, token, limit) -> [take,...]` -- eligible (unrendered), capped at `limit`.
+  - `poll_once(env) -> dict` -- pick_next, render up to `limit` via `run_job` (per-take env overlay,
     brand parsed from `render_queue/<brand>/`), return a summary. Guarded per take.
 - `tools/media_worker/asgi.py`
-  - `POST /poll` — auth via `VIDEO_ROUTINE_TOKEN` (same as `/run-video`); acquires the render lock;
+  - `POST /poll` -- auth via `VIDEO_ROUTINE_TOKEN` (same as `/run-video`); acquires the render lock;
     if busy → `{"status":"busy"}`; else spawns a background thread running `poll_once` and returns
     `{"status":"polling","queued":N}`. Fail-closed like `/run-video`.
   - Generalize the existing startup `_lock`/`_kickoff` into a shared render lock both paths respect.
 - paperclip `app.py`
   - `scheduler.add_job(_poll_media_worker, CronTrigger(minute="*/15", timezone=CST), id="media_worker_poll", ...)`
-    — a thin function that POSTs `${MEDIA_WORKER_URL}/poll` with `VIDEO_ROUTINE_TOKEN`, short timeout,
+    -- a thin function that POSTs `${MEDIA_WORKER_URL}/poll` with `VIDEO_ROUTINE_TOKEN`, short timeout,
     swallows errors (the worker owns the work; a missed tick is picked up next cycle).
 
 ## Config / env
 - Worker: `RENDER_QUEUE_PREFIX` (default `render_queue/`), `POLL_MAX_PER_CYCLE` (default 1),
   plus the existing `BLOB_READ_WRITE_TOKEN`, `VIDEO_ROUTINE_TOKEN`, `OUT_PREFIX`.
 - paperclip: `MEDIA_WORKER_URL` (the worker's base URL), `VIDEO_ROUTINE_TOKEN`. If `MEDIA_WORKER_URL`
-  is unset, the scheduler job no-ops (so this is inert until configured — safe to merge).
+  is unset, the scheduler job no-ops (so this is inert until configured -- safe to merge).
 
 ## Error handling
-- Poll never raises out of `/poll`: a listing error → `{"status":"error"}` logged, HTTP 200 (the
-  clock keeps ticking). A single take's render failure is caught per-take and logged; other takes
-  are unaffected; the master-exists check means a retried take re-renders next cycle.
+- `/poll` returns `{"status":"polling"}` as soon as it spawns the render thread, so listing/setup
+  errors surface in the worker logs (the background thread's try/except), not the HTTP response.
+  The render lock is released on every path (thread finally + a start()-failure guard). A single
+  take's render failure is caught per-take and logged; other takes are unaffected; the
+  master-exists check means a retried take re-renders next cycle.
 - The paperclip clock swallows connection errors (worker down is already a watchdog anomaly).
 
 ## Testing
-- `poller.py`: list filters to `.mp4`; `is_rendered` true/false vs a stubbed Blob list; `pick_next`
+- `poller.py`: list filters to `.mp4`; `rendered_stems` from stubbed masters; `pick_next`
   skips rendered + respects `limit`; `poll_once` renders the right takes (monkeypatched `run_job`),
   parses brand from the path, and is guarded (one take raising does not sink the others).
 - `asgi.py`: `POST /poll` 401 without token; `busy` when the render lock is held; `polling` + spawns
