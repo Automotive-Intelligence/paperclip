@@ -68,8 +68,15 @@ def blob_put(local_path: str, pathname: str, token: str, base: str = DEFAULT_BAS
     via a direct HTTP PUT. Private-store access is set with the
     `x-vercel-blob-access: private` header (the header @vercel/blob itself
     sends); a PUT without it is rejected as "public access on a private store".
-    No vercel CLI, so this works in the container (the CLI hangs on an
-    interactive account login when none is present)."""
+    Raw HTTP (no vercel CLI), so this works in the container -- the CLI hangs
+    on an interactive account login when none is present.
+
+    `x-add-random-suffix: 0` keeps the pathname clean (no random URL suffix),
+    and `x-allow-overwrite: 1` lets a repeated PUT to an existing pathname
+    replace it instead of being rejected as "blob already exists". Both the
+    REVIEW_LOG.md (re-put every run) and a re-render of the same take write
+    the same pathname twice, so overwrite must be allowed or the second write
+    fails."""
     from urllib.parse import quote
     with open(local_path, "rb") as f:
         data = f.read()
@@ -82,6 +89,7 @@ def blob_put(local_path: str, pathname: str, token: str, base: str = DEFAULT_BAS
             "x-vercel-blob-access": "private",
             "x-content-type": _CONTENT_TYPES.get(ext, "application/octet-stream"),
             "x-add-random-suffix": "0",
+            "x-allow-overwrite": "1",
         },
         timeout=600,
     )

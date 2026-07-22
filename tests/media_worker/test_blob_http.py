@@ -96,6 +96,8 @@ def test_blob_put_sets_private_access_header(monkeypatch, tmp_path):
     assert h["x-vercel-blob-access"] == "private"      # the header that makes a private PUT work
     assert h["Authorization"] == "Bearer tok"
     assert h["x-content-type"] == "video/mp4"
+    assert h["x-add-random-suffix"] == "0"             # keep the pathname clean
+    assert h["x-allow-overwrite"] == "1"               # re-put same pathname replaces, not "already exists"
     assert captured["data"] == b"videobytes"
     assert captured["url"].endswith("renders_th/take.mp4")
 
