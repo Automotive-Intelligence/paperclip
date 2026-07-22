@@ -77,7 +77,19 @@ Real-take VO only; file-133 + file-117 gates with visible receipts before anythi
 before scheduling; stage-and-flag, never silent auto-fire; Book'd = Ryan; no fabricated stats;
 no em-dashes.
 
-## Fast-follows (not blockers)
-File-117 no-face AIPG finish (VO-over-b-roll via `build_short` + a Studio `broll_at` edit spec --
-flagged); canonical brand logos from Iris (the baked marks are placeholders -- flagged);
-durable `RAILWAY_API_TOKEN` for hands-free redeploy (flagged); Blob-poll auto-trigger.
+## Music bed (ready-to-wire capability)
+`tools/media_worker/music.py` `mix_music_bed(video_in, music_in, video_out, gain_db=-18.0)` mixes a
+licensed bed UNDER the VO: the bed is looped to cover the video, dropped ~18 dB, and mixed; the
+video stream is copied. Cloud-native (ffmpeg-only, present in the image). Deliberately NOT wired
+into the default cut -- WHICH track, WHAT gain, and WHETHER a cut wants a bed are Studio/Iris
+creative calls, and the licensed track is an asset input (both flagged). Wiring is a one-line call
+in the finish step once the track + creative go land.
+
+## Fast-follows status
+- Blob-poll auto-trigger -- DONE (shipped #204; activate by setting `MEDIA_WORKER_URL` on paperclip).
+- stock_fetch.py port -- DONE (ported + env-driven; pexels verified fetching; provision `PEXELS_API_KEY`
+  onto the worker service when the no-face finish is wired).
+- Music bed mix -- capability DONE (above); needs a licensed track + creative go to wire.
+- File-117 no-face AIPG finish (VO-over-b-roll via `build_short` + a Studio `broll_at` edit spec) -- flagged.
+- Canonical brand logos from Iris (the baked marks are placeholders) -- flagged.
+- Durable `RAILWAY_API_TOKEN` / git-connect the service for hands-free redeploy -- flagged.
