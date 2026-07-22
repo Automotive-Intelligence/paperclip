@@ -3,13 +3,10 @@ FROM python:3.11-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg git build-essential cmake ca-certificates fonts-dejavu-core curl \
-      nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# vercel CLI: the only verified path for a private-store Blob PUT
-# (tools/media_worker/blob_http.py:blob_put shells out to it; LIST/DOWNLOAD
-# are plain HTTP and need no CLI).
-RUN npm install -g vercel@latest
+# Blob I/O (list/download/put) is pure HTTP via tools/media_worker/blob_http.py
+# (private PUT uses the x-vercel-blob-access header), so no vercel CLI / Node needed.
 
 # whisper.cpp (pinned to match the Mac that produced the working .words JSON: 1.9.1)
 # -> whisper-cli on PATH. The whisper-cli cmake target exists at this tag (it did

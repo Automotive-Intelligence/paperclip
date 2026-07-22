@@ -13,7 +13,9 @@ def test_run_job_pulls_model_and_take_renders_and_pushes_master(monkeypatch, tmp
         if "whisper_models" in prefix:
             return [{"pathname": prefix + "ggml-small.en.bin",
                      "url": "https://x/model-abc.bin", "size": 100}]
-        return [{"pathname": prefix, "url": "https://x/riverside-abc.mp4", "size": 10}]
+        # fetch_take lists the PARENT prefix; return the full take pathname under it
+        return [{"pathname": "raw_shoot_2026-07/aipg/riverside.mp4",
+                 "url": "https://x/riverside-abc.mp4", "size": 10}]
 
     def fake_download(url, dest, token):
         calls["download"].append((url, dest))
@@ -72,7 +74,7 @@ def test_run_job_honors_edit_json_override_and_out_prefix(monkeypatch, tmp_path)
     def fake_list(prefix, token):
         if "whisper_models" in prefix:
             return [{"pathname": prefix + "ggml-small.en.bin", "url": "https://x/m-abc.bin", "size": 1}]
-        return [{"pathname": prefix, "url": "https://x/clip-abc.mp4", "size": 1}]
+        return [{"pathname": "clip.mp4", "url": "https://x/clip-abc.mp4", "size": 1}]
 
     def fake_download(url, dest, token):
         pass

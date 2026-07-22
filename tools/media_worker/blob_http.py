@@ -59,24 +59,31 @@ def blob_download(url: str, dest: str, token: str) -> None:
                 f.write(chunk)
 
 
-def blob_put(local_path: str, pathname: str, token: str) -> str:
-    """Upload `local_path` to the private store at the clean logical
-    `pathname` via the vercel CLI (the only verified way to write to a
-    private store). `--access private` is required (the store rejects a
-    public upload) and `--add-random-suffix false` keeps the pathname clean.
-    The CLI prints the resulting https URL to STDERR; parse it out of
-    stdout+stderr combined and raise if none is found."""
-    r = subprocess.run(
-        ["vercel", "blob", "put", local_path,
-         "--rw-token", token,
-         "--access", "private",
-         "--pathname", pathname,
-         "--add-random-suffix", "false"],
-        capture_output=True, text=True,
+_CONTENT_TYPES = {".mp4": "video/mp4", ".png": "image/png", ".jpg": "image/jpeg",
+                  ".jpeg": "image/jpeg", ".json": "application/json", ".wav": "audio/wav"}
+
+
+def blob_put(local_path: str, pathname: str, token: str, base: str = DEFAULT_BASE) -> str:
+    """Upload `local_path` to the private store at the clean logical `pathname`
+    via a direct HTTP PUT. Private-store access is set with the
+    `x-vercel-blob-access: private` header (the header @vercel/blob itself
+    sends); a PUT without it is rejected as "public access on a private store".
+    No vercel CLI, so this works in the container (the CLI hangs on an
+    interactive account login when none is present)."""
+    from urllib.parse import quote
+    with open(local_path, "rb") as f:
+        data = f.read()
+    ext = os.path.splitext(pathname)[1].lower()
+    resp = requests.put(
+        f"{base}/{quote(pathname, safe='/')}",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-vercel-blob-access": "private",
+            "x-content-type": _CONTENT_TYPES.get(ext, "application/octet-stream"),
+            "x-add-random-suffix": "0",
+        },
+        timeout=600,
     )
-    combined = (r.stdout or "") + "\n" + (r.stderr or "")
-    m = _URL_RE.search(combined)
-    if not m:
-        raise RuntimeError(
-            f"vercel blob put: no URL in output (exit {r.returncode}): {combined.strip()[:300]}")
-    return m.group(0).rstrip(").,;\"'")
+    resp.raise_for_status()
+    return resp.json()["url"]

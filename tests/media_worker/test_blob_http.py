@@ -68,38 +68,55 @@ def test_blob_download_streams_with_auth_header(monkeypatch, tmp_path):
     assert open(dest, "rb").read() == b"hello world"
 
 
-def test_blob_put_parses_url_from_stderr(monkeypatch):
-    captured = {}
+class _FakePut:
+    def __init__(self, captured):
+        self._c = captured
 
-    class FakeCompleted:
-        returncode = 0
-        stdout = ""
-        stderr = ("Uploading take.mp4...\n"
-                   "https://abc123def.public.blob.vercel-storage.com/renders_th/take.mp4\n"
-                   "Done.")
+    def __call__(self, url, data=None, headers=None, timeout=None):
+        self._c.update(url=url, data=data, headers=headers)
+        c = self._c
 
-    def fake_run(argv, capture_output=None, text=None):
-        captured["argv"] = argv
-        return FakeCompleted()
+        class Resp:
+            def raise_for_status(self):
+                pass
 
-    monkeypatch.setattr(blob_http.subprocess, "run", fake_run)
-    url = blob_http.blob_put("/tmp/take.mp4", "renders_th/take.mp4", "tok")
-    assert url == "https://abc123def.public.blob.vercel-storage.com/renders_th/take.mp4"
-
-    argv = captured["argv"]
-    assert argv[:4] == ["vercel", "blob", "put", "/tmp/take.mp4"]
-    assert "--rw-token" in argv and "tok" in argv
-    assert "--access" in argv and "private" in argv
-    assert "--pathname" in argv and "renders_th/take.mp4" in argv
-    assert "--add-random-suffix" in argv and "false" in argv
+            def json(self):
+                return {"url": "https://x.private.blob.vercel-storage.com/" + c["path"]}
+        return Resp()
 
 
-def test_blob_put_raises_when_no_url_found(monkeypatch):
-    class FakeCompleted:
-        returncode = 1
-        stdout = ""
-        stderr = "Error: something failed"
+def test_blob_put_sets_private_access_header(monkeypatch, tmp_path):
+    f = tmp_path / "take.mp4"
+    f.write_bytes(b"videobytes")
+    captured = {"path": "renders_th/take.mp4"}
+    monkeypatch.setattr(blob_http.requests, "put", _FakePut(captured))
+    url = blob_http.blob_put(str(f), "renders_th/take.mp4", "tok")
+    assert url == "https://x.private.blob.vercel-storage.com/renders_th/take.mp4"
+    h = captured["headers"]
+    assert h["x-vercel-blob-access"] == "private"      # the header that makes a private PUT work
+    assert h["Authorization"] == "Bearer tok"
+    assert h["x-content-type"] == "video/mp4"
+    assert captured["data"] == b"videobytes"
+    assert captured["url"].endswith("renders_th/take.mp4")
 
-    monkeypatch.setattr(blob_http.subprocess, "run", lambda *a, **k: FakeCompleted())
+
+def test_blob_put_url_encodes_spaces(monkeypatch, tmp_path):
+    f = tmp_path / "t.mp4"
+    f.write_bytes(b"d")
+    captured = {"path": "renders_th/a.mp4"}
+    monkeypatch.setattr(blob_http.requests, "put", _FakePut(captured))
+    blob_http.blob_put(str(f), "renders_th/riverside they call.mp4", "tok")
+    assert "%20" in captured["url"] and "/renders_th/" in captured["url"]  # spaces encoded, slash kept
+
+
+def test_blob_put_raises_on_http_error(monkeypatch, tmp_path):
+    f = tmp_path / "x.mp4"
+    f.write_bytes(b"d")
+
+    class Resp:
+        def raise_for_status(self):
+            raise RuntimeError("bad request")
+
+    monkeypatch.setattr(blob_http.requests, "put", lambda *a, **k: Resp())
     with pytest.raises(RuntimeError):
-        blob_http.blob_put("/tmp/x.mp4", "path/x.mp4", "tok")
+        blob_http.blob_put(str(f), "path/x.mp4", "tok")
