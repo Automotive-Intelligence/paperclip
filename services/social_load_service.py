@@ -34,16 +34,28 @@ def run_social_load(
 
     serialized: List[Dict[str, Any]] = []
     counts: Dict[str, int] = {}
+    skipped: List[Dict[str, Any]] = []
     for r in results:
         job = r.get("job")
         action = r.get("action", "unknown")
         counts[action] = counts.get(action, 0) + 1
+        detail = r.get("detail")
         serialized.append({
             "brand": getattr(job, "brand", ""),
             "platform": getattr(job, "platform", ""),
             "action": action,
-            "detail": r.get("detail"),
+            "detail": detail,
         })
+        # Surface skip-and-flag jobs (dead media at schedule time) explicitly so a
+        # partial run's dropped posts stay visible instead of vanishing into counts.
+        if action == "skipped":
+            d = detail if isinstance(detail, dict) else {}
+            skipped.append({
+                "brand": getattr(job, "brand", ""),
+                "content_id": d.get("content_id"),
+                "url": d.get("url"),
+                "reason": d.get("reason"),
+            })
 
     ok = counts.get("error", 0) == 0 and counts.get("conflict", 0) == 0
-    return {"ok": ok, "results": serialized, "counts": counts}
+    return {"ok": ok, "results": serialized, "counts": counts, "skipped": skipped}
