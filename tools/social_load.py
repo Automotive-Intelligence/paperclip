@@ -76,6 +76,16 @@ class NoRailError(RuntimeError):
     """Brand has no distribution rail yet (e.g. Book'd until Ryan's key)."""
 
 
+class MediaUnreachableError(RuntimeError):
+    """A post's source media URL could not be downloaded at SCHEDULE time.
+
+    Zernio fetches media only at PUBLISH time (days after we schedule), so an
+    external URL that 404s by then fails the post silently. We re-host every
+    non-media.zernio.com URL onto Zernio's CDN up front; if the source can't be
+    fetched we raise THIS (naming the URL + content_id) rather than scheduling a
+    job with dead media. (3 WD posts failed this way: agency-pricing-hero.png.)"""
+
+
 BRAND_ALIASES = {
     "automotive intelligence": "avi",
     "the ai phone guy": "aipg", "ai phone guy": "aipg",
@@ -158,6 +168,65 @@ def find_conflicts(existing: List[dict], platform: str, day: str,
     return hits
 
 
+# ---------------------------------------------------------------- media re-host
+_ZERNIO_CDN_HOST = "media.zernio.com"
+
+
+def _default_media_fetch(url: str):
+    """Download media bytes at schedule time. Returns (bytes, mime_type).
+
+    Raises on any non-200/unreachable so the caller can fail loud (see
+    MediaUnreachableError). Lazy `requests` import keeps module import light."""
+    import mimetypes
+    import requests
+
+    resp = requests.get(url, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    mime = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+    if not mime:
+        mime = mimetypes.guess_type(urlsplit(url).path)[0] or "application/octet-stream"
+    return resp.content, mime
+
+
+def _default_media_upload(file_bytes: bytes, filename: str, mime_type: str) -> str:
+    """Push bytes to Zernio's CDN, returning a persistent media.zernio.com URL.
+
+    Same helper studio_publish.py / services.social_pipeline already use. Lazy
+    import so Zernio-free (buffer-only) runs never load it."""
+    from tools.zernio import upload_media_to_zernio
+    return upload_media_to_zernio(file_bytes=file_bytes, filename=filename,
+                                  mime_type=mime_type)
+
+
+def rehost_media_urls(media_urls: List[str], *, content_id: str, brand: str,
+                      fetch, upload) -> List[str]:
+    """Return media_urls with every non-CDN URL re-hosted onto media.zernio.com.
+
+    For each URL whose host is not media.zernio.com we download the bytes NOW and
+    re-upload them to Zernio's CDN, replacing the URL with the returned persistent
+    one. URLs already on media.zernio.com pass through untouched (never re-uploaded).
+    A download failure raises MediaUnreachableError naming the URL + content_id, so
+    a job with dead media fails at SCHEDULE time instead of silently at publish."""
+    out: List[str] = []
+    for url in media_urls:
+        host = (urlsplit(url).hostname or "").lower()
+        if host == _ZERNIO_CDN_HOST:
+            out.append(url)
+            continue
+        try:
+            file_bytes, mime_type = fetch(url)
+        except Exception as e:
+            raise MediaUnreachableError(
+                f"media unreachable at schedule time for content_id={content_id} "
+                f"(brand={brand}): {url} — {type(e).__name__}: {e}. "
+                "Refusing to schedule a Zernio post whose media would 404 at "
+                "publish time.") from e
+        filename = os.path.basename(urlsplit(url).path) or f"{content_id}.bin"
+        out.append(upload(file_bytes=file_bytes, filename=filename, mime_type=mime_type))
+    return out
+
+
 # ---------------------------------------------------------------- orchestrator
 @dataclass
 class PostJob:
@@ -189,6 +258,8 @@ def _real_rails() -> Dict[str, Any]:
     return {
         "zernio_list": list_zernio_posts,
         "zernio_publish": lambda **kw: publish_to_zernio(**kw),
+        "media_fetch": _default_media_fetch,
+        "media_upload": _default_media_upload,
         "buffer_list": lambda channel_id: json.loads(
             _buffer()[1].func(channel_id, "draft", 50) or "[]"),
         "buffer_draft": lambda business_key, text, media_csv:
@@ -232,17 +303,24 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
             if not commit:
                 results.append({"job": job, "action": "dry-run", "detail": f"-> {job.scheduled_for}"})
                 continue
+            # Re-host external media onto Zernio's CDN NOW (fail loud if a source
+            # URL is dead) so the persistent url is baked into the scheduled post
+            # — Zernio otherwise fetches the original only at publish time.
+            media_urls = rehost_media_urls(
+                job.media_urls or [], content_id=job.content_id, brand=brand,
+                fetch=r.get("media_fetch") or _default_media_fetch,
+                upload=r.get("media_upload") or _default_media_upload)
             res = r["zernio_publish"](content=content, platforms=[job.platform],
                                       account_ids=[job.account_id] if job.account_id else None,
                                       scheduled_for=job.scheduled_for,
-                                      media_urls=job.media_urls or None, timezone=job.tz)
+                                      media_urls=media_urls or None, timezone=job.tz)
             append_registry({"brand": brand, "rail": "zernio", "platform": job.platform,
                              "account_id": job.account_id, "post_id": res.get("_id"),
                              "scheduled_for": job.scheduled_for, "tz": job.tz,
                              "content_id": job.content_id,
                              "utm_campaign": f"{brand}_{job.content_id}",
                              "entry_point": job.entry_point,
-                             "media_url": (job.media_urls or [None])[0]})
+                             "media_url": (media_urls or [None])[0]})
             results.append({"job": job, "action": "scheduled", "detail": res})
         else:  # buffer drafts (P&P and future clients); the draft IS the client gate
             if not commit:
@@ -276,6 +354,9 @@ def _fake_rails_for_cli() -> Dict[str, Any]:
     """SOCIAL_LOAD_FAKE_RAILS=1: offline rails so dry-runs need no keys."""
     return {"zernio_list": lambda: [],
             "zernio_publish": lambda **kw: {"_id": "fake", "status": "scheduled"},
+            "media_fetch": lambda url: (b"", "image/png"),
+            "media_upload": lambda file_bytes, filename, mime_type:
+                f"https://{_ZERNIO_CDN_HOST}/{filename}",
             "buffer_list": lambda cid: [],
             "buffer_draft": lambda *a: json.dumps([])}
 

@@ -106,8 +106,8 @@ class TestQueueGuard(unittest.TestCase):
         self.assertEqual(find_conflicts(existing, "facebook", "2026-07-14", "a"), [])
 
 
-def _fake_rails(existing_zernio=None, existing_buffer=None):
-    calls = {"publish": [], "draft": []}
+def _fake_rails(existing_zernio=None, existing_buffer=None, fetch=None, upload=None):
+    calls = {"publish": [], "draft": [], "fetch": [], "upload": []}
 
     def zernio_list():
         return existing_zernio or []
@@ -125,8 +125,22 @@ def _fake_rails(existing_zernio=None, existing_buffer=None):
         calls["draft"].append(dict(business_key=business_key, text=text, media=media_urls_csv))
         return json.dumps([{"channel_id": "c1", "post": {"id": "bp1", "status": "draft"}}])
 
+    def media_fetch(url):
+        calls["fetch"].append(url)
+        if fetch is not None:
+            return fetch(url)                     # test-supplied (e.g. raise on 404)
+        return (b"\x89PNG\r\n\x1a\n", "image/png")
+
+    def media_upload(file_bytes, filename, mime_type):
+        calls["upload"].append(dict(filename=filename, mime_type=mime_type,
+                                    nbytes=len(file_bytes)))
+        if upload is not None:
+            return upload(file_bytes, filename, mime_type)
+        return f"https://media.zernio.com/{filename}"
+
     return {"zernio_list": zernio_list, "zernio_publish": zernio_publish,
-            "buffer_list": buffer_list, "buffer_draft": buffer_draft}, calls
+            "buffer_list": buffer_list, "buffer_draft": buffer_draft,
+            "media_fetch": media_fetch, "media_upload": media_upload}, calls
 
 
 class TestLoadJobs(unittest.TestCase):
@@ -216,6 +230,88 @@ class TestLoadJobs(unittest.TestCase):
         self.assertEqual(res[0]["action"], "drafted")
         self.assertEqual(len(calls["draft"]), 1)
         self.assertEqual(calls["publish"], [])
+
+
+class TestMediaRehost(unittest.TestCase):
+    """Blog-engine bug (3 WD posts failed): external media URLs were handed to
+    Zernio un-rehosted, so a source URL that 404s by publish time (days later)
+    failed the post SILENTLY. The loader must re-host external media onto
+    media.zernio.com AT SCHEDULE TIME, and fail LOUD when a source is unreachable
+    instead of scheduling a job with dead media."""
+
+    def setUp(self):
+        # Same registry isolation as TestLoadJobs: the commit path writes a row.
+        self._tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("SOCIAL_REGISTRY_PATH")
+        os.environ["SOCIAL_REGISTRY_PATH"] = os.path.join(self._tmp.name, "r.jsonl")
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("SOCIAL_REGISTRY_PATH", None)
+        else:
+            os.environ["SOCIAL_REGISTRY_PATH"] = self._prev
+        self._tmp.cleanup()
+
+    def _job(self, **kw):
+        from tools.social_load import PostJob
+        base = dict(brand="avi", platform="twitter", content="New post https://a.io/p",
+                    scheduled_for="2026-07-16T07:00:00", content_id="hero9",
+                    entry_point="blog_engine", account_id="acct1")
+        base.update(kw)
+        return PostJob(**base)
+
+    def test_external_media_is_rehosted_before_scheduling(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        src = "https://worshipdigital.co/blog/agency-pricing-hero.png"
+        res = load_jobs([self._job(media_urls=[src])], commit=True, rails=rails)
+        self.assertEqual(res[0]["action"], "scheduled")
+        # source was downloaded exactly once and re-uploaded to the CDN
+        self.assertEqual(calls["fetch"], [src])
+        self.assertEqual(len(calls["upload"]), 1)
+        # Zernio received the persistent CDN url, NOT the fragile external one
+        scheduled_media = calls["publish"][0]["media_urls"]
+        self.assertEqual(len(scheduled_media), 1)
+        self.assertTrue(scheduled_media[0].startswith("https://media.zernio.com/"))
+        self.assertNotIn("worshipdigital.co", scheduled_media[0])
+        # registry logs what was ACTUALLY scheduled (the persistent url)
+        rows = [json.loads(l) for l in open(os.environ["SOCIAL_REGISTRY_PATH"])]
+        self.assertEqual(rows[0]["media_url"], scheduled_media[0])
+
+    def test_media_already_on_zernio_cdn_passes_through_untouched(self):
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        cdn = "https://media.zernio.com/abc123.png"
+        res = load_jobs([self._job(media_urls=[cdn])], commit=True, rails=rails)
+        self.assertEqual(res[0]["action"], "scheduled")
+        self.assertEqual(calls["fetch"], [])     # not re-downloaded
+        self.assertEqual(calls["upload"], [])    # not re-uploaded
+        self.assertEqual(calls["publish"][0]["media_urls"], [cdn])
+
+    def test_unreachable_media_raises_loudly_and_does_not_schedule(self):
+        from tools.social_load import load_jobs, MediaUnreachableError
+
+        def dead(url):
+            raise RuntimeError("HTTP 404")
+
+        rails, calls = _fake_rails(fetch=dead)
+        bad = "https://worshipdigital.co/blog/agency-pricing-hero.png"
+        with self.assertRaises(MediaUnreachableError) as ctx:
+            load_jobs([self._job(media_urls=[bad])], commit=True, rails=rails)
+        msg = str(ctx.exception)
+        self.assertIn(bad, msg)                  # names the offending URL
+        self.assertIn("hero9", msg)              # names the content_id
+        self.assertEqual(calls["publish"], [])   # nothing was scheduled
+
+    def test_dry_run_does_not_touch_media(self):
+        # Preview must not upload bytes or hit the network; re-host is commit-only.
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        res = load_jobs([self._job(media_urls=["https://ex.com/x.png"])],
+                        commit=False, rails=rails)
+        self.assertEqual(res[0]["action"], "dry-run")
+        self.assertEqual(calls["fetch"], [])
+        self.assertEqual(calls["upload"], [])
 
 
 class TestCli(unittest.TestCase):
