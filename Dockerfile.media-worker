@@ -28,6 +28,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir Pillow requests uvicorn
 
+# Railway runs a Dockerfile service's startCommand WITHOUT shell expansion, so the
+# inherited `uvicorn app:app --host 0.0.0.0 --port $PORT` reaches uvicorn with a
+# literal "$PORT". Shadow the uvicorn console script with a wrapper that ignores the
+# passed args and binds the real $PORT (via python -m uvicorn, the module, no recursion).
+RUN printf '#!/bin/sh\nexec python -m uvicorn app:app --host 0.0.0.0 --port "${PORT:-8080}"\n' \
+      > /usr/local/bin/uvicorn && chmod +x /usr/local/bin/uvicorn
+
 # static brand assets baked at the HOME-relative paths the ported scripts hardcode
 # (container HOME=/root): fonts at /root/avo-telemetry/assets/fonts, brand logos at
 # /root/<brand>-site/public and /root/avo-telemetry/assets/brand. No mounts needed to render.
