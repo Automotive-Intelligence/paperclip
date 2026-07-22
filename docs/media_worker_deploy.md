@@ -1,64 +1,68 @@
 # Media Worker (video cloud-worker) deploy runbook
 
-Status 2026-07-20. The render pipeline is PROVEN in the deployable image (a real 6s
-AIPG take rendered end to end inside `avo-media-worker` on linux/amd64: whisper ->
-cut_talking_head -> caption -> end card -> contact sheet, valid 1080x1920 h264 master).
-This runbook is the remaining path to the LAPTOP-OFF TEST. Steps marked [MICHAEL] need
-the owner; [BUILD] is code work an agent can do once unblocked.
+Status 2026-07-22. **SHIPPED + proven in the cloud.** Video production runs off the laptop:
+the deployed Railway service (not `railway run`, not the Mac) pulls a raw take + the whisper
+model from Vercel Blob, renders, and stages the master + review sheet back to Blob. Two AIPG
+desk-takes rendered this way end to end (h264 1080x1920, word-lit captions, contact sheet),
+including a re-render that verified the Blob overwrite path.
 
-## What is proven (this branch, `bt4/media-worker`)
-- Image `Dockerfile.media-worker` builds on linux/amd64 (Railway target), 364MB, no model baked.
-- Toolchain works in-image: ffmpeg 5.1.9, whisper.cpp 1.9.1 (static), PIL variable fonts.
-- `smoke.py` runs each binary (catches loader failures a `which` check misses).
-- `tools/media_worker/`: transcribe, edit.json->argv, dedup Blob sync, render orchestration (all unit-tested).
-- `services/media_worker.py` `run_video()` stages a render (stage-and-flag only, never schedules).
-- Real in-container render receipt: master + contact sheet produced from a real take via mounted assets.
+## Architecture (what actually runs)
+- **Image** `Dockerfile.media-worker` (linux/amd64, Railway target): ffmpeg + whisper.cpp v1.9.1
+  (static) + PIL, the 4 pipeline scripts, and brand fonts/logos baked at the HOME-relative paths
+  the scripts read (`/root/avo-telemetry/assets/...`, `/root/<brand>-site/public/...`). No model
+  baked; no mounts needed to render.
+- **Trigger** `tools/media_worker/asgi.py` — raw ASGI app. `POST /run-video` (authenticated) is
+  the render trigger; `GET /health` (and `/`) is the healthcheck; everything else 404s.
+- **Job** `tools/media_worker/job.py` `run_job(env)` — pulls the model (skip-if-local) + take from
+  Blob, renders via `render_one` (`transcribe -> cut_talking_head -> contact sheet`), pushes the
+  master + sheet, appends a `renders_th/REVIEW_LOG.md` stage-flag entry. Stage-and-flag ONLY:
+  never schedules or publishes.
+- **Blob I/O** `tools/media_worker/blob_http.py` — pure HTTP (no vercel CLI / Node). Private-store
+  PUT uses `x-vercel-blob-access: private` + `x-add-random-suffix: 0` + `x-allow-overwrite: 1`
+  (a re-put of the same pathname replaces, not duplicates). LIST paginates; DOWNLOAD streams with
+  the mandatory Bearer header.
 
-## The one real gap the render proof surfaced: ASSET PATHS
-The pipeline scripts read ZERO env vars for paths. `cut_talking_head.py` hardcodes:
-- fonts at `HOME/avo-telemetry/assets/fonts/` (NOT the image's `/opt/media/fonts`)
-- brand logos at `HOME/<brand>-site/public/...` and `HOME/avo-telemetry/assets/brand/...`
-The in-container proof worked by MOUNTING those at the container HOME (`/root/...`). For a
-mount-free deploy, [BUILD] one of:
-- **(A, recommended) stage assets into the HOME layout.** Bake the 4 fonts at
-  `/root/avo-telemetry/assets/fonts/`, and boot-pull the brand logos to their HOME-relative
-  paths. Zero script changes (honors "port, do not rewrite"). Concretely: add
-  `COPY assets/fonts/ /root/avo-telemetry/assets/fonts/` to the Dockerfile, and have the
-  boot-pull place `<brand>-site/public/*` + `avo-telemetry/assets/brand/*` under `/root`.
-- **(B) make the scripts env-driven** (FONTS_DIR / BRAND_ASSETS). More correct long-term but
-  edits the ported scripts; defer unless the Studio wants it.
+### Railway startCommand quirk (why the image looks the way it does)
+Railway applies paperclip's `railway.toml` `uvicorn app:app --host 0.0.0.0 --port $PORT`
+startCommand to THIS service too, and does NOT shell-expand `$PORT`. The image makes that exact
+command valid: uvicorn is installed, `/app/app.py` is the media-worker ASGI app, and a uvicorn
+wrapper (`/usr/local/bin/uvicorn`) binds the real `${PORT}` via `python -m uvicorn`.
 
-## Maintainability: vendored scripts can drift
-`scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py` are COPIES of
-`~/avo-telemetry/scripts/*.py` staged into the build context. Only `video_review_sheet.py`
-was intentionally edited here (the LABEL_FONT path). These copies can drift from the canonical
-avo-telemetry versions the Studio maintains. Also: the canonical `video_review_sheet.py` still
-has the Mac-only Arial path and should get the same LABEL_FONT fix to stay in sync. Longer term,
-decide vendor-vs-submodule (raised in the plan) so there is one source of truth.
+## Single-source rule for the 4 pipeline scripts (TP ruling 2026-07-20)
+`scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py` are baked into the
+image and are the PRODUCTION producer. RULING: **paperclip/scripts/ is canonical; no forking.**
+The `~/avo-telemetry/scripts/` copies carry a `# MIRROR ONLY` header. The cloud end-to-end AIPG
+proof is DONE, so the avo-telemetry copies are now cleared to RETIRE (see checklist).
+
+### Merge checklist
+- [x] The 4 scripts are single-source in paperclip; no forking. The avo-telemetry copies are MIRROR ONLY.
+- [x] First cloud end-to-end AIPG render proven -> retire `~/avo-telemetry/scripts/{cut_talking_head,build_short,video_review_sheet,stock_fetch}.py`.
+- [ ] `VIDEO_ROUTINE_TOKEN` is set on the Railway media-worker service (REQUIRED). Without it,
+      `POST /run-video` fails closed (401) and no render can be triggered, yet `/health` still
+      reads 200 -- the worker looks healthy but is untriggerable. Not optional.
+- [x] `BLOB_READ_WRITE_TOKEN` set on the service (Blob list/download/put).
 
 ## Deploy steps
-1. [MICHAEL] Blob token: `cd ~/worship-digital-site && vercel env pull` -> `BLOB_READ_WRITE_TOKEN`,
-   then into Doppler -> Railway (nothing pasted). (Token is NOT currently in a local .env.)
-2. [BUILD] Boot-pull script: on container start, pull from Blob into the cache + HOME layout:
-   - `ggml-small.en.bin` -> `/opt/media/cache/whisper/` (WHISPER_MODEL)
-   - gated stock -> `STOCK_LIB`
-   - brand logos -> the HOME-relative paths (gap A above)
-   Dedup via `tools/media_worker/blob_sync.py` (already handles the random-suffix gotcha).
-3. [BUILD] Trigger: add `POST /admin/run-video` (mirror the proven `POST /admin/run-watchdog`,
-   paperclip PR #161) that calls `services.media_worker.run_video(take, edit)`; then wire the
-   deferred stage steps in `run_video` (Blob push of master+sheet, REVIEW_LOG append, CMO flag).
-4. [MICHAEL] Railway service: new service from `Dockerfile.media-worker` (Railway builds amd64
-   natively; the arm64 NEON issue only affects local Apple-Silicon builds). Confirm service
-   creation + cost. Healthcheck green.
-5. [MICHAEL + BUILD] LAPTOP-OFF PROOF: with the Mac shut, trigger the service for one AIPG take;
-   receipts = Railway logs, master+sheet objects on Blob (byte counts), CMO flag raised, zero
-   auto-schedule. This is the acceptance.
+1. [MICHAEL] Railway auth: `railway login` (interactive) OR set a durable `RAILWAY_API_TOKEN` in
+   Doppler for non-interactive redeploys (currently the Doppler value is invalid -- flagged).
+2. [BUILD] `railway up . --service media-worker --path-as-root --ci` from the repo root. Railway
+   builds amd64 natively (the arm64 NEON issue only affects local Apple-Silicon builds).
+3. [MICHAEL] Confirm the service has a generated domain (`railway domain`) so port/health
+   detection works, and set `VIDEO_ROUTINE_TOKEN` + `BLOB_READ_WRITE_TOKEN`.
+4. Trigger a render:
+   `curl -X POST https://<service>/run-video -H "authorization: Bearer $VIDEO_ROUTINE_TOKEN"
+   -H "content-type: application/json" -d '{"take":"<blob pathname>","edit":{"brand":"aipg"}}'`
+   Response: `{"status":"staged","master_url":...,"sheet_url":...}`. Receipts: Railway logs, the
+   master+sheet objects on Blob, a new `renders_th/REVIEW_LOG.md` entry stamped `NOT scheduled`.
+5. Watchdog: `services/watchdog.py` health-checks the service (config `media_worker.health_url`,
+   critical severity, GitHub-issue alert rail).
 
-## Non-negotiables the deploy must preserve
-Real-take VO only; file-133 + file-117 gates with visible receipts before anything ships; CMO
-go before scheduling; stage-and-flag, never silent auto-fire; Book'd = Ryan; no fabricated stats;
-no em-dashes. The X-280 guard (Task 1) is already in the loader.
+## Non-negotiables the deploy preserves
+Real-take VO only; file-133 + file-117 gates with visible receipts before anything ships; CMO go
+before scheduling; stage-and-flag, never silent auto-fire; Book'd = Ryan; no fabricated stats;
+no em-dashes.
 
 ## Fast-follows (not blockers)
-build_short clone-voice path; stock_fetch port; Blob-poll auto-trigger; the licensed music bed
-(build in the cloud version, never locally first).
+File-117 no-face AIPG finish (VO-over-b-roll via `build_short` + a Studio `broll_at` edit spec --
+flagged); canonical brand logos from Iris (the baked marks are placeholders -- flagged);
+durable `RAILWAY_API_TOKEN` for hands-free redeploy (flagged); Blob-poll auto-trigger.

@@ -18,8 +18,12 @@ Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
      (marketing_deliverables/*studio_weekly_<date>*) within cadence? The batch has
      no live URL, so the committed folder is the truth signal. Disabled until the
      social-engine cloud cutover (the laptop engine does not commit its folder).
-  5. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
-  6. env-truth: the live service should call itself 'production' in production.
+  5. Media-worker health: the cloud (Railway) off-laptop video render service is
+     trigger-driven, so reachability of its health endpoint IS the signal -- down
+     means no video can be produced off the laptop (critical). Config-gated on
+     media_worker.health_url.
+  6. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
+  7. env-truth: the live service should call itself 'production' in production.
 
 Anomaly deduplication:
   Fingerprint-based in watchdog_state. current_state_json() reads this table for
@@ -388,6 +392,37 @@ def _check_monitor_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+def _check_media_worker_health(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Is the cloud media worker (the off-laptop video render service on Railway)
+    reachable? It is trigger-driven -- there is no render cadence to age-check --
+    so the meaningful signal is simply whether its health endpoint answers 200.
+    If it is down, no one can produce a video off the laptop (the whole point of
+    the service), so the default severity is critical. Config-driven: runs only
+    when media_worker.health_url is set; an absent URL means not-yet-deployed and
+    the check skips, matching the disabled-by-default idiom of the other checks.
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mw = cfg.get("media_worker") or {}
+    url = (mw.get("health_url") or "").strip()
+    if not url:
+        return []  # not configured / not deployed yet
+    sev = mw.get("severity", "critical")
+    try:
+        code = _http_status(url)
+    except requests.RequestException as e:
+        return [Anomaly(
+            "media-worker-down",
+            f"Cloud media worker health check failed ({type(e).__name__}) at {url} "
+            f"-- off-laptop video rendering is unavailable.", sev)]
+    if code != 200:
+        return [Anomaly(
+            f"media-worker-http-{code}",
+            f"Cloud media worker returned HTTP {code} at {url} "
+            f"-- off-laptop video rendering may be down.", sev)]
+    return []
+
+
 def _revenue_summary(days: int) -> dict:
     from tools.revenue_tracker import get_revenue_summary
     return get_revenue_summary(days=days) or {}
@@ -445,6 +480,7 @@ _CHECKS = (
     _check_blog_freshness,
     _check_weekly_social_freshness,
     _check_monitor_freshness,
+    _check_media_worker_health,
     _check_emails_sent,
     _check_env_truth,
 )

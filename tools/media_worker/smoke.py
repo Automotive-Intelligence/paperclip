@@ -32,7 +32,7 @@ def main() -> int:
     ok &= _runs("ffprobe", ["-version"])
     ok &= _runs("whisper-cli", ["--help"])
     try:
-        f = ImageFont.truetype("/opt/media/fonts/InterTight.ttf", 78)
+        f = ImageFont.truetype("/root/avo-telemetry/assets/fonts/InterTight.ttf", 78)
         f.set_variation_by_name("Black")  # variable-font support (FreeType)
     except Exception as e:
         print(f"variable font FAILED: {e}"); ok = False

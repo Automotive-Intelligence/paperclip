@@ -59,6 +59,14 @@ monitors:
 emails_sent:
   window_days: 7
   min_prospects_for_alert: 25
+# media_worker: the cloud (Railway) off-laptop video render service. Trigger-driven,
+# so there is no render cadence to age-check -- the signal is simply reachability of
+# its health endpoint. ENABLED (unlike the disabled-until-cutover checks) because the
+# worker is already live in the cloud; if it goes down, no video can be produced off
+# the laptop. Clearing health_url disables the check (treated as not-yet-deployed).
+media_worker:
+  health_url: https://media-worker-production-361a.up.railway.app/health
+  severity: critical
 telemetry:
   repo: salesdroid/avo-telemetry
   max_stale_hours: 48

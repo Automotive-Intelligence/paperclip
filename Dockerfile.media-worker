@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg git build-essential cmake ca-certificates fonts-dejavu-core curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Blob I/O (list/download/put) is pure HTTP via tools/media_worker/blob_http.py
+# (private PUT uses the x-vercel-blob-access header), so no vercel CLI / Node needed.
+
 # whisper.cpp (pinned to match the Mac that produced the working .words JSON: 1.9.1)
 # -> whisper-cli on PATH. The whisper-cli cmake target exists at this tag (it did
 # NOT at v1.7.2, where the CLI example was still named "main").
@@ -20,19 +23,33 @@ RUN git clone --depth 1 --branch ${WHISPER_REF} https://github.com/ggerganov/whi
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir Pillow requests
+RUN pip install --no-cache-dir Pillow requests uvicorn
 
-# fonts (bundled) + the pipeline scripts + the worker package
-COPY assets/fonts/ /opt/media/fonts/
+# Railway runs a Dockerfile service's startCommand WITHOUT shell expansion, so the
+# inherited `uvicorn app:app --host 0.0.0.0 --port $PORT` reaches uvicorn with a
+# literal "$PORT". Shadow the uvicorn console script with a wrapper that ignores the
+# passed args and binds the real $PORT (via python -m uvicorn, the module, no recursion).
+RUN printf '#!/bin/sh\nexec python -m uvicorn app:app --host 0.0.0.0 --port "${PORT:-8080}"\n' \
+      > /usr/local/bin/uvicorn && chmod +x /usr/local/bin/uvicorn
+
+# static brand assets baked at the HOME-relative paths the ported scripts hardcode
+# (container HOME=/root): fonts at /root/avo-telemetry/assets/fonts, brand logos at
+# /root/<brand>-site/public and /root/avo-telemetry/assets/brand. No mounts needed to render.
+COPY assets/home_stage/ /root/
+# the pipeline scripts + the worker package
 COPY scripts/ /app/scripts/
 COPY tools/ /app/tools/
 COPY services/ /app/services/
+# Railway forces `uvicorn app:app` (paperclip railway.toml) onto this service too,
+# so provide /app/app.py: uvicorn app:app runs the media-worker ASGI app.
+COPY tools/media_worker/asgi.py /app/app.py
 
-ENV FONTS_DIR=/opt/media/fonts \
-    WHISPER_MODEL=/opt/media/cache/whisper/ggml-small.en.bin \
-    STOCK_LIB=/opt/media/cache/stock_library \
-    BRAND_ASSETS=/opt/media/cache/brand_assets \
-    RENDERS_OUT=/opt/media/out
+# No render env vars needed: job.py drives render_one with explicit paths and
+# has its own WORK / MODEL_PREFIX / OUT_PREFIX defaults; render.py reads no env.
 
 RUN python -c "import PIL; print('pillow', PIL.__version__)"
-CMD ["python", "tools/media_worker/smoke.py"]
+
+# No ENTRYPOINT: Railway replaces it with the startCommand from paperclip's
+# railway.toml (`uvicorn app:app --host 0.0.0.0 --port $PORT`), which now runs
+# the media-worker ASGI app at /app/app.py. A local `docker run` uses this CMD.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
