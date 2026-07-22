@@ -77,3 +77,5 @@ Avo/
 
 # media_worker package tests must be tracked despite the repo-wide test_*.py ignore
 !tests/media_worker/test_*.py
+# new watchdog test files must be tracked too (siblings predate the test_*.py ignore)
+!tests/test_watchdog_*.py
