@@ -14,6 +14,7 @@ Spec: ~/avo-telemetry/marketing_deliverables/121_social_publishing_os.md
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -22,6 +23,8 @@ from datetime import datetime, timezone as _tz
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s\)\]\}>\"']+")
 _CENTRAL = ZoneInfo("America/Chicago")
@@ -77,13 +80,21 @@ class NoRailError(RuntimeError):
 
 
 class MediaUnreachableError(RuntimeError):
-    """A post's source media URL could not be downloaded at SCHEDULE time.
+    """Internal signal: a post's source media URL could not be downloaded at
+    SCHEDULE time.
 
     Zernio fetches media only at PUBLISH time (days after we schedule), so an
     external URL that 404s by then fails the post silently. We re-host every
-    non-media.zernio.com URL onto Zernio's CDN up front; if the source can't be
-    fetched we raise THIS (naming the URL + content_id) rather than scheduling a
-    job with dead media. (3 WD posts failed this way: agency-pricing-hero.png.)"""
+    non-media.zernio.com URL onto Zernio's CDN up front. If a source can't be
+    fetched, rehost_media_urls raises THIS (carrying the offending .url and
+    .content_id). load_jobs catches it and SKIPS-AND-FLAGS only that one job —
+    it no longer aborts the whole batch — so every reachable job still schedules.
+    (3 WD posts failed this way: agency-pricing-hero.png.)"""
+
+    def __init__(self, message: str, *, url: str = "", content_id: str = ""):
+        super().__init__(message)
+        self.url = url
+        self.content_id = content_id
 
 
 BRAND_ALIASES = {
@@ -206,8 +217,9 @@ def rehost_media_urls(media_urls: List[str], *, content_id: str, brand: str,
     For each URL whose host is not media.zernio.com we download the bytes NOW and
     re-upload them to Zernio's CDN, replacing the URL with the returned persistent
     one. URLs already on media.zernio.com pass through untouched (never re-uploaded).
-    A download failure raises MediaUnreachableError naming the URL + content_id, so
-    a job with dead media fails at SCHEDULE time instead of silently at publish."""
+    A download failure raises MediaUnreachableError (carrying the offending url +
+    content_id); load_jobs catches it to SKIP-AND-FLAG that one job rather than
+    schedule a Zernio post whose media would 404 at publish time."""
     out: List[str] = []
     for url in media_urls:
         host = (urlsplit(url).hostname or "").lower()
@@ -220,8 +232,8 @@ def rehost_media_urls(media_urls: List[str], *, content_id: str, brand: str,
             raise MediaUnreachableError(
                 f"media unreachable at schedule time for content_id={content_id} "
                 f"(brand={brand}): {url} — {type(e).__name__}: {e}. "
-                "Refusing to schedule a Zernio post whose media would 404 at "
-                "publish time.") from e
+                "Skipping this post — its media would 404 at publish time.",
+                url=url, content_id=content_id) from e
         filename = os.path.basename(urlsplit(url).path) or f"{content_id}.bin"
         out.append(upload(file_bytes=file_bytes, filename=filename, mime_type=mime_type))
     return out
@@ -303,13 +315,32 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
             if not commit:
                 results.append({"job": job, "action": "dry-run", "detail": f"-> {job.scheduled_for}"})
                 continue
-            # Re-host external media onto Zernio's CDN NOW (fail loud if a source
-            # URL is dead) so the persistent url is baked into the scheduled post
-            # — Zernio otherwise fetches the original only at publish time.
-            media_urls = rehost_media_urls(
-                job.media_urls or [], content_id=job.content_id, brand=brand,
-                fetch=r.get("media_fetch") or _default_media_fetch,
-                upload=r.get("media_upload") or _default_media_upload)
+            # Re-host external media onto Zernio's CDN NOW so the persistent url is
+            # baked into the scheduled post — Zernio otherwise fetches the original
+            # only at publish time. If a source URL is dead we SKIP-AND-FLAG only
+            # THIS job (loud warning + skip row + result entry) and keep going, so
+            # the rest of the batch still schedules instead of the whole run aborting.
+            try:
+                media_urls = rehost_media_urls(
+                    job.media_urls or [], content_id=job.content_id, brand=brand,
+                    fetch=r.get("media_fetch") or _default_media_fetch,
+                    upload=r.get("media_upload") or _default_media_upload)
+            except MediaUnreachableError as e:
+                logger.warning(
+                    "[social_load] SKIPPING post content_id=%s (brand=%s): media "
+                    "unreachable at schedule time: %s", e.content_id, brand, e)
+                append_registry({"brand": brand, "rail": "zernio", "platform": job.platform,
+                                 "account_id": job.account_id, "post_id": None,
+                                 "scheduled_for": job.scheduled_for, "tz": job.tz,
+                                 "content_id": job.content_id,
+                                 "utm_campaign": f"{brand}_{job.content_id}",
+                                 "entry_point": job.entry_point,
+                                 "media_url": e.url,
+                                 "action": "skipped", "skip_reason": "media_unreachable"})
+                results.append({"job": job, "action": "skipped",
+                                "detail": {"reason": "media_unreachable", "url": e.url,
+                                           "content_id": e.content_id, "message": str(e)}})
+                continue
             res = r["zernio_publish"](content=content, platforms=[job.platform],
                                       account_ids=[job.account_id] if job.account_id else None,
                                       scheduled_for=job.scheduled_for,

@@ -288,20 +288,46 @@ class TestMediaRehost(unittest.TestCase):
         self.assertEqual(calls["upload"], [])    # not re-uploaded
         self.assertEqual(calls["publish"][0]["media_urls"], [cdn])
 
-    def test_unreachable_media_raises_loudly_and_does_not_schedule(self):
-        from tools.social_load import load_jobs, MediaUnreachableError
-
-        def dead(url):
-            raise RuntimeError("HTTP 404")
-
-        rails, calls = _fake_rails(fetch=dead)
+    def test_unreachable_media_is_skipped_and_flagged_others_still_schedule(self):
+        # SKIP-AND-FLAG (not fail-whole-batch): a job whose media 404s is skipped
+        # and reported, but every OTHER reachable job in the batch still schedules.
+        # No MediaUnreachableError propagates out of load_jobs.
+        from tools.social_load import load_jobs
         bad = "https://worshipdigital.co/blog/agency-pricing-hero.png"
-        with self.assertRaises(MediaUnreachableError) as ctx:
-            load_jobs([self._job(media_urls=[bad])], commit=True, rails=rails)
-        msg = str(ctx.exception)
-        self.assertIn(bad, msg)                  # names the offending URL
-        self.assertIn("hero9", msg)              # names the content_id
-        self.assertEqual(calls["publish"], [])   # nothing was scheduled
+        good = "https://worshipdigital.co/blog/reachable-hero.png"
+
+        def selective(url):
+            if url == bad:
+                raise RuntimeError("HTTP 404")
+            return (b"\x89PNG\r\n\x1a\n", "image/png")
+
+        rails, calls = _fake_rails(fetch=selective)
+        jobs = [self._job(content_id="hero9", media_urls=[bad]),
+                self._job(content_id="ok10", platform="linkedin", media_urls=[good])]
+        # does NOT raise — the batch is not aborted
+        res = load_jobs(jobs, commit=True, rails=rails)
+
+        # the bad job is skipped (not scheduled) and reported with url + content_id + reason
+        self.assertEqual(res[0]["action"], "skipped")
+        detail = res[0]["detail"]
+        self.assertEqual(detail["content_id"], "hero9")
+        self.assertEqual(detail["url"], bad)
+        self.assertIn("reason", detail)
+        self.assertIn(bad, detail.get("message", ""))    # loud message names the URL
+        self.assertIn("hero9", detail.get("message", ""))  # ...and the content_id
+
+        # the OTHER reachable job still schedules normally, onto the CDN
+        self.assertEqual(res[1]["action"], "scheduled")
+        self.assertEqual(len(calls["publish"]), 1)       # only the reachable job scheduled
+        self.assertTrue(calls["publish"][0]["media_urls"][0].startswith(
+            "https://media.zernio.com/"))
+
+        # the skip is recorded in the registry too, consistent with logged jobs
+        rows = [json.loads(l) for l in open(os.environ["SOCIAL_REGISTRY_PATH"])]
+        skip_rows = [r for r in rows if r.get("action") == "skipped"]
+        self.assertEqual(len(skip_rows), 1)
+        self.assertEqual(skip_rows[0]["content_id"], "hero9")
+        self.assertEqual(skip_rows[0]["media_url"], bad)
 
     def test_dry_run_does_not_touch_media(self):
         # Preview must not upload bytes or hit the network; re-host is commit-only.

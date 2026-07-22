@@ -45,6 +45,32 @@ def test_unknown_keys_filtered_and_load_jobs_called():
     assert out["results"][0]["brand"] == "autointelligence"
 
 
+def test_skipped_media_is_surfaced_in_summary():
+    # A dead-media job is skipped (not error/conflict), so the run stays ok=True
+    # but the skip is surfaced with url + content_id + reason for visibility.
+    class _J:
+        brand = "worshipdigital"
+        platform = "twitter"
+
+    def _fake(jobs, **k):
+        return [
+            {"job": _J(), "action": "scheduled", "detail": {"_id": "zp1"}},
+            {"job": _J(), "action": "skipped",
+             "detail": {"reason": "media_unreachable",
+                        "url": "https://worshipdigital.co/blog/dead-hero.png",
+                        "content_id": "hero9", "message": "..."}},
+        ]
+
+    with mock.patch.object(sls, "load_jobs", side_effect=_fake):
+        out = sls.run_social_load([_JOB, _JOB])
+    assert out["ok"] is True                      # skip does not fail the whole run
+    assert out["counts"]["skipped"] == 1
+    assert len(out["skipped"]) == 1
+    assert out["skipped"][0]["content_id"] == "hero9"
+    assert out["skipped"][0]["url"] == "https://worshipdigital.co/blog/dead-hero.png"
+    assert out["skipped"][0]["reason"] == "media_unreachable"
+
+
 def test_error_action_makes_not_ok():
     class _J:
         brand = "autointelligence"
