@@ -132,8 +132,10 @@ async def _handle_run_video(scope: dict, receive, send) -> None:
 
 
 async def app(scope, receive, send):
-    """Raw ASGI app: GET (any path, including /health) -> 200 for Railway's
-    healthcheck; POST /run-video -> the authenticated render trigger."""
+    """Raw ASGI app: GET /health (and /) -> 200 for Railway's healthcheck;
+    POST /run-video -> the authenticated render trigger; anything else -> 404.
+    Only the real health path answers 200 so a monitor hitting a typo'd path
+    cannot read "healthy" for a route that does not exist."""
     if scope["type"] == "lifespan":
         while True:
             message = await receive()
@@ -153,6 +155,12 @@ async def app(scope, receive, send):
         await _handle_run_video(scope, receive, send)
         return
 
-    await send({"type": "http.response.start", "status": 200,
+    if method == "GET" and path in ("/health", "/"):
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"ok"})
+        return
+
+    await send({"type": "http.response.start", "status": 404,
                 "headers": [(b"content-type", b"text/plain")]})
-    await send({"type": "http.response.body", "body": b"ok"})
+    await send({"type": "http.response.body", "body": b"not found"})

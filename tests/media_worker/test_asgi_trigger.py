@@ -52,6 +52,16 @@ def test_get_health_returns_200():
     assert status_of(messages) == 200
 
 
+def test_get_unknown_path_returns_404():
+    # A typo'd path must NOT read as healthy, else the watchdog signal is coarse.
+    scope = {"type": "http", "method": "GET", "path": "/healthz-typo", "headers": []}
+    send, messages = make_send()
+
+    asyncio.run(asgi.app(scope, make_receive(), send))
+
+    assert status_of(messages) == 404
+
+
 def test_run_video_wrong_token_returns_401_and_does_not_render(monkeypatch):
     monkeypatch.setenv("VIDEO_ROUTINE_TOKEN", "the-real-token")
     calls = []

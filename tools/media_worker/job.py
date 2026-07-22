@@ -75,8 +75,8 @@ def push_outputs(res: dict, out_prefix: str, take_pathname: str, token: str, put
 
 def append_blob_review_log(entry: str, token: str, prefix: str = "renders_th/") -> None:
     """Append a timestamped `entry` line to the Blob object `<prefix>REVIEW_LOG.md`,
-    mirroring services.media_worker.append_review_log's local-file format
-    (`\\n- <utc iso> <entry>\\n`) but backed by Blob instead of a local path.
+    in the `\\n- <utc iso> <entry>\\n` line format, backed by Blob instead of a
+    local path.
     Downloads the existing REVIEW_LOG.md first (empty string if it does not
     exist yet on Blob), appends, and pushes the combined content back. This
     is the stage-and-flag: a human/watchdog reads it later, nothing here

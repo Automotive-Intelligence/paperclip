@@ -44,9 +44,8 @@ COPY services/ /app/services/
 # so provide /app/app.py: uvicorn app:app runs the media-worker ASGI app.
 COPY tools/media_worker/asgi.py /app/app.py
 
-ENV WHISPER_MODEL=/opt/media/cache/whisper/ggml-small.en.bin \
-    STOCK_LIB=/root/stock_library \
-    RENDERS_OUT=/opt/media/out
+# No render env vars needed: job.py drives render_one with explicit paths and
+# has its own WORK / MODEL_PREFIX / OUT_PREFIX defaults; render.py reads no env.
 
 RUN python -c "import PIL; print('pillow', PIL.__version__)"
 

@@ -1,23 +1,20 @@
 """Direct Vercel Blob HTTP I/O for the private store.
 
-LIST and DOWNLOAD hit the Blob REST API directly with the read-write token as
-a Bearer header (verified against the real private store: a GET without that
-header returns only a few bytes of error body, not the file). PUT still
-shells out to the `vercel` CLI; a bare HTTP PUT is not the verified path for
-writing to a private store, and the CLI is the one that accepts
-`--access private` + `--rw-token`. The CLI prints the resulting URL to
-STDERR, so it is parsed out of stdout+stderr combined."""
+All three operations hit the Blob REST API directly with the read-write token
+as a Bearer header -- no vercel CLI / Node in the container. LIST and DOWNLOAD
+require the Bearer header (verified against the real private store: a GET
+without it returns only a few bytes of error body, not the file). PUT writes
+to the private store with the `x-vercel-blob-access: private` header (the
+header @vercel/blob itself sends) and returns the resulting URL from the JSON
+response body, so nothing needs to be parsed out of CLI output."""
 from __future__ import annotations
 
 import os
-import re
-import subprocess
 from typing import List
 
 import requests
 
 DEFAULT_BASE = "https://blob.vercel-storage.com"
-_URL_RE = re.compile(r"https://\S+")
 
 
 def blob_list(prefix: str, token: str, base: str = DEFAULT_BASE) -> List[dict]:
