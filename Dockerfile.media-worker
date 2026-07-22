@@ -46,4 +46,4 @@ RUN python -c "import PIL; print('pillow', PIL.__version__)"
 # job.py is a Railway one-shot: it pulls its own model + take from Blob
 # (tools/media_worker/blob_http.py) and pushes the master + sheet back, so
 # there is no separate boot-pull entrypoint step here.
-CMD ["python", "-m", "tools.media_worker.server"]
+ENTRYPOINT ["python", "-m", "tools.media_worker.server"]
