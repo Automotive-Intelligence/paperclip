@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -60,6 +61,75 @@ def test_get_unknown_path_returns_404():
     asyncio.run(asgi.app(scope, make_receive(), send))
 
     assert status_of(messages) == 404
+
+
+# ---- POST /poll (auto-trigger) ----
+
+def _poll_scope(token=None):
+    headers = [(b"authorization", ("Bearer " + token).encode())] if token else []
+    return {"type": "http", "method": "POST", "path": "/poll", "headers": headers}
+
+
+def test_poll_without_token_returns_401_and_does_not_poll(monkeypatch):
+    monkeypatch.setenv("VIDEO_ROUTINE_TOKEN", "secret")
+    called = []
+    monkeypatch.setattr(asgi, "poll_once", lambda env: called.append(env))
+    send, messages = make_send()
+    asyncio.run(asgi.app(_poll_scope(None), make_receive(), send))
+    assert status_of(messages) == 401
+    assert called == []
+
+
+def test_poll_with_token_spawns_poll_and_returns_polling(monkeypatch):
+    monkeypatch.setenv("VIDEO_ROUTINE_TOKEN", "secret")
+    done = threading.Event()
+    seen = {}
+
+    def fake_poll_once(env):
+        seen["env"] = env
+        done.set()
+        return {"queued": 0, "rendered": []}
+
+    monkeypatch.setattr(asgi, "poll_once", fake_poll_once)
+    send, messages = make_send()
+    asyncio.run(asgi.app(_poll_scope("secret"), make_receive(), send))
+    assert status_of(messages) == 200
+    assert json_body_of(messages)["status"] == "polling"
+    assert done.wait(timeout=5), "poll_once should run in the background thread"
+    assert "env" in seen  # the background thread actually invoked poll_once
+
+
+def test_poll_when_render_in_flight_returns_busy(monkeypatch):
+    monkeypatch.setenv("VIDEO_ROUTINE_TOKEN", "secret")
+    called = []
+    monkeypatch.setattr(asgi, "poll_once", lambda env: called.append(env))
+    # simulate a render already holding the shared lock
+    assert asgi._render_lock.acquire(blocking=False)
+    try:
+        send, messages = make_send()
+        asyncio.run(asgi.app(_poll_scope("secret"), make_receive(), send))
+        assert status_of(messages) == 200
+        assert json_body_of(messages)["status"] == "busy"
+        assert called == []  # nothing rendered while busy
+    finally:
+        asgi._render_lock.release()
+
+
+def test_run_video_when_render_in_flight_returns_409_busy(monkeypatch):
+    monkeypatch.setenv("VIDEO_ROUTINE_TOKEN", "secret")
+    called = []
+    monkeypatch.setattr(asgi, "run_job", lambda env: called.append(env) or {"master_url": "u", "sheet_url": "s"})
+    assert asgi._render_lock.acquire(blocking=False)
+    try:
+        scope = {"type": "http", "method": "POST", "path": "/run-video",
+                 "headers": [(b"authorization", b"Bearer secret")]}
+        send, messages = make_send()
+        asyncio.run(asgi.app(scope, make_receive(b'{"take":"x"}'), send))
+        assert status_of(messages) == 409
+        assert json_body_of(messages)["status"] == "busy"
+        assert called == []  # did not render while busy
+    finally:
+        asgi._render_lock.release()
 
 
 def test_run_video_wrong_token_returns_401_and_does_not_render(monkeypatch):

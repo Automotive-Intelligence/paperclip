@@ -3127,6 +3127,31 @@ scheduler.add_job(_watchdog_hourly, CronTrigger(minute=0, timezone=CST),
     replace_existing=True, misfire_grace_time=1800)
 
 
+def _poll_media_worker():
+    """Blob-poll auto-trigger clock: nudge the cloud media worker to render the
+    next unrendered take from its Blob render queue. The worker owns all listing
+    + render + stage logic (tools/media_worker/poller.poll_once); this is only
+    the periodic HTTP nudge, fire-and-forget with a short timeout (/poll returns
+    immediately after spawning the render, so the POST does not block on it). A
+    missed tick is picked up next cycle; the worker being down is already a
+    Watchdog anomaly. Inert until MEDIA_WORKER_URL is set, so it ships dark."""
+    import requests
+    base = (os.getenv("MEDIA_WORKER_URL") or "").rstrip("/")
+    if not base:
+        return
+    token = os.getenv("VIDEO_ROUTINE_TOKEN", "")
+    try:
+        r = requests.post(f"{base}/poll",
+                          headers={"authorization": f"Bearer {token}"}, timeout=15)
+        logging.info("[media_worker_poll] %s/poll -> %s %s", base, r.status_code, r.text[:120])
+    except requests.RequestException as e:
+        logging.warning("[media_worker_poll] nudge failed: %s", e)
+
+scheduler.add_job(_poll_media_worker, CronTrigger(minute="*/15", timezone=CST),
+    id="media_worker_poll", name="Media Worker — Blob-poll auto-trigger (15m)",
+    replace_existing=True, misfire_grace_time=600)
+
+
 def _run_slipstream_mwf():
     """Railway Slipstream engine: one full-Slipstream post per ENABLED brand,
     auto-published on a green Vercel build. Replaces the laptop blog engine,
