@@ -22,6 +22,18 @@ from zoneinfo import ZoneInfo
 import requests
 
 from services.avo_state_commit import update_state
+# The classifier lives in ONE place now (services/reply_classify.py) so the TP
+# heartbeat and the growth monitor can never drift apart. AUTOREPLY/NEGATIVE/
+# POSITIVE and classify_text are re-exported so `tp_daily_engine.<name>` stays a
+# valid reference for anything that imported them from here historically.
+from services.reply_classify import (  # noqa: F401  (re-export for back-compat)
+    AUTOREPLY,
+    IB,
+    NEGATIVE,
+    POSITIVE,
+    classify,
+    classify_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +43,6 @@ logger = logging.getLogger(__name__)
 _CT = ZoneInfo("America/Chicago")
 
 _STATE_PATH = "team_principal_state.md"
-IB = "https://api.instantly.ai/api/v2"
 BRANDS = {  # brand -> Instantly key env var
     "AIPG": "INSTANTLY_API_KEY_AIPG",
     "Book'd": "INSTANTLY_API_KEY_BOOKD",
@@ -39,45 +50,15 @@ BRANDS = {  # brand -> Instantly key env var
     "AvI": "INSTANTLY_API_KEY_AVI",
 }
 
-NEGATIVE = re.compile(
-    r"\bno thanks?\b|\bnot interested\b|\bunsubscribe\b|\bremove me\b|\bstop\b|"
-    r"\bdo not (contact|email)\b|\bno longer (being )?used\b|\bpiss off\b|\bspam\b",
-    re.I)
-AUTOREPLY = re.compile(
-    r"auto[- ]?reply|out of (the )?office|automatic reply|unavailable|on vacation|"
-    r"away from my desk|will not be monitored|delivery (status|has failed)",
-    re.I)
 
+def outbound_truth() -> Tuple[list, list, list]:
+    """Live send/reply counts per brand.
 
-def classify(H, repliers) -> int:
-    """A reply is not a lead. Read the words. Return count of GENUINELY interested
-    humans. (Vendored verbatim from scripts/tp_daily.py -- shared with the growth
-    monitor.)"""
-    interested = 0
-    for l in repliers:
-        em = l.get("email", "")
-        try:
-            r = requests.get(f"{IB}/emails", headers=H,
-                             params={"limit": 10, "search": em}, timeout=25)
-            msgs = [m for m in (r.json().get("items", []) if r.ok else [])
-                    if (m.get("from_address_email") or "").lower() == em.lower()]
-        except Exception:
-            continue
-        for m in msgs:
-            body = (m.get("body") or {}).get("text") or (m.get("body") or {}).get("html") or ""
-            body = re.sub(r"<[^>]+>", " ", body)
-            body = re.split(r"On .{0,60}wrote:|-----Original|From:", body)[0]
-            text = f"{m.get('subject','')} {body}"
-            if AUTOREPLY.search(text) or NEGATIVE.search(text):
-                continue
-            interested += 1
-            break
-    return interested
-
-
-def outbound_truth() -> Tuple[list, list]:
-    """Live send/reply counts per brand. (Vendored verbatim from scripts/tp_daily.py.)"""
-    rows, blind = [], []
+    Returns (rows, blind, needs_review): rows are per-campaign tuples
+    (brand, campaign, leads, sent, replies, interested); blind is the
+    unverifiable brands; needs_review is the de-duped list of replier emails we
+    could NOT confidently classify (surfaced so a human confirms none is a lead)."""
+    rows, blind, needs_review = [], [], []
     for brand, env in BRANDS.items():
         key = os.getenv(env, "").strip()
         if not key:
@@ -106,13 +87,21 @@ def outbound_truth() -> Tuple[list, list]:
                     break
             sent = sum(1 for l in leads if l.get("timestamp_last_contact"))
             repliers = [l for l in leads if (l.get("email_reply_count") or 0) > 0]
-            interested = classify(H, repliers)
+            interested, review = classify(H, repliers)
+            for em in review:
+                if em not in needs_review:
+                    needs_review.append(em)
             rows.append((brand, c["name"][:40], len(leads), sent, len(repliers), interested))
-    return rows, blind
+    return rows, blind, needs_review
 
 
-def build_block(rows: list, blind: list, today: str) -> str:
-    """The fixed Foundation-Bible heartbeat format. (Vendored verbatim.)"""
+def build_block(rows: list, blind: list, today: str, needs_review: Optional[list] = None) -> str:
+    """The fixed Foundation-Bible heartbeat format.
+
+    `needs_review` is the fail-closed safety net: replies we could not classify are
+    NOT counted as interested, but they are surfaced on a "Needs eyes" line so an
+    odd-worded real lead still gets a human look instead of vanishing."""
+    needs_review = needs_review or []
     total_sent = sum(r[3] for r in rows)
     total_replies = sum(r[4] for r in rows)
     total_interested = sum(r[5] for r in rows)
@@ -132,6 +121,12 @@ def build_block(rows: list, blind: list, today: str) -> str:
     if blind:
         lines.append(f"**Blind spots (cannot verify, treat as UNKNOWN not as zero):** "
                      f"{', '.join(blind)}.\n")
+    if needs_review:
+        n = len(needs_review)
+        lines.append(
+            f"**Needs eyes: {n} unclassified repl{'y' if n == 1 else 'ies'} "
+            f"(NOT counted as interested; a human must confirm none is a real lead):** "
+            f"{', '.join(needs_review)}.\n")
     rejections = total_replies - total_interested
     if total_interested > 0:
         decision = (f"WORK THE {total_interested} INTERESTED REPLY(IES) TODAY. That is the "
@@ -175,20 +170,24 @@ def run_tp_daily(*, token: Optional[str] = None, commit: bool = True,
     team_principal_state.md (idempotent). Returns a receipt."""
     token = token or os.getenv("SLIPSTREAM_GH_TOKEN", "").strip()
     today = (now or datetime.now(_CT)).strftime("%Y-%m-%d")
-    rows, blind = outbound_truth()
-    block = build_block(rows, blind, today)
+    rows, blind, needs_review = outbound_truth()
+    block = build_block(rows, blind, today, needs_review)
     total_interested = sum(r[5] for r in rows)
     total_sent = sum(r[3] for r in rows)
     receipt = {"ok": True, "date": today, "brands_read": len(rows), "blind": blind,
-               "interested": total_interested, "sent": total_sent, "committed": False}
+               "interested": total_interested, "sent": total_sent,
+               "needs_review": needs_review, "needs_review_count": len(needs_review),
+               "committed": False}
     if not commit:
         receipt["preview"] = block
         return receipt
     res = update_state(_STATE_PATH, _insert_transform(block, today),
-                       f"TP daily {today}: sent={total_sent}, interested={total_interested}",
+                       f"TP daily {today}: sent={total_sent}, interested={total_interested}, "
+                       f"needs_review={len(needs_review)}",
                        token)
     receipt["committed"] = res.get("committed", False)
     receipt["skipped_idempotent"] = res.get("skipped", False)
-    logger.info("[tp-daily] %s committed=%s skipped=%s interested=%s",
-                today, receipt["committed"], receipt.get("skipped_idempotent"), total_interested)
+    logger.info("[tp-daily] %s committed=%s skipped=%s interested=%s needs_review=%s",
+                today, receipt["committed"], receipt.get("skipped_idempotent"),
+                total_interested, len(needs_review))
     return receipt

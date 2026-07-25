@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from services.avo_state_commit import update_state
-from services.tp_daily_engine import IB, classify
+from services.reply_classify import IB, classify
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +78,18 @@ def build_block(today: str) -> str:
                 alarms.append(f"{brand}: bounce rate {rate:.1%} exceeds {BOUNCE_ALARM:.0%} "
                               f"on {sent} sends -- PAUSE and re-verify the list")
             if replies:
-                interested = classify(H, [l for l in leads if (l.get("email_reply_count") or 0) > 0])
+                interested, review = classify(
+                    H, [l for l in leads if (l.get("email_reply_count") or 0) > 0])
                 if interested:
                     alarms.append(f"{brand}: {interested} INTERESTED reply(ies) -- the closest "
                                   f"thing to money we have. Work it today.")
-                elif sent >= 300:
-                    alarms.append(f"{brand}: {sent} sent, {replies} replies, ALL negative or "
-                                  f"auto -- zero interest. Offer/list problem, not volume.")
+                if review:
+                    alarms.append(f"{brand}: {len(review)} reply(ies) we could NOT classify -- "
+                                  f"eyeball, do not assume zero: {', '.join(review)}")
+                elif not interested and sent >= 300:
+                    alarms.append(f"{brand}: {sent} sent, {replies} replies, ALL negative "
+                                  f"(clear rejections) -- zero interest. Offer/list problem, "
+                                  f"not volume.")
     if alarms:
         out.append("\n**🚨 ACT ON THESE:**")
         out += [f"- {a}" for a in alarms]
