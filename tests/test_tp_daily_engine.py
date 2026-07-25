@@ -48,7 +48,28 @@ def test_insert_transform_idempotent_when_today_present():
 
 
 def test_run_dry_run_returns_preview_no_commit():
-    with mock.patch.object(T, "outbound_truth", return_value=([("AvI", "c", 1, 1, 0, 0)], [])):
+    # outbound_truth now returns (rows, blind, needs_review).
+    with mock.patch.object(T, "outbound_truth",
+                           return_value=([("AvI", "c", 1, 1, 0, 0)], [], [])):
         r = T.run_tp_daily(commit=False, token="tok")
     assert r["committed"] is False
     assert "preview" in r and "TP daily" in r["preview"]
+    assert r["needs_review_count"] == 0
+
+
+def test_build_block_renders_needs_eyes_line_and_does_not_inflate_interested():
+    # An unclassified reply must NOT count as interested, but MUST be surfaced.
+    b = T.build_block([("AvI", "Dealer #1", 186, 60, 1, 0)], [], "2026-07-25",
+                      needs_review=["ooo@dealer.com"])
+    assert "interested humans = 0" in b
+    assert "Needs eyes: 1 unclassified reply" in b
+    assert "ooo@dealer.com" in b
+    assert "—" not in b   # no em-dashes
+
+
+def test_run_dry_run_surfaces_needs_review_in_preview():
+    with mock.patch.object(T, "outbound_truth",
+                           return_value=([("AvI", "c", 5, 5, 1, 0)], [], ["ooo@dealer.com"])):
+        r = T.run_tp_daily(commit=False, token="tok")
+    assert r["needs_review_count"] == 1
+    assert "Needs eyes" in r["preview"] and "ooo@dealer.com" in r["preview"]
