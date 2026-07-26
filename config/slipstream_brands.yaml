@@ -1,6 +1,7 @@
 # Slipstream engine brand config. Adding a brand = a config edit, not code.
-# Only Next.js/Vercel brands with the MDX component kit. WD excluded (no blog
-# subsystem yet, mid-rebuild).
+# Most brands are Next.js/Vercel with the MDX component kit (format omitted =>
+# defaults to "mdx"). Worship Digital stores posts as TS objects in one file
+# (format: ts_posts_array) and is human-merged (auto_merge: false).
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence
@@ -34,3 +35,16 @@ brands:
     money_pages: ["/10-agents", "/blog"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bae_topics.md
+  worshipdigital:
+    repo: salesdroid/worship-digital        # NOTE: worship-digital, NOT worship-digital-site
+    domain: worshipdigital.co
+    enabled: true
+    auto_merge: false                         # first runs are human-merged; see engine ceiling
+    format: ts_posts_array
+    posts_file: src/content/posts.ts
+    business_key: worshipdigital
+    voice: "transparent, founder-access (Michael), SMB-advocate, plain owner-to-owner, anti-buzzword; full-service marketing partner for small businesses worldwide; NOT faith/church framing; never name DataMoon"
+    components: ["answer","definition","callout","quote","stat","sources","image","links","table"]
+    money_pages: ["/quote","/intent","/services","/pricing","/contact"]
+    queue_repo: salesdroid/avo-telemetry
+    queue_path: scripts/blog_queues/wd_topics.md
