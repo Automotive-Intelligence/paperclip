@@ -20,7 +20,7 @@ import yaml
 
 from datetime import timedelta
 
-from services.slipstream_assemble import assemble_mdx
+from services.slipstream_assemble import assemble_mdx, assemble_ts_posts
 from services.slipstream_generate import generate_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
@@ -119,9 +119,11 @@ def _social_md(post: Dict[str, Any]) -> str:
             f"## X\n\n{s.get('x','')}\n")
 
 
-def _pr_body(post: Dict[str, Any], image_count: int) -> str:
+def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx") -> str:
+    gate = "validate_blocks" if fmt == "ts_posts_array" else "validate_post"
     return (f"Automated Slipstream post (Railway engine).\n\n- slug: `{post['slug']}`\n"
-            f"- images: {image_count} (hero + in-body)\n- gates: passed (validate_post)\n\n"
+            f"- format: `{fmt}`\n"
+            f"- images: {image_count} (hero + in-body)\n- gates: passed ({gate})\n\n"
             "Vercel preview builds this PR = the build-gate. Review + merge to publish.")
 
 
@@ -146,10 +148,16 @@ def run_brand(
 
     try:
         cfg = _brand_cfg(brand_key)
+        fmt = cfg.get("format", "mdx")
         topic = topic or _next_topic(cfg, token)
         post = generate_post(cfg, topic)
         images = generate_images(post["image_prompts"], cfg["business_key"])
-        mdx, violations = assemble_mdx(post, date_str)
+        # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
+        # every other brand keeps the MDX file. `payload` is the file body either way.
+        if fmt == "ts_posts_array":
+            payload, violations = assemble_ts_posts(post, date_str, cfg, token)
+        else:
+            payload, violations = assemble_mdx(post, date_str)
     except Exception as e:
         logger.exception("[slipstream] %s produce failed", brand_key)
         return {"ok": False, "held": True, "violations": [f"{type(e).__name__}: {e}"],
@@ -160,15 +168,20 @@ def run_brand(
         return {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
 
     slug = post["slug"]
-    files: Dict[str, Any] = {f"{cfg['blog_dir']}/{slug}.mdx": mdx,
-                             f"{cfg['blog_dir']}/{slug}.social.md": _social_md(post)}
+    # WD writes the whole posts.ts array file (+images) INSTEAD of the mdx/social.md
+    # pair. The social pack still flows to _distribute_social via post["social"].
+    if fmt == "ts_posts_array":
+        files: Dict[str, Any] = {cfg["posts_file"]: payload}
+    else:
+        files = {f"{cfg['blog_dir']}/{slug}.mdx": payload,
+                 f"{cfg['blog_dir']}/{slug}.social.md": _social_md(post)}
     for name, data in images.items():
         files[f"public/blog/{slug}-{name}.png"] = data
 
     branch = f"slipstream/{slug}-{date_str}"
     try:
         pr_url = publish_post(cfg["repo"], branch, files, f"content: {post['title']}",
-                              _pr_body(post, len(images)), token)
+                              _pr_body(post, len(images), fmt), token)
     except Exception as e:
         logger.exception("[slipstream] %s publish failed", brand_key)
         return {"ok": False, "held": False, "violations": [], "slug": slug,
@@ -177,8 +190,15 @@ def run_brand(
     logger.info("[slipstream] %s PR opened %s (%d images)", brand_key, pr_url, len(images))
     result = {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
 
-    if not auto_merge:
-        return {**result, "published": False, "note": "PR opened (auto_merge off)"}
+    # auto_merge is a HARD CEILING from config: a brand with `auto_merge: false`
+    # NEVER squash-merges automatically, even if a caller passes auto_merge=True.
+    # This gates supervised first runs (WD) so a scheduled run can only OPEN a PR.
+    effective_auto_merge = auto_merge and bool(cfg.get("auto_merge", True))
+    if not effective_auto_merge:
+        note = "PR opened (auto_merge off)"
+        if auto_merge and not cfg.get("auto_merge", True):
+            note = "PR opened (auto_merge disabled in brand config; human merges)"
+        return {**result, "published": False, "note": note}
 
     # Auto-publish, gated on the Vercel preview build. A red build HOLDS the PR.
     m = merge_when_green(cfg["repo"], pr_url, token)

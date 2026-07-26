@@ -24,6 +24,8 @@ _MODEL = os.getenv("SLIPSTREAM_MODEL", "google/gemini-2.5-flash")
 _MAX_TOKENS = 8000
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
+# ts_posts_array (Worship Digital): a structured block array instead of an MDX string.
+_REQUIRED_FIELDS_TS = ("title", "description", "slug", "body", "image_prompts", "social")
 
 
 logger = logging.getLogger(__name__)
@@ -122,9 +124,84 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
     )
 
 
+def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
+    """The WD (ts_posts_array) output contract: a STRUCTURED block array using WD's
+    Block type names, not an MDX string. Same AEO + brand rules as the MDX path."""
+    money = ", ".join(brand_cfg.get("money_pages") or [])
+    return (
+        "You write ONE agency-standard, AEO-maximized blog post for a brand, and return "
+        "ONLY a JSON object (no prose, no fence). Brand voice: "
+        f"{brand_cfg.get('voice', 'transparent, plain, owner-to-owner, anti-buzzword')}.\n\n"
+        "HARD RULES: no em-dashes anywhere (use periods or commas); no fabricated metrics or "
+        "unsourced industry numbers (only cite real published sources in a 'stat' or 'sources' "
+        "block, otherwise stay qualitative); 1200-1800 words; never name DataMoon.\n\n"
+        "OUTPUT: the post body is a STRUCTURED ARRAY of typed blocks (NOT markdown, NOT MDX). "
+        "Each block is an object with a \"type\" and the fields for that type. Allowed blocks:\n"
+        '- {"type":"answer","text":str}  the answer-first block, lifted verbatim by answer engines\n'
+        '- {"type":"p","text":str}\n'
+        '- {"type":"h2","text":str}  a question-shaped heading\n'
+        '- {"type":"h3","text":str}\n'
+        '- {"type":"ul","items":[str,...]}\n'
+        '- {"type":"definition","term":str,"text":str}  one entity-clarity definition\n'
+        '- {"type":"callout","title":str,"text":str}  a highlighted key insight\n'
+        '- {"type":"quote","text":str}  a pull quote\n'
+        '- {"type":"image","src":"/blog/{slug}-{name}.png","alt":str,"caption":str}  {name} MUST match an image_prompts name\n'
+        '- {"type":"links","title":str,"items":[{"label":str,"href":str},...]}  internal money-page links\n'
+        '- {"type":"table","headers":[str,...],"rows":[[str,...],...]}\n'
+        '- {"type":"stat","value":str,"label":str,"source":str,"href":str}  ONLY with a real cited source\n'
+        '- {"type":"sources","title":str,"items":[{"label":str,"href":str},...]}  real external authority links\n\n'
+        "STRUCTURE RULES (obey exactly):\n"
+        "- The FIRST block MUST be an 'answer' block (2-4 sentence direct answer). Exactly ONE answer block.\n"
+        "- Include exactly one 'definition' block early, at least one 'callout', at least one 'quote'.\n"
+        "- Section headings are 'h2' blocks phrased as questions, each followed by a 'p' that opens with a direct answer.\n"
+        "- Include at least TWO 'image' blocks whose src is /blog/{slug}-{name}.png and whose {name} matches an image_prompts entry.\n"
+        f"- Include one 'links' block with 2-3 internal money-page links ({money}).\n"
+        "- Include one 'sources' block with 1-2 real external authority links.\n\n"
+        "The JSON object must have EXACTLY these keys:\n"
+        '- "title": string\n'
+        '- "description": string (<=160 chars)\n'
+        '- "slug": kebab-case string\n'
+        '- "category": short string (e.g. "Working With an Agency", "Local SEO")\n'
+        '- "heroAlt": string describing the hero image (no text/logos/faces)\n'
+        '- "ogTitle": string\n'
+        '- "faq": array of 3-4 {"q": str, "a": str} objects, each answer 2-4 sentences\n'
+        '- "body": the array of typed blocks described above\n'
+        '- "image_prompts": array of 3-4 objects {"name": str, "prompt": str}. The FIRST MUST be'
+        " name \"hero\". Each prompt is a cinematic scene with NO text, logos, or faces.\n"
+        '- "social": {"linkedin": str, "x": str} voice-locked drafts, no em-dashes.\n'
+    )
+
+
+def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
+    """Generate one WD post as a structured block array. Raises GenerationError on
+    a malformed result. The Post is assembled + gated (validate_blocks) downstream."""
+    user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
+    post = _llm_json(_system_prompt_ts(brand_cfg), user)
+
+    for field in _REQUIRED_FIELDS_TS:
+        if field not in post:
+            raise GenerationError(f"generated post missing field: {field}")
+    body = post.get("body")
+    if not isinstance(body, list) or not body:
+        raise GenerationError("body is not a non-empty block array")
+    if (body[0] or {}).get("type") != "answer":
+        raise GenerationError("first body block must be an 'answer' block (answer-first)")
+    prompts = post.get("image_prompts") or []
+    if not any((p or {}).get("name") == "hero" for p in prompts):
+        raise GenerationError("image_prompts has no 'hero' entry (zero-image = auto-HOLD)")
+    if not isinstance(post.get("social"), dict) or not post["social"].get("x"):
+        raise GenerationError("social drafts incomplete")
+    return post
+
+
 def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     """Generate one structured post for `topic`. Raises GenerationError on a
-    malformed result. The MDX is assembled + gated downstream."""
+    malformed result. Dispatches on the brand's output format: the default MDX path
+    returns body_mdx; the ts_posts_array path (WD) returns a structured block array.
+    Assembled + gated downstream."""
+    if brand_cfg.get("format") == "ts_posts_array":
+        return _generate_post_ts(brand_cfg, topic)
+
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
     post = _llm_json(_system_prompt(brand_cfg), user)
 
