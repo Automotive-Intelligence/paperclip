@@ -396,6 +396,31 @@ def test_pass_auto_approves_and_pushes(monkeypatch):
     assert "push" in calls and calls["push"]["business_key"] == "wd"
 
 
+def test_needs_human_queues_but_does_not_push(monkeypatch):
+    # Closes the gap between the existing FAIL and PASS run() tests:
+    # NEEDS_HUMAN must still queue (medium risk -> pending_approval, for a
+    # 1-click human review) but must NOT fire the CRM push -- that only
+    # happens on auto_approved.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.verify",
+        lambda r: VerificationResult(
+            "NEEDS_HUMAN", "x.com", {"kind": "site_down", "evidence": "e"}, None, 0.5, ["log"], "ambiguous",
+        ),
+    )
+    calls = {}
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._queue",
+        lambda **k: (calls.setdefault("queue", k), "pending_approval")[1],
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._push_crm",
+        lambda **k: calls.setdefault("push", k) or ("twenty", [{"status": "created"}]),
+    )
+    out = run(VerificationRequest("wd", {"domain_on_file": "x.com", "company_name": "X"}, None, "rebuild"))
+    assert out["queue_status"] == "pending_approval"
+    assert "push" not in calls and out["crm"] is None
+
+
 def test_fail_never_queues_or_pushes(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate.verify",
