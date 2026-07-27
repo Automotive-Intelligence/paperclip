@@ -77,6 +77,43 @@ def test_pinch_zoom_block_is_a_defect(monkeypatch):
     assert "maximum-scale" in d["evidence"]
 
 
+def test_slow_ttfb_is_a_defect(monkeypatch):
+    # Healthy headers (no cert error, no down status) and a homepage with a
+    # real CTA (so it clears no_contact_path) -- only TTFB trips the defect.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {"status": 200, "cert_cn": d, "location": None},
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._fetch_html",
+        lambda d: "<html><body>Contact us for a free quote.</body></html>",
+    )
+    monkeypatch.setattr("services.sdr_verification_gate._ttfb", lambda d: 2.3)
+    d = check_defect("poolologypools.com", "rebuild")
+    assert d and d["kind"] == "slow_load"
+    assert "2.3" in d["evidence"]
+
+
+def test_cert_warning_is_a_defect(monkeypatch):
+    # A TLS cert failure aborts curl before any HTTP status is captured
+    # (status ends up None, same as a down site) -- cert_error must be
+    # checked BEFORE the generic down-status check so this gets the more
+    # specific, more actionable "cert_warning" diagnosis, not "site_down".
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {
+            "status": None,
+            "cert_cn": None,
+            "location": None,
+            "cert_error": True,
+            "cert_error_detail": "curl: (60) SSL certificate problem: unable to get local issuer certificate",
+        },
+    )
+    d = check_defect("badcert.example.com", "rebuild")
+    assert d and d["kind"] == "cert_warning"
+    assert "certificate" in d["evidence"].lower()
+
+
 def test_healthy_site_has_no_defect(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate._fetch_html",

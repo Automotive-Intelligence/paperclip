@@ -162,20 +162,32 @@ _SKILL_PATH = Path(__file__).parent.parent / ".agents/skills/prospect-verificati
 
 
 def _probe_headers(domain: str) -> dict:
-    """curl -sIv: returns {cert_cn, location, status}. Pure Python, no LLM."""
-    out = subprocess.run(
+    """curl -sIv: returns {cert_cn, location, status, cert_error,
+    cert_error_detail}. Pure Python, no LLM."""
+    verbose = subprocess.run(
         ["curl", "-sIv", "--max-time", "12", f"https://{domain}"],
         capture_output=True, text=True,
-    ).stderr + subprocess.run(
+    )
+    plain = subprocess.run(
         ["curl", "-sI", "--max-time", "12", f"https://{domain}"],
         capture_output=True, text=True,
-    ).stdout
+    )
+    out = verbose.stderr + plain.stdout
     cn = re.search(r"subject: CN=([^\s]+)", out)
     loc = re.search(r"(?i)^location:\s*(\S+)", out, re.M)
     st = re.search(r"HTTP/\d(?:\.\d)?\s+(\d{3})", out)
-    return {"cert_cn": cn.group(1) if cn else None,
-            "location": loc.group(1) if loc else None,
-            "status": int(st.group(1)) if st else None}
+    # A TLS cert failure aborts the handshake before curl ever gets an HTTP
+    # status line, so `status` is None in this case too -- the caller
+    # (check_defect) checks cert_error FIRST to surface this more specific
+    # diagnosis instead of burying it in the generic "site_down" bucket.
+    cert_m = re.search(r"^.*(?:SSL certificate problem|certificate verify failed).*$", verbose.stderr, re.I | re.M)
+    return {
+        "cert_cn": cn.group(1) if cn else None,
+        "location": loc.group(1) if loc else None,
+        "status": int(st.group(1)) if st else None,
+        "cert_error": cert_m is not None,
+        "cert_error_detail": cert_m.group(0).strip() if cert_m else None,
+    }
 
 
 def _host(url: str) -> str:
@@ -263,18 +275,32 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
     """Check 2 -- real defect / live signal (spec section 5), motion-dependent.
 
     `rebuild`: confirm a checkable defect ON the resolved primary site --
-    down, pinch-zoom block, no contact path, or slow TTFB. Returns
-    {"kind":..., "evidence":...} (evidence is the literal probe output) or
-    None if the site is genuinely healthy.
+    a TLS cert problem, HTTP down, pinch-zoom block, no contact path, or
+    slow TTFB. Returns {"kind":..., "evidence":...} (evidence is the
+    literal probe output) or None if the site is genuinely healthy.
+    `cert_error` is checked BEFORE the generic down-status check: a TLS
+    handshake failure means curl never gets an HTTP status line either
+    (status ends up None, same signature as a plain down site), so
+    checking cert_error first surfaces the more specific, more actionable
+    "cert_warning" diagnosis instead of burying it in "site_down".
 
-    `intent`/`permit`: out of scope for this sub-project's fixtures (spec
-    decomposition items 2-4); returns a placeholder freshness marker so
-    verify() has a non-None defect to carry forward for those motions.
+    `intent`/`permit`: re-confirming a DataMoon intent signal or permit
+    record against its live source is NOT wired yet (spec decomposition
+    items 2-4 / enrichment sub-project #2-3). Returns None -- NEVER a
+    canned "re-confirmed" string, which would be fabricated evidence (the
+    plan's Global Constraints: "Never fabricate ... a defect"). verify()
+    is responsible for routing a None defect on these motions to
+    NEEDS_HUMAN rather than auto-PASSing on an unconfirmed signal.
     """
     if motion != "rebuild":
-        return {"kind": f"{motion}_signal", "evidence": "signal freshness re-confirmed upstream"}
+        return None
 
     h = _probe_headers(real_domain)
+    if h.get("cert_error"):
+        return {
+            "kind": "cert_warning",
+            "evidence": h.get("cert_error_detail") or f"TLS certificate problem on https://{real_domain}",
+        }
     if h["status"] in (404, 410, 500, 502, 503) or h["status"] is None:
         return {"kind": "site_down", "evidence": f"HTTP {h['status']} on https://{real_domain}"}
 
