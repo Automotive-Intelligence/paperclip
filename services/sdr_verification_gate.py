@@ -143,6 +143,8 @@ from __future__ import annotations
 import re
 import subprocess
 
+import requests
+
 
 def _probe_headers(domain: str) -> dict:
     """curl -sIv: returns {cert_cn, location, status}. Pure Python, no LLM."""
@@ -186,3 +188,56 @@ def resolve_primary_site(domain_on_file: str, company_name: str, city: str = "")
             continue
         break
     return current, log
+
+
+def _fetch_html(domain: str) -> str:
+    return requests.get(f"https://{domain}", timeout=12, allow_redirects=True).text
+
+
+def _ttfb(domain: str) -> float:
+    out = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{time_starttransfer}",
+         "--max-time", "20", f"https://{domain}"],
+        capture_output=True, text=True,
+    ).stdout
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def check_defect(real_domain: str, motion: str) -> "dict | None":
+    """Check 2 -- real defect / live signal (spec section 5), motion-dependent.
+
+    `rebuild`: confirm a checkable defect ON the resolved primary site --
+    down, pinch-zoom block, no contact path, or slow TTFB. Returns
+    {"kind":..., "evidence":...} (evidence is the literal probe output) or
+    None if the site is genuinely healthy.
+
+    `intent`/`permit`: out of scope for this sub-project's fixtures (spec
+    decomposition items 2-4); returns a placeholder freshness marker so
+    verify() has a non-None defect to carry forward for those motions.
+    """
+    if motion != "rebuild":
+        return {"kind": f"{motion}_signal", "evidence": "signal freshness re-confirmed upstream"}
+
+    h = _probe_headers(real_domain)
+    if h["status"] in (404, 410, 500, 502, 503) or h["status"] is None:
+        return {"kind": "site_down", "evidence": f"HTTP {h['status']} on https://{real_domain}"}
+
+    html = _fetch_html(real_domain).lower()
+    if re.search(r"maximum-scale=1|user-scalable=no", html):
+        m = re.search(r'viewport[^>]*content="[^"]*"', html)
+        return {"kind": "pinch_zoom_blocked", "evidence": m.group(0) if m else "maximum-scale=1"}
+
+    has_tel = "tel:" in html
+    has_form = "<form" in html
+    has_cta = any(k in html for k in ("get a quote", "contact us", "call now", "get started"))
+    if not (has_tel or has_form or has_cta):
+        return {"kind": "no_contact_path", "evidence": "no tel:, no <form>, no CTA on homepage"}
+
+    ttfb = _ttfb(real_domain)
+    if ttfb > 1.5:
+        return {"kind": "slow_load", "evidence": f"TTFB {ttfb:.2f}s (curl time_starttransfer)"}
+
+    return None
