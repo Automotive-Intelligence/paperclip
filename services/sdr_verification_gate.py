@@ -142,8 +142,13 @@ from __future__ import annotations
 
 import re
 import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
 
 import requests
+
+_SKILL_PATH = Path(__file__).parent.parent / ".agents/skills/prospect-verification/SKILL.md"
 
 
 def _probe_headers(domain: str) -> dict:
@@ -270,3 +275,106 @@ def check_contact(entity: dict, real_domain: str) -> "dict | None":
         return {"name": entity.get("contact_name"), "phone": entity["contact_phone"], "source": src}
 
     return None  # broker-only or none -> unverified
+
+
+# ---------------------------------------------------------------------------
+# Types (spec section 4 -- the unit's contract)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class VerificationRequest:
+    business_key: str   # brand: wd | avi | aipg | bookd
+    entity: dict         # {company_name, domain_on_file, contact_name?, contact_phone?, contact_email?}
+    signal: Any           # the intent_scoring.Signal that flagged this entity
+    motion: str          # rebuild | intent | permit
+
+
+@dataclass
+class VerificationResult:
+    verdict: str                          # "PASS" | "FAIL" | "NEEDS_HUMAN"
+    real_primary_site: Optional[str]
+    verified_defect: Optional[dict]
+    verified_contact: Optional[dict]
+    confidence: float
+    evidence_log: list = field(default_factory=list)
+    reason: str = ""
+
+
+def _primary_is_our_domain(domain_on_file: str, real: str) -> bool:
+    return _host(domain_on_file) == _host(real)
+
+
+# ---------------------------------------------------------------------------
+# The one LLM judgment call (spec section 7 -- no lock-in by construction)
+# ---------------------------------------------------------------------------
+
+
+def _load_skill_prompt() -> str:
+    """The portable judgment prompt -- plain text, NOT a Claude Project (spec
+    section 7 / plan Global Constraints), so swapping the model is a
+    one-adapter change. Read fresh each call so an edit to the skill file
+    takes effect without a code deploy."""
+    return _SKILL_PATH.read_text()
+
+
+def _judgment_user_prompt(req: "VerificationRequest", real: str, defect: dict, log: list) -> str:
+    """The per-request evidence the skill's judgment is applied to. Kept
+    separate from the (portable, static) system prompt because
+    studio_social_llm.llm_json takes system/user as two separate strings."""
+    return (
+        f"DOMAIN_ON_FILE: {req.entity.get('domain_on_file')}\n"
+        f"COMPANY_NAME: {req.entity.get('company_name')}\n"
+        f"RESOLVED_PRIMARY_SITE: {real}\n"
+        f"CANDIDATE_DEFECT: {defect}\n"
+        f"EVIDENCE_LOG:\n" + "\n".join(log)
+    )
+
+
+# ---------------------------------------------------------------------------
+# verify() -- runs the three checks in order, deterministic verdict, ONE LLM
+# judgment call only for the genuinely ambiguous case (spec section 6).
+# ---------------------------------------------------------------------------
+
+
+def verify(req: VerificationRequest) -> VerificationResult:
+    """Runs the three checks IN ORDER and short-circuits as soon as a
+    verdict is reached -- this both matches spec section 5's "a rebuild-motion
+    prospect FAILS here [at Check 1]" wording literally, and avoids running
+    Check 2 (a real HTTP fetch) or Check 3 (another real HTTP fetch) against
+    a domain already known to be the wrong target.
+    """
+    dof = req.entity.get("domain_on_file", "")
+    real, log = resolve_primary_site(dof, req.entity.get("company_name", ""), req.entity.get("city", ""))
+
+    # rebuild motion: if their real primary site is NOT the one on file,
+    # there is nothing to fix -> FAIL (never queued, never contacted).
+    # Checks 2/3 never run against a domain that already failed Check 1.
+    if req.motion == "rebuild" and not _primary_is_our_domain(dof, real):
+        return VerificationResult(
+            "FAIL", real, None, None, 0.0, log,
+            f"real primary site is {real}, not {dof}; not a rebuild target",
+        )
+
+    defect = check_defect(real, req.motion)
+    if req.motion == "rebuild" and defect is None:
+        return VerificationResult("FAIL", real, None, None, 0.0, log, "no verifiable defect on primary site")
+
+    # ambiguous primary-site defect (e.g. site down): ONE llm judgment call,
+    # must cite the deterministic evidence already collected.
+    ambiguous = req.motion == "rebuild" and defect and defect["kind"] == "site_down"
+    if ambiguous:
+        from services.studio_social_llm import llm_json
+
+        system = _load_skill_prompt()
+        user = _judgment_user_prompt(req, real, defect, log)
+        j = llm_json(system, user)
+        log.append(f"llm judgment: {j.get('rationale', '')}")
+        if j.get("verdict") == "NEEDS_HUMAN":
+            return VerificationResult("NEEDS_HUMAN", real, defect, None, 0.5, log, j.get("rationale", ""))
+
+    contact = check_contact(req.entity, real)
+    if contact is None:
+        return VerificationResult("NEEDS_HUMAN", real, defect, contact, 0.5, log, "contact unverified (no published number)")
+
+    return VerificationResult("PASS", real, defect, contact, 0.85, log, "all checks passed")

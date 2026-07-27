@@ -8,7 +8,13 @@ docs/superpowers/specs/2026-07-27-sdr-verification-gate-design.md for the
 contract.
 """
 
-from services.sdr_verification_gate import check_contact, check_defect, resolve_primary_site
+from services.sdr_verification_gate import (
+    VerificationRequest,
+    check_contact,
+    check_defect,
+    resolve_primary_site,
+    verify,
+)
 
 
 def test_cert_cn_mismatch_resolves_to_real_host(monkeypatch):
@@ -76,3 +82,47 @@ def test_broker_only_contact_is_rejected(monkeypatch):
         {"contact_name": "X", "contact_phone": "+15550001111", "phone_source": "rocketreach"},
         "example.com",
     ) is None
+
+
+def _req(**kw):
+    base = dict(
+        business_key="wd",
+        entity={"domain_on_file": "x.com", "company_name": "X"},
+        signal=None,
+        motion="rebuild",
+    )
+    base.update(kw)
+    return VerificationRequest(**base)
+
+
+def test_all_pass_is_high_confidence_pass(monkeypatch):
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_defect",
+        lambda d, m: {"kind": "slow_load", "evidence": "TTFB 2.3s"},
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_contact",
+        lambda e, d: {"name": "A", "phone": "+1555", "source": "site"},
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._primary_is_our_domain", lambda dof, real: True
+    )
+    r = verify(_req())
+    assert r.verdict == "PASS" and r.confidence >= 0.75
+
+
+def test_real_site_elsewhere_is_fail(monkeypatch):
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("realsite.com", ["alias"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._primary_is_our_domain", lambda dof, real: False
+    )
+    monkeypatch.setattr("services.sdr_verification_gate.check_defect", lambda d, m: None)
+    r = verify(_req())
+    assert r.verdict == "FAIL"
