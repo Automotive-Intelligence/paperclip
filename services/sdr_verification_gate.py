@@ -139,3 +139,50 @@ PINNED INTERFACES (Task 0 -- read from source 2026-07-27, do not guess)
 """
 
 from __future__ import annotations
+
+import re
+import subprocess
+
+
+def _probe_headers(domain: str) -> dict:
+    """curl -sIv: returns {cert_cn, location, status}. Pure Python, no LLM."""
+    out = subprocess.run(
+        ["curl", "-sIv", "--max-time", "12", f"https://{domain}"],
+        capture_output=True, text=True,
+    ).stderr + subprocess.run(
+        ["curl", "-sI", "--max-time", "12", f"https://{domain}"],
+        capture_output=True, text=True,
+    ).stdout
+    cn = re.search(r"subject: CN=([^\s]+)", out)
+    loc = re.search(r"(?i)^location:\s*(\S+)", out, re.M)
+    st = re.search(r"HTTP/\d(?:\.\d)?\s+(\d{3})", out)
+    return {"cert_cn": cn.group(1) if cn else None,
+            "location": loc.group(1) if loc else None,
+            "status": int(st.group(1)) if st else None}
+
+
+def _host(url: str) -> str:
+    return re.sub(r"^https?://", "", (url or "")).split("/")[0]
+
+
+def resolve_primary_site(domain_on_file: str, company_name: str, city: str = "") -> "tuple[str, list[str]]":
+    """Check 1 -- real primary site (spec section 5).
+
+    Follows a cert-CN alias (e.g. Bonick's cert is issued to
+    www.bonicklandscaping.com, not bonick.com) or a 301 redirect (e.g.
+    Stride -> stridepestcontrol.com) to the terminal host. Returns
+    (real_domain, evidence_log).
+    """
+    log, current = [], domain_on_file
+    for _ in range(3):  # follow up to 3 redirects/aliases
+        h = _probe_headers(current)
+        log.append(f"probe {current}: status={h['status']} cn={h['cert_cn']} loc={h['location']}")
+        if h["location"] and _host(h["location"]) != current:
+            current = _host(h["location"])
+            continue
+        if h["cert_cn"] and _host(h["cert_cn"]) != current:
+            log.append(f"cert CN {h['cert_cn']} != {current}; alias -> resolving to CN host")
+            current = _host(h["cert_cn"])
+            continue
+        break
+    return current, log
