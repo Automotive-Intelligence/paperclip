@@ -304,7 +304,19 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
     if h["status"] in (404, 410, 500, 502, 503) or h["status"] is None:
         return {"kind": "site_down", "evidence": f"HTTP {h['status']} on https://{real_domain}"}
 
-    html = _fetch_html(real_domain).lower()
+    try:
+        html = _fetch_html(real_domain).lower()
+    except Exception as exc:
+        # Fail closed (fix-round-2, FIX B): a transient GET failure on an
+        # otherwise-healthy-looking site must never raise out of verify()
+        # and abort a batch mid-run. This is NOT "confirmed no defect" --
+        # it is "could not check" -- so it is deliberately NOT the plain
+        # None a genuinely healthy site returns below; verify() special-
+        # cases this "fetch_error" kind to NEEDS_HUMAN rather than the
+        # "no verifiable defect -> FAIL" a real None means for a rebuild
+        # motion.
+        return {"kind": "fetch_error", "evidence": f"HTML fetch failed for https://{real_domain}: {exc}"}
+
     if re.search(r"maximum-scale=1|user-scalable=no", html):
         m = re.search(r'viewport[^>]*content="[^"]*"', html)
         return {"kind": "pinch_zoom_blocked", "evidence": m.group(0) if m else "maximum-scale=1"}
@@ -342,8 +354,17 @@ def check_contact(entity: dict, real_domain: str) -> "dict | None":
     phone at all is still itself a verified contact channel. Returns
     {"name","phone","email","source"} (phone/email may be None if only the
     other was found) or None if nothing is verifiable.
+
+    A transient GET failure (fix-round-2, FIX B) is treated the same as
+    "nothing found on the page" -- returns None, same as the module's
+    existing "unverified" outcome, which verify() already routes to
+    NEEDS_HUMAN. No sentinel needed here (unlike check_defect): None
+    already means the same thing -- "could not verify" -- in both cases.
     """
-    html = _fetch_html(real_domain)
+    try:
+        html = _fetch_html(real_domain)
+    except Exception:
+        return None
     tel = re.search(r"tel:(\+?\d[\d\-\(\) ]{9,})", html)
     mailto = re.search(r"mailto:([^\"'>\s?]+)", html, re.I)
     email = mailto.group(1) if mailto else None
@@ -448,6 +469,19 @@ def verify(req: VerificationRequest) -> VerificationResult:
         )
 
     defect = check_defect(real, req.motion)
+
+    if defect is not None and defect.get("kind") == "fetch_error":
+        # Fail closed (fix-round-2, FIX B): a transient fetch failure is
+        # "could not check", not "confirmed no defect" -- it must NOT be
+        # treated as the "no verifiable defect -> FAIL" case just below,
+        # which would wrongly and permanently drop a possibly-real rebuild
+        # target over a network hiccup. NEEDS_HUMAN is the safe, recoverable
+        # outcome.
+        return VerificationResult(
+            "NEEDS_HUMAN", real, defect, None, 0.5, log,
+            "verification could not complete: " + defect.get("evidence", ""),
+        )
+
     if req.motion == "rebuild" and defect is None:
         return VerificationResult("FAIL", real, None, None, 0.0, log, "no verifiable defect on primary site")
 

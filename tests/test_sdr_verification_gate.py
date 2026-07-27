@@ -114,6 +114,25 @@ def test_cert_warning_is_a_defect(monkeypatch):
     assert "certificate" in d["evidence"].lower()
 
 
+def test_check_defect_fetch_failure_is_not_an_exception(monkeypatch):
+    # resolve_primary_site already wraps its _fetch_html call in try/except
+    # (FIX 1); check_defect's did not. A transient GET failure on an
+    # otherwise-healthy-looking (200, no cert error) site must not raise out
+    # of check_defect -- it must come back as a distinguishable "we could
+    # not check" result, not silently masquerade as "confirmed no defect".
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {"status": 200, "cert_cn": d, "location": None, "cert_error": False},
+    )
+
+    def raising_fetch(d):
+        raise ConnectionError("transient DNS failure")
+
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", raising_fetch)
+    d = check_defect("example.com", "rebuild")
+    assert d and d["kind"] == "fetch_error"
+
+
 def test_healthy_site_has_no_defect(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate._fetch_html",
@@ -152,6 +171,14 @@ def test_email_only_contact_is_verified_via_mailto(monkeypatch):
     assert c and c["email"] == "hello@poolologypools.com"
     assert c["phone"] is None
     assert c["source"] == "site"
+
+
+def test_check_contact_fetch_failure_is_unverified_not_an_exception(monkeypatch):
+    def raising_fetch(d):
+        raise ConnectionError("transient DNS failure")
+
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", raising_fetch)
+    assert check_contact({"contact_name": "X"}, "example.com") is None
 
 
 def test_broker_only_contact_is_rejected(monkeypatch):
@@ -298,6 +325,31 @@ def test_llm_missing_verdict_key_fails_closed_to_human(monkeypatch):
         "services.sdr_verification_gate.check_contact",
         lambda e, d: {"name": "A", "phone": "+1555", "source": "site"},
     )
+    r = verify(_req())
+    assert r.verdict == "NEEDS_HUMAN"
+
+
+def test_fetch_failure_yields_needs_human_not_exception(monkeypatch):
+    # End-to-end: a raising _fetch_html on an otherwise-healthy (200, no
+    # cert error) rebuild-motion site must surface as a NEEDS_HUMAN verdict
+    # out of verify(), never propagate as an unhandled exception that could
+    # abort a batch mid-run.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._primary_is_our_domain", lambda dof, real: True
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {"status": 200, "cert_cn": d, "location": None, "cert_error": False},
+    )
+
+    def raising_fetch(d):
+        raise ConnectionError("transient DNS failure")
+
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", raising_fetch)
     r = verify(_req())
     assert r.verdict == "NEEDS_HUMAN"
 
