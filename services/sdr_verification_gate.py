@@ -301,7 +301,13 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
             "kind": "cert_warning",
             "evidence": h.get("cert_error_detail") or f"TLS certificate problem on https://{real_domain}",
         }
-    if h["status"] in (404, 410, 500, 502, 503) or h["status"] is None:
+    # ANY status >= 400 (not just the old {404,410,500,502,503} allowlist)
+    # is site_down (fix-round-2, FIX C): a 403, or any other 4xx/5xx code an
+    # explicit list would miss, must never fall through to HTML analysis of
+    # an error page, which can surface a spurious defect (e.g. a 403's
+    # "Forbidden" body has no tel:/form/CTA, which used to misfire as
+    # no_contact_path).
+    if h["status"] is None or h["status"] >= 400:
         return {"kind": "site_down", "evidence": f"HTTP {h['status']} on https://{real_domain}"}
 
     try:

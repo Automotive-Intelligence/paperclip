@@ -133,6 +133,26 @@ def test_check_defect_fetch_failure_is_not_an_exception(monkeypatch):
     assert d and d["kind"] == "fetch_error"
 
 
+def test_403_status_is_site_down_not_analyzed_as_no_contact_path(monkeypatch):
+    # Any status >= 400 must be treated as site_down -- the error-page HTML
+    # must never be analyzed for pinch-zoom/no_contact_path/TTFB defects.
+    # The old down-set ({404,410,500,502,503,None}) missed 403 (and other
+    # 4xx/5xx codes), letting it fall through to HTML analysis.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {"status": 403, "cert_cn": d, "location": None},
+    )
+    # If this were (incorrectly) HTML-analyzed, this body would trip
+    # no_contact_path (no tel:, no <form>, no CTA) -- but it must never get
+    # that far, so _fetch_html should not even need to be called correctly.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._fetch_html", lambda d: "<html><body>403 Forbidden</body></html>"
+    )
+    d = check_defect("example.com", "rebuild")
+    assert d and d["kind"] == "site_down"
+    assert "403" in d["evidence"]
+
+
 def test_healthy_site_has_no_defect(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate._fetch_html",
