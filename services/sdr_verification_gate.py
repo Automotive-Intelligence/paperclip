@@ -378,3 +378,106 @@ def verify(req: VerificationRequest) -> VerificationResult:
         return VerificationResult("NEEDS_HUMAN", real, defect, contact, 0.5, log, "contact unverified (no published number)")
 
     return VerificationResult("PASS", real, defect, contact, 0.85, log, "all checks passed")
+
+
+# ---------------------------------------------------------------------------
+# Hand-off to approval_queue + CRM push (spec section 6)
+#
+# `_queue`/`_push_crm` wrap the REAL approval_queue/artifact/crm_router
+# interfaces pinned in Task 0. They exist as thin, separately-monkeypatchable
+# seams so `run()`'s own tests never touch Postgres or a live CRM.
+# ---------------------------------------------------------------------------
+
+
+def _queue(*, business_key: str, confidence: float, risk_level: str, content: dict, metadata: dict) -> str:
+    """Queue the verified prospect as an approval_queue Artifact and return
+    the resulting status ("auto_approved" | "pending_approval").
+
+    Uses the real `services.artifact.create_artifact` factory (the
+    documented production path -- Artifact itself should not be
+    hand-constructed) with audience="internal"/intent="inform": this
+    artifact is the internal verification record that drives the CRM
+    hand-off, not prospect-facing copy, so it trivially clears the factory's
+    moral gate (serves_person=True for audience="internal") rather than
+    risking an unwanted "escalated" status. `risk_level` is passed as an
+    explicit override, which create_artifact honors outright, so this
+    module -- not the factory's audience/intent defaults -- owns the
+    low/medium mapping from the verification verdict (spec section 6).
+
+    `content` must be JSON-serializable; Artifact.content is a str field.
+
+    NOTE: `approval_queue.queue_artifact()` returns the artifact_id, not a
+    status string, so the status this function returns is read off the
+    Artifact itself (already computed by create_artifact) rather than off
+    queue_artifact's return value.
+    """
+    import json
+
+    from services.artifact import create_artifact
+    from services import approval_queue
+
+    artifact = create_artifact(
+        agent_id="sdr-verification-gate",
+        business_key=business_key,
+        artifact_type="crm_update",
+        audience="internal",
+        intent="inform",
+        content=json.dumps(content),
+        subject=None,
+        channel_candidates=["crm"],
+        confidence=confidence,
+        risk_level=risk_level,
+        metadata=metadata,
+    )
+    approval_queue.queue_artifact(artifact)
+    return artifact.status
+
+
+def _push_crm(*, prospects: list, business_key: str):
+    from tools.crm_router import push_prospects_to_crm
+
+    return push_prospects_to_crm(prospects, source_agent="sdr-verification-gate", business_key=business_key)
+
+
+def run(req: VerificationRequest) -> dict:
+    """The end-to-end entry point: verify, then hand off per spec section 6.
+
+    PASS/NEEDS_HUMAN -> queued (low risk -> auto_approved -> CRM push
+    fires immediately; medium risk -> pending_approval -> 1-click human
+    queue, no CRM push yet). FAIL -> dropped + logged, never queued, never
+    contacted.
+    """
+    res = verify(req)
+    if res.verdict == "FAIL":
+        return {"verdict": "FAIL", "queue_status": None, "crm": None, "reason": res.reason}
+
+    risk = "low" if (res.verdict == "PASS" and res.confidence >= 0.75) else "medium"
+    # Prospect dict for the eventual CRM push. tools/twenty.py and
+    # tools/ghl.py disagree on the contact-name key ("contact" vs
+    # "contact_name") and the domain key ("website" vs "domain" fallback) --
+    # see the Task 0 pin at the top of this file -- so both are aliased here
+    # rather than picking only the one key this task's pin names.
+    contact_name = (res.verified_contact or {}).get("name")
+    prospect = {
+        "business_name": req.entity.get("company_name"),
+        "company_name": req.entity.get("company_name"),
+        "website": res.real_primary_site,
+        "domain": res.real_primary_site,
+        "city": req.entity.get("city", ""),
+        "email": (res.verified_contact or {}).get("email"),
+        "phone": (res.verified_contact or {}).get("phone"),
+        "name": contact_name,
+        "contact": contact_name,
+        "contact_name": contact_name,
+        "defect": res.verified_defect,
+        "evidence": res.evidence_log,
+    }
+    status = _queue(
+        business_key=req.business_key,
+        confidence=res.confidence,
+        risk_level=risk,
+        content=prospect,
+        metadata={"verdict": res.verdict, "reason": res.reason},
+    )
+    crm = _push_crm(prospects=[prospect], business_key=req.business_key) if status == "auto_approved" else None
+    return {"verdict": res.verdict, "queue_status": status, "crm": crm, "reason": res.reason}

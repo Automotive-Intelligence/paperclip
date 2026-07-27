@@ -10,9 +10,11 @@ contract.
 
 from services.sdr_verification_gate import (
     VerificationRequest,
+    VerificationResult,
     check_contact,
     check_defect,
     resolve_primary_site,
+    run,
     verify,
 )
 
@@ -126,3 +128,37 @@ def test_real_site_elsewhere_is_fail(monkeypatch):
     monkeypatch.setattr("services.sdr_verification_gate.check_defect", lambda d, m: None)
     r = verify(_req())
     assert r.verdict == "FAIL"
+
+
+def test_pass_auto_approves_and_pushes(monkeypatch):
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.verify",
+        lambda r: VerificationResult(
+            "PASS", "x.com", {"kind": "slow_load", "evidence": "e"},
+            {"name": "A", "phone": "+1555", "source": "site"}, 0.85, ["log"], "ok",
+        ),
+    )
+    calls = {}
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._queue",
+        lambda **k: (calls.setdefault("queue", k), "auto_approved")[1],
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._push_crm",
+        lambda **k: calls.setdefault("push", k) or ("twenty", [{"status": "created"}]),
+    )
+    out = run(VerificationRequest("wd", {"domain_on_file": "x.com", "company_name": "X"}, None, "rebuild"))
+    assert out["queue_status"] == "auto_approved"
+    assert "push" in calls and calls["push"]["business_key"] == "wd"
+
+
+def test_fail_never_queues_or_pushes(monkeypatch):
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.verify",
+        lambda r: VerificationResult("FAIL", "real.com", None, None, 0.0, ["log"], "real site elsewhere"),
+    )
+    calls = {}
+    monkeypatch.setattr("services.sdr_verification_gate._queue", lambda **k: calls.setdefault("queue", k))
+    monkeypatch.setattr("services.sdr_verification_gate._push_crm", lambda **k: calls.setdefault("push", k))
+    out = run(VerificationRequest("wd", {"domain_on_file": "x.com", "company_name": "X"}, None, "rebuild"))
+    assert out["verdict"] == "FAIL" and "queue" not in calls and "push" not in calls
