@@ -329,24 +329,35 @@ _TRUSTED_CONTACT_SOURCES = ("site", "gbp", "yelp")
 
 
 def check_contact(entity: dict, real_domain: str) -> "dict | None":
-    """Check 3 -- real contact from published info (spec section 5).
+    """Check 3 -- real contact from published info (spec section 5:
+    "a contact name plus a phone/email pulled from the company's OWN
+    published info").
 
-    Prefers a tel: link scraped straight off the resolved primary site. Only
-    falls back to an entity-carried phone if its recorded source is one of
-    the company's own published channels (site/gbp/yelp) -- NEVER a data
+    Prefers a tel: link scraped straight off the resolved primary site,
+    and captures a mailto: link alongside it when present. Falls back to
+    an entity-carried phone only if its recorded source is one of the
+    company's own published channels (site/gbp/yelp) -- NEVER a data
     broker like RocketReach/ZoomInfo (the fabricated-enrichment trap the
-    2026-07-15 rebuild week ran into). Returns {"name","phone","source"} or
-    None if unverifiable.
+    2026-07-15 rebuild week ran into). A site-published mailto: with no
+    phone at all is still itself a verified contact channel. Returns
+    {"name","phone","email","source"} (phone/email may be None if only the
+    other was found) or None if nothing is verifiable.
     """
     html = _fetch_html(real_domain)
     tel = re.search(r"tel:(\+?\d[\d\-\(\) ]{9,})", html)
+    mailto = re.search(r"mailto:([^\"'>\s?]+)", html, re.I)
+    email = mailto.group(1) if mailto else None
+
     if tel:
         phone = re.sub(r"[^\d+]", "", tel.group(1))
-        return {"name": entity.get("contact_name"), "phone": phone, "source": "site"}
+        return {"name": entity.get("contact_name"), "phone": phone, "email": email, "source": "site"}
 
     src = (entity.get("phone_source") or "").lower()
     if entity.get("contact_phone") and src in _TRUSTED_CONTACT_SOURCES:
-        return {"name": entity.get("contact_name"), "phone": entity["contact_phone"], "source": src}
+        return {"name": entity.get("contact_name"), "phone": entity["contact_phone"], "email": email, "source": src}
+
+    if email:
+        return {"name": entity.get("contact_name"), "phone": None, "email": email, "source": "site"}
 
     return None  # broker-only or none -> unverified
 

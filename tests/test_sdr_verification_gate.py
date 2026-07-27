@@ -130,10 +130,28 @@ def test_healthy_site_has_no_defect(monkeypatch):
 def test_phone_from_site_is_verified(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate._fetch_html",
-        lambda d: 'Call us <a href="tel:+12813536366">(281) 353-6366</a>',
+        lambda d: (
+            'Call us <a href="tel:+12813536366">(281) 353-6366</a> or '
+            'email <a href="mailto:info@excaliburpest.com">info@excaliburpest.com</a>'
+        ),
     )
     c = check_contact({"contact_name": "Craig"}, "excaliburpest.com")
     assert c and c["phone"] == "+12813536366" and c["source"] == "site"
+    assert c["email"] == "info@excaliburpest.com"
+
+
+def test_email_only_contact_is_verified_via_mailto(monkeypatch):
+    # No tel: link and no trusted-source entity phone -- but the site's own
+    # homepage publishes a mailto:, which is itself a verified contact
+    # channel per spec section 5 ("phone/email"), never a data broker.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._fetch_html",
+        lambda d: '<a href="mailto:hello@poolologypools.com">Email us</a>',
+    )
+    c = check_contact({"contact_name": "Front Desk"}, "poolologypools.com")
+    assert c and c["email"] == "hello@poolologypools.com"
+    assert c["phone"] is None
+    assert c["source"] == "site"
 
 
 def test_broker_only_contact_is_rejected(monkeypatch):
