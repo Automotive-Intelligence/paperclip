@@ -241,3 +241,32 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
         return {"kind": "slow_load", "evidence": f"TTFB {ttfb:.2f}s (curl time_starttransfer)"}
 
     return None
+
+
+# Never accept a data-broker phone/email as a verified contact (global
+# constraint, spec section 5 check 3 + plan Global Constraints). Only these
+# sources count as "the company's own published info".
+_TRUSTED_CONTACT_SOURCES = ("site", "gbp", "yelp")
+
+
+def check_contact(entity: dict, real_domain: str) -> "dict | None":
+    """Check 3 -- real contact from published info (spec section 5).
+
+    Prefers a tel: link scraped straight off the resolved primary site. Only
+    falls back to an entity-carried phone if its recorded source is one of
+    the company's own published channels (site/gbp/yelp) -- NEVER a data
+    broker like RocketReach/ZoomInfo (the fabricated-enrichment trap the
+    2026-07-15 rebuild week ran into). Returns {"name","phone","source"} or
+    None if unverifiable.
+    """
+    html = _fetch_html(real_domain)
+    tel = re.search(r"tel:(\+?\d[\d\-\(\) ]{9,})", html)
+    if tel:
+        phone = re.sub(r"[^\d+]", "", tel.group(1))
+        return {"name": entity.get("contact_name"), "phone": phone, "source": "site"}
+
+    src = (entity.get("phone_source") or "").lower()
+    if entity.get("contact_phone") and src in _TRUSTED_CONTACT_SOURCES:
+        return {"name": entity.get("contact_name"), "phone": entity["contact_phone"], "source": src}
+
+    return None  # broker-only or none -> unverified

@@ -8,7 +8,7 @@ docs/superpowers/specs/2026-07-27-sdr-verification-gate-design.md for the
 contract.
 """
 
-from services.sdr_verification_gate import check_defect, resolve_primary_site
+from services.sdr_verification_gate import check_contact, check_defect, resolve_primary_site
 
 
 def test_cert_cn_mismatch_resolves_to_real_host(monkeypatch):
@@ -58,3 +58,21 @@ def test_healthy_site_has_no_defect(monkeypatch):
         lambda d: {"status": 200, "cert_cn": d, "location": None},
     )
     assert check_defect("bonicklandscaping.com", "rebuild") is None
+
+
+def test_phone_from_site_is_verified(monkeypatch):
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._fetch_html",
+        lambda d: 'Call us <a href="tel:+12813536366">(281) 353-6366</a>',
+    )
+    c = check_contact({"contact_name": "Craig"}, "excaliburpest.com")
+    assert c and c["phone"] == "+12813536366" and c["source"] == "site"
+
+
+def test_broker_only_contact_is_rejected(monkeypatch):
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "no phone here")
+    # entity carries a broker-sourced phone; must NOT be accepted
+    assert check_contact(
+        {"contact_name": "X", "contact_phone": "+15550001111", "phone_source": "rocketreach"},
+        "example.com",
+    ) is None
