@@ -483,8 +483,20 @@ def verify(req: VerificationRequest) -> VerificationResult:
         user = _judgment_user_prompt(req, real, defect, log)
         j = llm_json(system, user)
         log.append(f"llm judgment: {j.get('rationale', '')}")
-        if j.get("verdict") == "NEEDS_HUMAN":
-            return VerificationResult("NEEDS_HUMAN", real, defect, None, 0.5, log, j.get("rationale", ""))
+        # Fail closed (fix-round-2, FIX A): continue toward the PASS track
+        # ONLY on an explicit, on-contract "PASS". Treat EVERY other value --
+        # "NEEDS_HUMAN", an unknown/garbage string, or a missing "verdict"
+        # key -- as NEEDS_HUMAN. The old check (`== "NEEDS_HUMAN"`) trusted
+        # anything that wasn't that exact string, so a hallucinated or
+        # malformed-but-well-formed answer could silently fall through to
+        # auto-approve. `llm_json` itself already raises on genuinely
+        # malformed/empty output (propagates and fails closed on its own);
+        # this handles the well-formed-but-wrong-content case.
+        if j.get("verdict") != "PASS":
+            return VerificationResult(
+                "NEEDS_HUMAN", real, defect, None, 0.5, log,
+                j.get("rationale", "") or "model did not return an explicit PASS verdict",
+            )
 
     contact = check_contact(req.entity, real)
     if contact is None:

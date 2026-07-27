@@ -244,6 +244,64 @@ def test_intent_motion_can_fail_when_signal_confirmed_stale(monkeypatch):
     assert r.verdict == "FAIL"
 
 
+def test_llm_offcontract_verdict_fails_closed_to_human(monkeypatch):
+    # Even an explicit "PASS" from the LLM only clears the primary-site
+    # ambiguity -- it can never by itself auto-approve the whole prospect;
+    # Check 3 (contact) still independently gates the final verdict. No
+    # trusted-source contact here, so the final verdict must still be
+    # NEEDS_HUMAN, not PASS.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._primary_is_our_domain", lambda dof, real: True
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_defect",
+        lambda d, m: {"kind": "site_down", "evidence": "HTTP 404 on https://x.com"},
+    )
+    monkeypatch.setattr(
+        "services.studio_social_llm.llm_json",
+        lambda *a, **kw: {"verdict": "PASS", "rationale": "x"},
+    )
+    monkeypatch.setattr("services.sdr_verification_gate.check_contact", lambda e, d: None)
+    r = verify(_req())
+    assert r.verdict == "NEEDS_HUMAN"
+
+
+def test_llm_missing_verdict_key_fails_closed_to_human(monkeypatch):
+    # The actual fail-closed mechanism (FIX A): a well-formed-but-off-contract
+    # LLM answer -- here, no "verdict" key at all -- must NOT auto-approve.
+    # Contact IS trusted/verified here specifically to ISOLATE this from the
+    # contact-unverified branch: under the pre-fix code (which only escalated
+    # on an exact "NEEDS_HUMAN" string) this exact scenario incorrectly fell
+    # through all the way to PASS. With a trusted contact present, the only
+    # thing that can still produce NEEDS_HUMAN is the LLM-verdict handling
+    # itself.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._primary_is_our_domain", lambda dof, real: True
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_defect",
+        lambda d, m: {"kind": "site_down", "evidence": "HTTP 404 on https://x.com"},
+    )
+    monkeypatch.setattr(
+        "services.studio_social_llm.llm_json",
+        lambda *a, **kw: {"rationale": "no verdict field at all"},
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_contact",
+        lambda e, d: {"name": "A", "phone": "+1555", "source": "site"},
+    )
+    r = verify(_req())
+    assert r.verdict == "NEEDS_HUMAN"
+
+
 def test_pass_auto_approves_and_pushes(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate.verify",
