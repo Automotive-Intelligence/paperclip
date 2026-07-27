@@ -382,7 +382,7 @@ class VerificationResult:
     verified_defect: Optional[dict]
     verified_contact: Optional[dict]
     confidence: float
-    evidence_log: list = field(default_factory=list)
+    evidence_log: list[str] = field(default_factory=list)
     reason: str = ""
 
 
