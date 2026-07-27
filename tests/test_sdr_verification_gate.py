@@ -189,6 +189,43 @@ def test_real_site_elsewhere_is_fail(monkeypatch):
     assert r.verdict == "FAIL"
 
 
+def test_intent_motion_routes_to_human_not_fabricated_pass(monkeypatch):
+    # check_defect now honestly returns None for a non-rebuild motion
+    # (re-confirmation isn't wired) -- verify() must route that to
+    # NEEDS_HUMAN, never auto-PASS on an unconfirmed signal, and must never
+    # carry a fabricated "re-confirmed" evidence string.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_contact",
+        lambda e, d: {"name": "A", "phone": "+1555", "source": "site"},
+    )
+    r = verify(_req(motion="intent"))
+    assert r.verdict == "NEEDS_HUMAN"
+    assert r.verified_defect is None
+    assert "not yet wired" in r.reason.lower()
+    assert not any("re-confirmed" in e.lower() for e in r.evidence_log)
+
+
+def test_intent_motion_can_fail_when_signal_confirmed_stale(monkeypatch):
+    # Structural requirement: intent/permit motions must be able to reach
+    # FAIL, not just NEEDS_HUMAN/PASS -- once re-confirmation IS wired and
+    # comes back with a definitive "signal no longer live" result, verify()
+    # must be able to FAIL it, not just hand it to a human every time.
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.resolve_primary_site",
+        lambda d, c, city="": ("x.com", ["same"]),
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate.check_defect",
+        lambda d, m: {"kind": "signal_stale", "evidence": "signal expired 40 days ago"},
+    )
+    r = verify(_req(motion="intent"))
+    assert r.verdict == "FAIL"
+
+
 def test_pass_auto_approves_and_pushes(monkeypatch):
     monkeypatch.setattr(
         "services.sdr_verification_gate.verify",

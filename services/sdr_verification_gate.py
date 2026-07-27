@@ -417,6 +417,12 @@ def verify(req: VerificationRequest) -> VerificationResult:
     prospect FAILS here [at Check 1]" wording literally, and avoids running
     Check 2 (a real HTTP fetch) or Check 3 (another real HTTP fetch) against
     a domain already known to be the wrong target.
+
+    `rebuild` is the only motion with a fully wired Check 2 today.
+    `intent`/`permit` re-confirmation is not wired (see check_defect's
+    docstring) -- a None defect on those motions routes to NEEDS_HUMAN,
+    never a fabricated auto-PASS; a (currently unreachable-by-data, but
+    structurally real) "signal_stale" defect routes to FAIL.
     """
     dof = req.entity.get("domain_on_file", "")
     real, log = resolve_primary_site(dof, req.entity.get("company_name", ""), req.entity.get("city", ""))
@@ -433,6 +439,28 @@ def verify(req: VerificationRequest) -> VerificationResult:
     defect = check_defect(real, req.motion)
     if req.motion == "rebuild" and defect is None:
         return VerificationResult("FAIL", real, None, None, 0.0, log, "no verifiable defect on primary site")
+
+    if req.motion in ("intent", "permit"):
+        if defect is None:
+            # Re-confirming a DataMoon intent signal / permit record against
+            # its live source is NOT wired yet (spec decomposition items
+            # 2-4 / enrichment sub-project #2-3). check_defect honestly
+            # returns None rather than a fabricated "re-confirmed" string --
+            # the honest floor here is NEEDS_HUMAN, never an auto-PASS on an
+            # unconfirmed signal.
+            return VerificationResult(
+                "NEEDS_HUMAN", real, None, None, 0.5, log,
+                "signal re-confirmation not yet wired (enrichment sub-project #2)",
+            )
+        if defect.get("kind") == "signal_stale":
+            # Left reachable (not excluded by this branch's structure) for
+            # when re-confirmation IS wired and comes back with a
+            # definitive "this signal is no longer live" result -- FAIL,
+            # not just NEEDS_HUMAN. Not producible by check_defect today.
+            return VerificationResult(
+                "FAIL", real, None, None, 0.0, log,
+                f"signal no longer live: {defect.get('evidence')}",
+            )
 
     # ambiguous primary-site defect (e.g. site down): ONE llm judgment call,
     # must cite the deterministic evidence already collected.
