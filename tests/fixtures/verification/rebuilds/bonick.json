@@ -1,0 +1,16 @@
+{
+  "_note": "Bonick, 2026-07-15 rebuild lead. domain_on_file's TLS cert is issued to www.bonicklandscaping.com (cert-CN alias), which IS live and fine -- Check 1 resolves the real primary site away from the sourced domain, so the rebuild motion FAILS at Check 1 (nothing to fix) before checks 2/3 ever run. Same cert-CN fact used in the resolve_primary_site unit test.",
+  "entity": {
+    "company_name": "Bonick Landscaping",
+    "domain_on_file": "bonick.com",
+    "city": "Dallas, TX"
+  },
+  "headers": {
+    "cert_cn": "www.bonicklandscaping.com",
+    "location": null,
+    "status": 200
+  },
+  "html": "<html><body>this fixture value is unused -- bonick FAILs at Check 1, before check_defect/check_contact ever fetch html</body></html>",
+  "ttfb": 0.3,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- bonick FAILs at Check 1"}
+}

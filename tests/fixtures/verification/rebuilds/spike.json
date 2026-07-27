@@ -1,0 +1,19 @@
+{
+  "_note": "Spike Electric, 2026-07-15 rebuild lead. Real primary site is the domain on file (cert_cn echoes the domain, no redirect). Homepage evidence: only a JS search box, no tel: link, no <form>, no CTA copy -> Check 2 finds no_contact_path. Contact was verified off Google Business Profile, not the homepage, since check 3 reads the homepage first and falls back to a trusted-source entity phone.",
+  "entity": {
+    "company_name": "Spike Electric",
+    "domain_on_file": "spikeelectrictx.com",
+    "city": "Frisco, TX",
+    "contact_name": "Spike Electric Dispatch",
+    "contact_phone": "+19725550142",
+    "phone_source": "gbp"
+  },
+  "headers": {
+    "cert_cn": "spikeelectrictx.com",
+    "location": null,
+    "status": 200
+  },
+  "html": "<html><head><title>Spike Electric</title></head><body><div class=\"search-box\"><input type=\"text\" placeholder=\"Search our site\"></div><p>Residential and commercial electrical services.</p></body></html>",
+  "ttfb": 0.4,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- spike's defect is no_contact_path, not site_down"}
+}

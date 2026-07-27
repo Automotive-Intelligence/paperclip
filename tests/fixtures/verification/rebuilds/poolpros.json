@@ -1,0 +1,16 @@
+{
+  "_note": "Pool Pros, 2026-07-15 rebuild lead ('offline 17 months', unverifiable by machine per spec section 9). Real primary site resolves to the domain on file; it returns HTTP 404 -> Check 2 finds site_down (ambiguous). The LLM judgment this time reads the evidence as genuinely down (verdict PASS, i.e. a real rebuild target, not a wrong domain) -- but a dead site has no page to pull a phone number off of, and no trusted-source (site/gbp/yelp) contact was ever supplied, so Check 3 comes back unverified and the FINAL verdict is still NEEDS_HUMAN, via the contact-unverified path rather than the LLM-ambiguous path (deliberately a different code path than taps.json, to cover both NEEDS_HUMAN routes).",
+  "entity": {
+    "company_name": "Pool Pros DFW",
+    "domain_on_file": "poolprosdfw.com",
+    "city": "Arlington, TX"
+  },
+  "headers": {
+    "cert_cn": "poolprosdfw.com",
+    "location": null,
+    "status": 404
+  },
+  "html": "<html><body>404 Not Found</body></html>",
+  "ttfb": 0.2,
+  "llm": {"verdict": "PASS", "rationale": "HTTP 404 on the domain on file with no evidence anywhere in the log of a different real site; reads as genuinely down"}
+}
