@@ -135,6 +135,16 @@ PINNED INTERFACES (Task 0 -- read from source 2026-07-27, do not guess)
    (tests/test_studio_social_llm.py) is positional: `llm_json("sys",
    "user")`.
 
+4. Check 1 corroboration scope (spec section 5) -- fix-round-1 note
+
+   Cert-CN alias + 301 redirect + <link rel="canonical"> resolution are
+   ALL implemented in `resolve_primary_site()`. The web-search / Google
+   Business Profile corroboration step spec section 5 also lists is
+   DEFERRED to the enrichment sub-project (#3 in the spec's Decomposition)
+   by controller ruling -- it is NOT stubbed or fabricated here.
+   `company_name`/`city` remain in `resolve_primary_site`'s signature for
+   that future use; they are not read by the function today.
+
 ---------------------------------------------------------------------------
 """
 
@@ -172,13 +182,36 @@ def _host(url: str) -> str:
     return re.sub(r"^https?://", "", (url or "")).split("/")[0]
 
 
+def _canonical_host(html: str) -> "str | None":
+    """Extract the host from a <link rel="canonical" href="..."> tag, if the
+    page declares one. Checks `rel` and `href` independently within each
+    <link> tag (rather than assuming a fixed attribute order), so
+    `<link href="..." rel="canonical">` matches just as well as
+    `<link rel="canonical" href="...">`."""
+    for tag in re.findall(r"<link\b[^>]*>", html or "", re.I):
+        if re.search(r'rel=["\']canonical["\']', tag, re.I):
+            href_m = re.search(r'href=["\']([^"\']+)["\']', tag, re.I)
+            if href_m:
+                return _host(href_m.group(1))
+    return None
+
+
 def resolve_primary_site(domain_on_file: str, company_name: str, city: str = "") -> "tuple[str, list[str]]":
     """Check 1 -- real primary site (spec section 5).
 
     Follows a cert-CN alias (e.g. Bonick's cert is issued to
-    www.bonicklandscaping.com, not bonick.com) or a 301 redirect (e.g.
-    Stride -> stridepestcontrol.com) to the terminal host. Returns
-    (real_domain, evidence_log).
+    www.bonicklandscaping.com, not bonick.com), a 301 redirect (e.g.
+    Stride -> stridepestcontrol.com), and finally a <link rel="canonical">
+    tag on the resolved page (if the page declares a different real host),
+    to the terminal host. Returns (real_domain, evidence_log).
+
+    Spec section 5 Check 1 also lists a web-search / Google Business
+    Profile corroboration step ("web-search '{company_name} {city}' and
+    read the GBP listing for the site they actually list"). That step is
+    DEFERRED to the enrichment sub-project (#3 in the spec's Decomposition)
+    by controller ruling -- it is NOT implemented or stubbed here.
+    `company_name`/`city` are accepted and kept in this signature for that
+    future use, but are not read by this function today.
     """
     log, current = [], domain_on_file
     for _ in range(3):  # follow up to 3 redirects/aliases
@@ -192,6 +225,21 @@ def resolve_primary_site(domain_on_file: str, company_name: str, city: str = "")
             current = _host(h["cert_cn"])
             continue
         break
+
+    # Canonical link corroboration: the resolved page may itself declare a
+    # different canonical host. A fetch failure here must never break Check
+    # 1's cert/redirect resolution -- it just forfeits this one extra
+    # corroboration signal and carries on with what cert/redirect already
+    # found.
+    try:
+        canon_host = _canonical_host(_fetch_html(current))
+    except Exception as exc:
+        canon_host = None
+        log.append(f"canonical fetch failed for {current}: {exc}")
+    if canon_host and canon_host != current:
+        log.append(f"canonical link on {current} points to {canon_host}; adopting canonical host")
+        current = canon_host
+
     return current, log
 
 

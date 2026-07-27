@@ -10,7 +10,7 @@
     "location": null,
     "status": 200
   },
-  "html": "<html><body>this fixture value is unused -- bonick FAILs at Check 1, before check_defect/check_contact ever fetch html</body></html>",
+  "html": "<html><body>fixture-round-1 note: Check 1's own canonical-link corroboration step (FIX 1) now fetches this HTML too, but it has no <link rel=\"canonical\"> tag, so it is a no-op here. check_defect/check_contact never fetch it -- bonick FAILs at Check 1.</body></html>",
   "ttfb": 0.3,
   "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- bonick FAILs at Check 1"}
 }

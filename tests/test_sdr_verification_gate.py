@@ -25,6 +25,10 @@ def test_cert_cn_mismatch_resolves_to_real_host(monkeypatch):
         return {"cert_cn": "www.bonicklandscaping.com", "location": None, "status": 200}
 
     monkeypatch.setattr("services.sdr_verification_gate._probe_headers", fake_headers)
+    # No canonical tag on the resolved page -> Check 1's canonical step is a
+    # no-op here. Mocked so this test stays offline (resolve_primary_site now
+    # also fetches HTML for canonical corroboration -- FIX 1).
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "<html></html>")
     real, log = resolve_primary_site("bonick.com", "Bonick Landscaping")
     assert real == "www.bonicklandscaping.com"
     assert any("cert" in e.lower() for e in log)
@@ -36,8 +40,26 @@ def test_301_redirect_is_followed(monkeypatch):
         return {"cert_cn": domain, "location": "https://stridepestcontrol.com/", "status": 301}
 
     monkeypatch.setattr("services.sdr_verification_gate._probe_headers", fake_headers)
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "<html></html>")
     real, log = resolve_primary_site("stridepest.com", "Stride Pest")
     assert real == "stridepestcontrol.com"
+
+
+def test_canonical_link_resolves_real_domain(monkeypatch):
+    # No cert alias, no redirect -- Check 1's cert/redirect loop resolves to
+    # the domain on file itself, but the page's own <link rel="canonical">
+    # names a different real host, which Check 1 must adopt (spec section 5).
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._probe_headers",
+        lambda d: {"cert_cn": d, "location": None, "status": 200},
+    )
+    monkeypatch.setattr(
+        "services.sdr_verification_gate._fetch_html",
+        lambda d: '<html><head><link rel="canonical" href="https://realcanonical.com/"></head></html>',
+    )
+    real, log = resolve_primary_site("onfile.com", "Some Co")
+    assert real == "realcanonical.com"
+    assert any("canonical" in e.lower() for e in log)
 
 
 def test_pinch_zoom_block_is_a_defect(monkeypatch):
