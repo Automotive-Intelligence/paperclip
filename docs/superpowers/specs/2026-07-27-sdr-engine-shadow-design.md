@@ -52,7 +52,7 @@ The engine resolves the desk key to the runtime key and asserts the target CRM i
 
 1. **Pull unverified candidates** from the brand's Twenty via `tools/twenty.py` (recent people/opportunities with no gate-verified stamp). Bucket by recency (principle 9): newest first; a stale record (>45d untouched) is deprioritized. For the first WD run these are the rebuild candidates already present.
 2. **Dedup** against what the CRM already has and what a prior run already produced (principle: never double-create). Skip anything already an opportunity or in-sequence.
-3. **Each candidate → `sdr_verification_gate.run(...)`** with `motion="rebuild"`, the resolved `business_key`, and the permit-derived entity.
+3. **Each candidate → `sdr_verification_gate.run(...)`** with `motion="rebuild"`, the resolved `business_key`, and the entity fields read from the Twenty record.
 4. **Route by the gate's returned verdict/queue_status:**
    - PASS auto_approved → if `commit`, `crm_router.push_prospects_to_crm(...)` to the resolved brand CRM; if shadow, record "would write".
    - NEEDS_HUMAN → `approval_queue` pending (already handled inside the gate's `run()`); recorded for the digest.
@@ -71,11 +71,11 @@ The engine resolves the desk key to the runtime key and asserts the target CRM i
 - business_key normalization: a small `_resolve_business_key` in the engine (or a shared helper) — §4.
 - `POST /admin/run-sdr` route — wherever `/admin/run-social` is registered.
 - `tests/test_sdr_engine.py` — see Testing.
-- Reuses unchanged: `sdr_verification_gate`, `permit_feed`, `crm_router`, `approval_queue`, `runtime`.
+- Reuses unchanged: `sdr_verification_gate`, `tools/twenty.py`, `crm_router`, `approval_queue`, `runtime`.
 
 ## 9. Testing
 
-- **Shadow mode writes nothing:** a run with `commit=False` over fixture permits calls neither `crm_router.push_prospects_to_crm` nor any live send; asserts the digest is produced and counts are right. (Monkeypatch the gate + crm_router; assert push NOT called.)
+- **Shadow mode writes nothing:** a run with `commit=False` over fixture Twenty candidates calls neither `crm_router.push_prospects_to_crm` nor any live send; asserts the digest is produced and counts are right. (Monkeypatch the gate + crm_router; assert push NOT called.)
 - **business_key routing:** `wd` resolves to the WD Twenty target (not the GHL default); `aipg` resolves to GHL; an unready CRM holds in pending rather than misrouting.
 - **Verdict routing:** a PASS candidate (commit=True) calls `push_prospects_to_crm` with the resolved key; a FAIL candidate never does; a NEEDS_HUMAN candidate queues pending, never pushes.
 - **Dedup:** a candidate already present is skipped, not re-created.
