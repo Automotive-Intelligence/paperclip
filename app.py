@@ -5485,7 +5485,11 @@ async def run_sdr_endpoint(
     default -- produces a digest, writes nothing live; pass {"commit": true}
     to write PASS+auto_approved opportunities to CRM. Never sends outreach
     (that switch is a later sub-project). Body optional:
-    {"brand": "wd"|"avi"|"aipg"|"bookd", "commit": bool}."""
+    {"brand": "wd"|"avi"|"aipg"|"bookd", "commit": bool}. NOTE: "aipg" is a
+    real brand key but is GHL-backed with no Twenty workspace -- this
+    sub-project's only signal source (twenty_unverified) can't read it yet
+    (a GHL-read source is a later sub-project), so an aipg run returns a
+    normal 200 with an honest "source not available" digest, never a 500."""
     validate_key(authorization)
     from services.sdr_engine import run_sdr_engine
     payload = payload or {}

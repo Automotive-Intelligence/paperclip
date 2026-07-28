@@ -156,12 +156,15 @@ def test_commit_pushes_with_runtime_key_never_desk_key_or_ghl_default(monkeypatc
 @pytest.mark.parametrize("desk_key,runtime_key", [
     ("wd", "callingdigital"),
     ("avi", "autointelligence"),
-    ("aipg", "aiphoneguy"),
     ("bookd", "bookd"),
+    # aipg deliberately excluded here: it is GHL-backed with no Twenty
+    # workspace, so a default-source run refuses honestly before ever
+    # reaching read_unverified_candidates/_push_crm (finding 2, round 3) --
+    # see test_aipg_source_unavailable_returns_honest_refusal below.
 ])
 def test_commit_never_pushes_the_raw_desk_key(monkeypatch, desk_key, runtime_key):
-    """Finding 1: no path passes a raw desk key ("wd"/"avi"/"aipg"/"bookd")
-    into crm_router, for any brand."""
+    """Finding 1: no path passes a raw desk key ("wd"/"avi"/"bookd") into
+    crm_router, for any Twenty-sourced brand."""
     _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
     monkeypatch.setattr(
         "services.sdr_engine._gate_run",
@@ -299,6 +302,112 @@ def test_commit_write_failure_for_one_candidate_does_not_abort_the_batch(monkeyp
 
     # The failed candidate is not counted as written; the other two are.
     assert out["written"] == 2
+
+
+def test_gate_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
+    """Code review round 3 (IMPORTANT, finding 1): the per-candidate
+    try/except must ALSO cover the gate call itself, not just the write
+    step -- _gate_run's curl probes/requests.get/llm_json call are DESIGNED
+    to raise on a down/unreachable site. Candidate 2's _gate_run raises;
+    candidates 1 and 3 must still be fully processed and the run must still
+    return a complete digest. The errored candidate must not inflate any
+    real verdict count."""
+    _candidates(monkeypatch, [
+        {"twenty_id": "1", "company_name": "First", "domain_on_file": "first.com", "tags": []},
+        {"twenty_id": "2", "company_name": "Second", "domain_on_file": "second.com", "tags": []},
+        {"twenty_id": "3", "company_name": "Third", "domain_on_file": "third.com", "tags": []},
+    ])
+
+    def flaky_gate(*, request):
+        if request.entity["company_name"] == "Second":
+            raise RuntimeError("site unreachable: connection reset")
+        return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                "reason": "ok", "confidence": 0.85}
+
+    monkeypatch.setattr("services.sdr_engine._gate_run", flaky_gate)
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    out = run_sdr_engine("wd", commit=True)
+
+    # Candidates 1 and 3 (the non-errored ones) were still fully pushed.
+    assert len(pushed) == 2
+    assert {p["prospects"][0]["business_name"] for p in pushed} == {"First", "Third"}
+
+    # The run completed normally with a full digest -- nothing silently lost.
+    assert out["produced"] == 3
+    assert "First" in out["digest"]
+    assert "Second" in out["digest"]
+    assert "Third" in out["digest"]
+    assert out["digest_path"]
+
+    # The errored candidate is reported honestly but does NOT inflate any
+    # real verdict count -- it's tallied separately.
+    assert "verify-failed" in out["digest"]
+    assert "connection reset" in out["digest"]
+    assert out["pass"] == 2          # only the 2 genuinely-gated candidates
+    assert out["needs_human"] == 0
+    assert out["fail"] == 0
+    assert out["written"] == 2
+    assert out["errors"] == 1
+
+
+def test_read_failure_yields_a_digest_not_an_exception(monkeypatch):
+    """Code review round 3 (IMPORTANT, finding 1): if the upfront
+    read_unverified_candidates() call itself raises (Twenty down, bad
+    creds, etc.), run_sdr_engine must not propagate the exception -- it
+    must still return a normal digest+counts result, with the failure
+    honestly recorded and zero candidates."""
+    def broken_read(rk, limit=100):
+        raise RuntimeError("Twenty API 503")
+
+    monkeypatch.setattr("services.sdr_engine.read_unverified_candidates", broken_read)
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    out = run_sdr_engine("wd", commit=False)  # must not raise
+
+    assert out["produced"] == 0
+    assert out["pass"] == 0 and out["needs_human"] == 0 and out["fail"] == 0
+    assert out["written"] == 0
+    assert out["errors"] == 1
+    assert "read failed" in out["digest"]
+    assert "Twenty API 503" in out["digest"]
+    assert out["digest_path"]
+
+
+def test_aipg_source_unavailable_returns_honest_refusal(monkeypatch):
+    """Code review round 3 (IMPORTANT, finding 2): aipg (aiphoneguy) is
+    GHL-backed with no Twenty workspace, so the default twenty_unverified
+    source can't serve it. run_sdr_engine must refuse honestly -- a normal
+    digest+counts result stating the source isn't available, NOT the real
+    tools/twenty.py ValueError ("no workspace mapping") escaping, and
+    read_unverified_candidates must never even be called."""
+    read_calls = []
+    monkeypatch.setattr(
+        "services.sdr_engine.read_unverified_candidates",
+        lambda rk, limit=100: read_calls.append(rk) or [],
+    )
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    out = run_sdr_engine("aipg", commit=False)  # must not raise
+
+    assert read_calls == []  # never even attempted the unconfigured Twenty read
+    assert out["produced"] == 0
+    assert out["written"] == 0
+    assert out["errors"] == 0  # a known, advertised limitation -- not an error
+    assert "not available" in out["digest"]
+    assert "aipg" in out["digest"]
+    assert out["digest_path"]
+
+    # Same refusal in commit mode -- still no exception, still no read attempt.
+    read_calls.clear()
+    out_commit = run_sdr_engine("aipg", commit=True)
+    assert read_calls == []
+    assert "not available" in out_commit["digest"]
 
 
 def test_digest_always_produced_publish_only_on_commit(monkeypatch):

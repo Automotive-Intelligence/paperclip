@@ -10,6 +10,20 @@ always produces a digest of what it would do; nothing is written live unless
 commit=True. Mirrors services/studio_social_engine.py's dry-run-default
 pattern.
 
+The ONLY signal source THIS sub-project reads is `source="twenty_unverified"`
+-- unverified people already sitting in a brand's TWENTY workspace. That
+covers `wd`/`avi`/`bookd` (callingdigital/autointelligence/bookd all have a
+Twenty workspace, per tools/twenty.py). `aipg` (aiphoneguy) is a real desk
+key and stays in `_DESK_TO_RUNTIME` -- but AIPG's CRM is GHL, and there is
+no aiphoneguy Twenty workspace to read from (code review round 3, finding 2
+IMPORTANT: `read_unverified_candidates("aiphoneguy")` used to raise an
+opaque `ValueError`, 500-ing the route, despite the route/module surface
+implying aipg was servable). `run_sdr_engine` now refuses honestly instead:
+for a brand whose runtime CRM this source can't read from, it returns its
+normal digest+counts shape with an explicit "source not available" line and
+zero counts -- never an uncaught exception. A GHL-read source for aipg is a
+later sub-project.
+
 ---------------------------------------------------------------------------
 PINNED INTERFACES (Task 0 -- read from source 2026-07-27, do not guess)
 ---------------------------------------------------------------------------
@@ -145,16 +159,27 @@ from datetime import datetime, timezone
 _DESK_TO_RUNTIME = {
     "wd": "callingdigital",
     "avi": "autointelligence",
-    "aipg": "aiphoneguy",
+    "aipg": "aiphoneguy",  # real brand/CRM mapping -- NOT servable by twenty_unverified, see below
     "bookd": "bookd",
 }
+
+# Runtime keys with an actual Twenty workspace this source can read (Task 0 /
+# tools/twenty.py's _WORKSPACE_KEY_ENV: callingdigital/autointelligence/bookd
+# only). aiphoneguy is GHL-backed and deliberately excluded -- run_sdr_engine
+# checks this before ever calling read_unverified_candidates, so an
+# unservable brand gets an honest refusal digest, not an opaque ValueError
+# 500 (code review round 3, finding 2 IMPORTANT).
+_TWENTY_SOURCED_RUNTIME_KEYS = frozenset({"callingdigital", "autointelligence", "bookd"})
 
 
 def resolve_business_key(desk_key: str) -> str:
     """Desk key (wd/avi/aipg/bookd) -> runtime CRM key. Pure boundary
     translation -- does NOT rename the underlying `callingdigital` slug
     (spec section 4, decision 2026-07-27). Raises ValueError on an unknown
-    desk key rather than silently defaulting, so a typo never misroutes."""
+    desk key rather than silently defaulting, so a typo never misroutes.
+    NOTE: a valid desk key here does not guarantee `run_sdr_engine` can
+    actually read candidates for it -- `aipg` resolves fine but is
+    GHL-backed, not Twenty-backed; see `_TWENTY_SOURCED_RUNTIME_KEYS`."""
     try:
         return _DESK_TO_RUNTIME[(desk_key or "").strip().lower()]
     except KeyError:
@@ -370,6 +395,24 @@ def _write_digest(digest: str, brand_key: str, commit: bool) -> str:
 _VERDICT_KEY = {"PASS": "pass", "NEEDS_HUMAN": "needs_human", "FAIL": "fail"}
 
 
+def _empty_counts() -> dict:
+    return {"produced": 0, "pass": 0, "needs_human": 0, "fail": 0, "written": 0, "errors": 0}
+
+
+def _finish(brand_key: str, commit: bool, counts: dict, lines: list) -> dict:
+    """Shared digest-assembly + receipt tail, used by every return path
+    (normal completion, the source-unavailable refusal, and a total read
+    failure) so all three always produce a real digest/receipt -- shadow
+    mode must always yield a digest (code review round 3, finding 1)."""
+    mode = "COMMIT" if commit else "SHADOW"
+    body_lines = [f"# SDR engine run [{mode}]: {brand_key}", ""]
+    body_lines += lines or ["- no unverified candidates found"]
+    body_lines += ["", f"Counts: {counts}"]
+    digest = "\n".join(body_lines)
+    digest_path = _write_digest(digest, brand_key, commit)
+    return {**counts, "digest": digest, "digest_path": digest_path}
+
+
 def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bool = False) -> dict:
     """One run: pull unverified candidates from the brand's Twenty, verify
     each (the gate's pure `verify()` only -- see `_gate_run`), and route by
@@ -393,56 +436,93 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
         a permanently-FAIL rebuild target still isn't rebuild-worthy next
         run either, but re-tagging it is not this round's scope).
 
-    A transient failure anywhere in ONE candidate's write sequence (push,
-    queue, or the tag PATCH -- code review round 2, finding IMPORTANT) is
-    isolated to that candidate: it is logged in the digest as a
-    write-failed entry and the run moves on, so one flaky Twenty/GHL call
-    never aborts the whole 24/7 batch. `_tag_verified` deliberately stays
-    LAST in the sequence, unchanged: tag-only-after-a-clean-write gives
+    This function NEVER lets one bad candidate, or a total read failure,
+    kill the run (code review round 3, finding 1 IMPORTANT -- widened from
+    round 2, which only isolated the write step):
+
+    - If `source` isn't actually readable for this brand (aipg/aiphoneguy
+      is GHL-backed, no Twenty workspace -- finding 2 IMPORTANT), this
+      returns immediately with an honest "source not available" digest and
+      all-zero counts. `read_unverified_candidates` is never called, so its
+      real `ValueError: no workspace mapping` never reaches the caller.
+    - If the upfront `read_unverified_candidates(...)` call itself raises
+      (a total read failure -- Twenty down, bad credentials, etc.), that is
+      caught too: the digest records "read failed: <exception>" with zero
+      candidates, and the run returns normally. Shadow mode must always
+      yield a digest -- that digest is the entire point (Michael reads it).
+    - PER CANDIDATE, the gate call (`_gate_run` -- curl probes, an HTTP
+      fetch, and the one LLM judgment call, which the gate DESIGNS to raise
+      on a down/unreachable site) through the full write sequence (push,
+      queue, the tag PATCH) all live in ONE try/except. An exception before
+      a verdict was ever determined is a "verify-failed" entry, tallied
+      under `errors` -- NOT under pass/needs_human/fail/written, so it can
+      never inflate the real verdict counts. An exception AFTER the verdict
+      was already determined (the write sequence itself) is a
+      "write-failed" entry -- the verdict bucket it already earned stays
+      counted, but `written` does not increment for it. Either way the loop
+      `continue`s to the next candidate; the run completes and the digest
+      is produced.
+
+    `_tag_verified` deliberately stays LAST in the write sequence,
+    unchanged from round 2: tag-only-after-a-clean-write gives
     at-least-once processing -- a candidate that fails mid-write stays
     untagged and is safely retried next run (a rare duplicate push on retry
     is the accepted lesser evil; CRM-side email/company dedup in
     tools/twenty.py + tools/ghl.py already guards the real duplicate case).
-    A candidate whose write sequence raised is NOT counted in `written`,
-    even if its CRM push happened to succeed before a later step failed --
-    the digest is the honest record of what this run itself completed.
+    No dedup added to approval_queue -- out of scope, spec section 10.
     """
     from services.sdr_verification_gate import VerificationRequest
 
     runtime_key = resolve_business_key(brand_key)
-    counts = {"produced": 0, "pass": 0, "needs_human": 0, "fail": 0, "written": 0}
+    counts = _empty_counts()
+
+    if source == "twenty_unverified" and runtime_key not in _TWENTY_SOURCED_RUNTIME_KEYS:
+        lines = [
+            f"- source {source!r} not available for {brand_key!r} "
+            f"({runtime_key}, GHL-backed); no candidates read"
+        ]
+        return _finish(brand_key, commit, counts, lines)
+
+    try:
+        candidates = read_unverified_candidates(runtime_key)
+    except Exception as exc:  # a total read failure must still yield a digest
+        counts["errors"] += 1
+        lines = [f"- read failed: {type(exc).__name__}: {exc}"]
+        return _finish(brand_key, commit, counts, lines)
+
     lines = []
 
-    for c in read_unverified_candidates(runtime_key):
+    for c in candidates:
         counts["produced"] += 1
-        req = VerificationRequest(
-            business_key=brand_key,
-            entity={
-                "company_name": c.get("company_name"),
-                "domain_on_file": c.get("domain_on_file"),
-                "contact_name": c.get("contact_name"),
-                "contact_phone": c.get("contact_phone"),
-                "contact_email": c.get("contact_email"),
-            },
-            signal=None,
-            motion="rebuild",
-        )
-        res = _gate_run(request=req)
-        verdict = res["verdict"]
-        counts[_VERDICT_KEY[verdict]] += 1
+        verdict = None
+        try:
+            req = VerificationRequest(
+                business_key=brand_key,
+                entity={
+                    "company_name": c.get("company_name"),
+                    "domain_on_file": c.get("domain_on_file"),
+                    "contact_name": c.get("contact_name"),
+                    "contact_phone": c.get("contact_phone"),
+                    "contact_email": c.get("contact_email"),
+                },
+                signal=None,
+                motion="rebuild",
+            )
+            res = _gate_run(request=req)
+            verdict = res["verdict"]
+            counts[_VERDICT_KEY[verdict]] += 1
 
-        if verdict == "FAIL":
-            lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | drop")
-            continue
+            if verdict == "FAIL":
+                lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | drop")
+                continue
 
-        auto_eligible = (verdict == "PASS" and res["queue_status"] == "auto_approved")
-        confidence = res.get("confidence", 0.85 if verdict == "PASS" else 0.5)
+            auto_eligible = (verdict == "PASS" and res["queue_status"] == "auto_approved")
+            confidence = res.get("confidence", 0.85 if verdict == "PASS" else 0.5)
 
-        if commit:
-            ready = auto_eligible and crm_ready(runtime_key)
-            prospect = _prospect_dict(c)
-            metadata = {"verdict": verdict, "reason": res["reason"]}
-            try:
+            if commit:
+                ready = auto_eligible and crm_ready(runtime_key)
+                prospect = _prospect_dict(c)
+                metadata = {"verdict": verdict, "reason": res["reason"]}
                 if ready:
                     _push_crm(prospects=[prospect], business_key=runtime_key)
                     _queue_approval(business_key=runtime_key, confidence=confidence,
@@ -454,25 +534,25 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
                     note = "queued pending"
                 _tag_verified(runtime_key=runtime_key, twenty_id=c.get("twenty_id"),
                               existing_tags=c.get("tags") or [])
-            except Exception as exc:  # noqa: BLE001 -- one candidate's write must never abort the batch
+                if ready:
+                    counts["written"] += 1
+            else:
+                note = "would write" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"
+
+            lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | {note}")
+
+        except Exception as exc:  # noqa: BLE001 -- one candidate must never abort the batch
+            if verdict is None:
+                counts["errors"] += 1
+                lines.append(
+                    f"- {c.get('company_name')} | verify-failed: {type(exc).__name__}: {exc} "
+                    f"(twenty_id={c.get('twenty_id')})"
+                )
+            else:
                 lines.append(
                     f"- {c.get('company_name')} | {verdict} | write-failed: "
                     f"{type(exc).__name__}: {exc} (twenty_id={c.get('twenty_id')})"
                 )
-                continue
-            if ready:
-                counts["written"] += 1
-        else:
-            note = "would write" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"
+            continue
 
-        lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | {note}")
-
-    mode = "COMMIT" if commit else "SHADOW"
-    body_lines = [f"# SDR engine run [{mode}]: {brand_key}", ""]
-    body_lines += lines or ["- no unverified candidates found"]
-    body_lines += ["", f"Counts: {counts}"]
-    digest = "\n".join(body_lines)
-
-    digest_path = _write_digest(digest, brand_key, commit)
-
-    return {**counts, "digest": digest, "digest_path": digest_path}
+    return _finish(brand_key, commit, counts, lines)
