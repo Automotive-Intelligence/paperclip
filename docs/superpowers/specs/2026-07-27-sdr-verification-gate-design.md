@@ -4,6 +4,7 @@
 **Author:** The Sales Desk (AVO), driving; Michael Rodriguez, owner
 **Status:** approved design direction (Michael delegated the design calls), pending spec sign-off
 **Sub-project of:** the autonomous SDR desk (this is sub-project #1 of 4; see Decomposition)
+**Governed by:** `docs/superpowers/specs/sdr-desk-principles.md` (BINDING on every SDR-desk sub-project and skill).
 
 ---
 
