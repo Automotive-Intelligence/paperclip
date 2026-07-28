@@ -113,6 +113,9 @@ PINNED INTERFACES (Task 0 -- read from source 2026-07-27, do not guess)
 
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
+
 # --------------------------------------------------------------------------- business_key normalization (spec section 4)
 
 _DESK_TO_RUNTIME = {
@@ -214,6 +217,35 @@ def _push_crm(*, prospects: list, business_key: str):
     return push_prospects_to_crm(prospects, source_agent="sdr-engine", business_key=business_key)
 
 
+# --------------------------------------------------------------------------- the digest receipt (Task 4)
+
+_RECEIPT_DIR = "marketing_deliverables/sdr_engine"  # mirrors studio_social_engine's _DELIVERABLES pattern
+
+
+def _commit_receipt(path: str, body: str) -> None:
+    """Publish one digest to avo-telemetry main via the real, pinned
+    `studio_social_engine._commit_files_to_main`. Never attempts a network
+    call without a token -- raises instead, same convention as
+    `studio_social_engine.run_week`."""
+    from services.studio_social_engine import _commit_files_to_main
+
+    token = os.getenv("SLIPSTREAM_GH_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("SLIPSTREAM_GH_TOKEN missing; cannot publish sdr-engine receipt")
+    _commit_files_to_main({path: body}, f"sdr-engine: {path}", token)
+
+
+def _write_digest(digest: str, brand_key: str, commit: bool) -> str:
+    """A dated receipt path is always returned, in BOTH modes. Only
+    commit=True actually publishes it (shadow is provably side-effect-free:
+    no receipt is committed either)."""
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = f"{_RECEIPT_DIR}/sdr_shadow_{brand_key}_{run_id}.md"
+    if commit:
+        _commit_receipt(path, digest)
+    return path
+
+
 # --------------------------------------------------------------------------- the loop core (Task 3)
 
 _VERDICT_KEY = {"PASS": "pass", "NEEDS_HUMAN": "needs_human", "FAIL": "fail"}
@@ -276,4 +308,6 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
     body_lines += ["", f"Counts: {counts}"]
     digest = "\n".join(body_lines)
 
-    return {**counts, "digest": digest}
+    digest_path = _write_digest(digest, brand_key, commit)
+
+    return {**counts, "digest": digest, "digest_path": digest_path}

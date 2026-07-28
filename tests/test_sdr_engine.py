@@ -97,6 +97,21 @@ def test_commit_writes_only_pass(monkeypatch):
     pushed = []
     monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    # A commit=True run also publishes its digest receipt (Task 4); stub the
+    # publish seam so this unit test never hits the network regardless of
+    # ambient SLIPSTREAM_GH_TOKEN state.
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
     out = run_sdr_engine("wd", commit=True)
     assert out["written"] == 1 and out["fail"] == 1
     assert len(pushed) == 1 and pushed[0]["business_key"] == "callingdigital"
+
+
+def test_digest_always_produced_publish_only_on_commit(monkeypatch):
+    published = []
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: published.append(path))
+    from services.sdr_engine import _write_digest
+
+    p_shadow = _write_digest("body", "wd", commit=False)
+    p_commit = _write_digest("body", "wd", commit=True)
+    assert p_shadow and p_commit          # a path/id is always returned
+    assert len(published) == 1            # only the commit run published
