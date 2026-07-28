@@ -183,3 +183,97 @@ def read_unverified_candidates(runtime_key: str, limit: int = 100) -> list:
             "created_at": p.get("createdAt"),
         })
     return out
+
+
+# --------------------------------------------------------------------------- the gate + CRM seams (separately monkeypatchable)
+
+def _gate_run(*, request, commit: bool = False) -> dict:
+    """Thin seam over the real Verification Gate. See the Task 0 pin block
+    at the top of this module for WHY shadow (commit=False) calls the
+    gate's pure `verify()` instead of its write-performing `run()`."""
+    if commit:
+        from services.sdr_verification_gate import run as gate_run
+
+        return gate_run(request)
+
+    from services.artifact import AUTO_DISPATCH_MIN_CONFIDENCE
+    from services.sdr_verification_gate import verify as gate_verify
+
+    res = gate_verify(request)
+    if res.verdict == "FAIL":
+        return {"verdict": "FAIL", "queue_status": None, "crm": None, "reason": res.reason}
+    queue_status = (
+        "auto_approved" if res.confidence >= AUTO_DISPATCH_MIN_CONFIDENCE else "pending_approval"
+    )
+    return {"verdict": res.verdict, "queue_status": queue_status, "crm": None, "reason": res.reason}
+
+
+def _push_crm(*, prospects: list, business_key: str):
+    from tools.crm_router import push_prospects_to_crm
+
+    return push_prospects_to_crm(prospects, source_agent="sdr-engine", business_key=business_key)
+
+
+# --------------------------------------------------------------------------- the loop core (Task 3)
+
+_VERDICT_KEY = {"PASS": "pass", "NEEDS_HUMAN": "needs_human", "FAIL": "fail"}
+
+
+def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bool = False) -> dict:
+    """One run: pull unverified candidates from the brand's Twenty, verify
+    each, route PASS+auto_approved to CRM (only when commit=True AND the
+    target CRM is ready), and produce a digest. commit=False (the default)
+    is shadow mode: read-only, side-effect-free, records what it WOULD do."""
+    from services.sdr_verification_gate import VerificationRequest
+
+    runtime_key = resolve_business_key(brand_key)
+    counts = {"produced": 0, "pass": 0, "needs_human": 0, "fail": 0, "written": 0}
+    lines = []
+
+    for c in read_unverified_candidates(runtime_key):
+        counts["produced"] += 1
+        req = VerificationRequest(
+            business_key=brand_key,
+            entity={
+                "company_name": c.get("company_name"),
+                "domain_on_file": c.get("domain_on_file"),
+                "contact_name": c.get("contact_name"),
+                "contact_phone": c.get("contact_phone"),
+                "contact_email": c.get("contact_email"),
+            },
+            signal=None,
+            motion="rebuild",
+        )
+        res = _gate_run(request=req, commit=commit)
+        verdict = res["verdict"]
+        counts[_VERDICT_KEY[verdict]] += 1
+
+        would = "would write" if (verdict == "PASS" and res["queue_status"] == "auto_approved") else "hold/skip"
+        if verdict == "PASS" and res["queue_status"] == "auto_approved" and commit and crm_ready(runtime_key):
+            contact_name = c.get("contact_name")
+            _push_crm(
+                prospects=[{
+                    "business_name": c.get("company_name"),
+                    "company_name": c.get("company_name"),
+                    "website": c.get("domain_on_file"),
+                    "domain": c.get("domain_on_file"),
+                    "email": c.get("contact_email"),
+                    "phone": c.get("contact_phone"),
+                    "name": contact_name,
+                    "contact": contact_name,
+                    "contact_name": contact_name,
+                }],
+                business_key=runtime_key,
+            )
+            counts["written"] += 1
+            would = "wrote"
+
+        lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | {would}")
+
+    mode = "COMMIT" if commit else "SHADOW"
+    body_lines = [f"# SDR engine run [{mode}]: {brand_key}", ""]
+    body_lines += lines or ["- no unverified candidates found"]
+    body_lines += ["", f"Counts: {counts}"]
+    digest = "\n".join(body_lines)
+
+    return {**counts, "digest": digest}

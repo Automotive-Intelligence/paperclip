@@ -7,7 +7,16 @@ touches the wire.
 
 import pytest
 
-from services.sdr_engine import crm_ready, read_unverified_candidates, resolve_business_key
+from services.sdr_engine import (
+    crm_ready,
+    read_unverified_candidates,
+    resolve_business_key,
+    run_sdr_engine,
+)
+
+
+def _candidates(monkeypatch, cands):
+    monkeypatch.setattr("services.sdr_engine.read_unverified_candidates", lambda rk, limit=100: cands)
 
 
 def test_desk_keys_map_to_runtime_keys():
@@ -59,3 +68,35 @@ def test_reads_and_filters_out_already_verified(monkeypatch):
     monkeypatch.setattr("services.sdr_engine._twenty_get_people", lambda rk, limit: fake_people)
     out = read_unverified_candidates("callingdigital")
     assert len(out) == 1 and out[0]["twenty_id"] == "1" and out[0]["domain_on_file"] == "acme.com"
+
+
+def test_shadow_mode_writes_nothing(monkeypatch):
+    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com"}])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None, "reason": "ok"},
+    )
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    out = run_sdr_engine("wd", commit=False)
+    assert out["pass"] == 1 and out["written"] == 0 and pushed == []  # shadow: never writes
+
+
+def test_commit_writes_only_pass(monkeypatch):
+    _candidates(monkeypatch, [
+        {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com"},
+        {"twenty_id": "2", "company_name": "Fail", "domain_on_file": "f.com"},
+    ])
+
+    def gate(**k):
+        return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None, "reason": "ok"} \
+            if k["request"].entity["company_name"] == "Pass" \
+            else {"verdict": "FAIL", "queue_status": None, "crm": None, "reason": "real site elsewhere"}
+
+    monkeypatch.setattr("services.sdr_engine._gate_run", gate)
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    out = run_sdr_engine("wd", commit=True)
+    assert out["written"] == 1 and out["fail"] == 1
+    assert len(pushed) == 1 and pushed[0]["business_key"] == "callingdigital"
