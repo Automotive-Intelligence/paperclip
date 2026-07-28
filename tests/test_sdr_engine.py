@@ -249,6 +249,58 @@ def test_commit_tags_processed_candidates_shadow_never_tags(monkeypatch):
     assert tagged == []
 
 
+def test_commit_write_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
+    """Code review round 2 (IMPORTANT): a transient failure anywhere in ONE
+    candidate's write sequence (here, _tag_verified raising for the 2nd
+    candidate) must not abort the whole run -- candidates before and after
+    it are still fully processed, the run returns normally with a digest,
+    and the failed candidate is not counted as written."""
+    _candidates(monkeypatch, [
+        {"twenty_id": "1", "company_name": "First", "domain_on_file": "first.com", "tags": []},
+        {"twenty_id": "2", "company_name": "Second", "domain_on_file": "second.com", "tags": []},
+        {"twenty_id": "3", "company_name": "Third", "domain_on_file": "third.com", "tags": []},
+    ])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+
+    def flaky_tag(*, runtime_key, twenty_id, existing_tags):
+        if twenty_id == "2":
+            raise RuntimeError("Twenty PATCH timed out")
+
+    monkeypatch.setattr("services.sdr_engine._tag_verified", flaky_tag)
+
+    out = run_sdr_engine("wd", commit=True)
+
+    # All 3 candidates reached the push step -- the failure was isolated to
+    # candidate 2's tag write, not the whole batch.
+    assert len(pushed) == 3
+
+    # The run completed normally and still produced a digest/receipt --
+    # nothing was silently dropped.
+    assert out["produced"] == 3
+    assert "First" in out["digest"]
+    assert "Second" in out["digest"]
+    assert "Third" in out["digest"]
+    assert out["digest_path"]
+
+    # The digest honestly records the failure (candidate id + exception).
+    assert "write-failed" in out["digest"]
+    assert "twenty_id=2" in out["digest"]
+    assert "Twenty PATCH timed out" in out["digest"]
+
+    # The failed candidate is not counted as written; the other two are.
+    assert out["written"] == 2
+
+
 def test_digest_always_produced_publish_only_on_commit(monkeypatch):
     published = []
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: published.append(path))

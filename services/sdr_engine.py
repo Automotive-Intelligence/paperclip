@@ -392,6 +392,20 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
         drop + log; no push, no queue, no tag (left for the next run --
         a permanently-FAIL rebuild target still isn't rebuild-worthy next
         run either, but re-tagging it is not this round's scope).
+
+    A transient failure anywhere in ONE candidate's write sequence (push,
+    queue, or the tag PATCH -- code review round 2, finding IMPORTANT) is
+    isolated to that candidate: it is logged in the digest as a
+    write-failed entry and the run moves on, so one flaky Twenty/GHL call
+    never aborts the whole 24/7 batch. `_tag_verified` deliberately stays
+    LAST in the sequence, unchanged: tag-only-after-a-clean-write gives
+    at-least-once processing -- a candidate that fails mid-write stays
+    untagged and is safely retried next run (a rare duplicate push on retry
+    is the accepted lesser evil; CRM-side email/company dedup in
+    tools/twenty.py + tools/ghl.py already guards the real duplicate case).
+    A candidate whose write sequence raised is NOT counted in `written`,
+    even if its CRM push happened to succeed before a later step failed --
+    the digest is the honest record of what this run itself completed.
     """
     from services.sdr_verification_gate import VerificationRequest
 
@@ -428,18 +442,26 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
             ready = auto_eligible and crm_ready(runtime_key)
             prospect = _prospect_dict(c)
             metadata = {"verdict": verdict, "reason": res["reason"]}
+            try:
+                if ready:
+                    _push_crm(prospects=[prospect], business_key=runtime_key)
+                    _queue_approval(business_key=runtime_key, confidence=confidence,
+                                     risk_level="low", content=prospect, metadata=metadata)
+                    note = "wrote"
+                else:
+                    _queue_approval(business_key=runtime_key, confidence=confidence,
+                                     risk_level="medium", content=prospect, metadata=metadata)
+                    note = "queued pending"
+                _tag_verified(runtime_key=runtime_key, twenty_id=c.get("twenty_id"),
+                              existing_tags=c.get("tags") or [])
+            except Exception as exc:  # noqa: BLE001 -- one candidate's write must never abort the batch
+                lines.append(
+                    f"- {c.get('company_name')} | {verdict} | write-failed: "
+                    f"{type(exc).__name__}: {exc} (twenty_id={c.get('twenty_id')})"
+                )
+                continue
             if ready:
-                _push_crm(prospects=[prospect], business_key=runtime_key)
-                _queue_approval(business_key=runtime_key, confidence=confidence,
-                                 risk_level="low", content=prospect, metadata=metadata)
                 counts["written"] += 1
-                note = "wrote"
-            else:
-                _queue_approval(business_key=runtime_key, confidence=confidence,
-                                 risk_level="medium", content=prospect, metadata=metadata)
-                note = "queued pending"
-            _tag_verified(runtime_key=runtime_key, twenty_id=c.get("twenty_id"),
-                          existing_tags=c.get("tags") or [])
         else:
             note = "would write" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"
 
