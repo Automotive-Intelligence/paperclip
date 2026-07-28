@@ -5,6 +5,8 @@ the module boundary throughout, per the plan
 touches the wire.
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from services.sdr_engine import (
@@ -115,3 +117,17 @@ def test_digest_always_produced_publish_only_on_commit(monkeypatch):
     p_commit = _write_digest("body", "wd", commit=True)
     assert p_shadow and p_commit          # a path/id is always returned
     assert len(published) == 1            # only the commit run published
+
+
+def test_run_sdr_route_defaults_to_dry_run(monkeypatch):
+    """POST /admin/run-sdr with no body must call run_sdr_engine("wd",
+    commit=False) -- dry-run default, mirroring /admin/run-social."""
+    from fastapi.testclient import TestClient
+
+    import app as _app
+
+    client = TestClient(_app.app)
+    with patch("services.sdr_engine.run_sdr_engine", return_value={"produced": 0}) as mock_run:
+        resp = client.post("/admin/run-sdr")
+    assert resp.status_code == 200
+    mock_run.assert_called_once_with("wd", commit=False)

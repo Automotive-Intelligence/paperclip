@@ -5473,6 +5473,30 @@ async def run_social_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-sdr")
+async def run_sdr_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the SDR Engine on demand (sub-project #2 of the autonomous SDR
+    desk): reads unverified candidates from a brand's Twenty, runs each
+    through the Verification Gate (services/sdr_verification_gate.py), and
+    routes verified opportunities to the right CRM. SHADOW (dry-run) by
+    default -- produces a digest, writes nothing live; pass {"commit": true}
+    to write PASS+auto_approved opportunities to CRM. Never sends outreach
+    (that switch is a later sub-project). Body optional:
+    {"brand": "wd"|"avi"|"aipg"|"bookd", "commit": bool}."""
+    validate_key(authorization)
+    from services.sdr_engine import run_sdr_engine
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        run_sdr_engine,
+        payload.get("brand") or "wd",
+        commit=bool(payload.get("commit")),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/run-tp-daily")
 async def run_tp_daily_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
