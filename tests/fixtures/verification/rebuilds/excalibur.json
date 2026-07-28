@@ -1,0 +1,17 @@
+{
+  "_note": "Excalibur Pest, 2026-07-15 rebuild lead. Real primary site is the domain on file. Homepage viewport meta has maximum-scale=1.0 -> Check 2 finds pinch_zoom_blocked. Homepage also has a tel: link (same number used in the check_contact unit test) -> Check 3 verifies it directly off the site.",
+  "entity": {
+    "company_name": "Excalibur Pest Control",
+    "domain_on_file": "excaliburpest.com",
+    "city": "Houston, TX",
+    "contact_name": "Craig"
+  },
+  "headers": {
+    "cert_cn": "excaliburpest.com",
+    "location": null,
+    "status": 200
+  },
+  "html": "<html><head><meta name=\"viewport\" content=\"width=device-width, maximum-scale=1.0\"></head><body>Call us <a href=\"tel:+12813536366\">(281) 353-6366</a> for a free quote.</body></html>",
+  "ttfb": 0.5,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- excalibur's defect is pinch_zoom_blocked, not site_down"}
+}

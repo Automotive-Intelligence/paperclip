@@ -1,0 +1,16 @@
+{
+  "_note": "TAPS, 2026-07-15 rebuild lead. Real primary site resolves to the domain on file (no alias/redirect found). It returns HTTP 404 -> Check 2 finds site_down, which is ambiguous by design (could be genuinely down, could be a wrong/parked domain). The one LLM judgment call is invoked and returns NEEDS_HUMAN (spec section 9: '404 could be genuinely-down or a wrong domain; ambiguous by design').",
+  "entity": {
+    "company_name": "TAPS Home Services",
+    "domain_on_file": "tapshomeservices.com",
+    "city": "Fort Worth, TX"
+  },
+  "headers": {
+    "cert_cn": "tapshomeservices.com",
+    "location": null,
+    "status": 404
+  },
+  "html": "<html><body>404 Not Found</body></html>",
+  "ttfb": 0.2,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "404 with no corroborating evidence of a real alternate domain; too ambiguous to assert genuinely down vs. wrong/parked domain"}
+}

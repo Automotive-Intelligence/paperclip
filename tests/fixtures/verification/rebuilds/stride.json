@@ -1,0 +1,16 @@
+{
+  "_note": "Stride, 2026-07-15 rebuild lead. domain_on_file 301-redirects to the real live site stridepestcontrol.com -- Check 1 resolves the real primary site away from the sourced domain, so the rebuild motion FAILs at Check 1 before checks 2/3 run. Same redirect fact used in the resolve_primary_site unit test.",
+  "entity": {
+    "company_name": "Stride Pest Control",
+    "domain_on_file": "stridepest.com",
+    "city": "Plano, TX"
+  },
+  "headers": {
+    "cert_cn": null,
+    "location": "https://stridepestcontrol.com/",
+    "status": 301
+  },
+  "html": "<html><body>fixture-round-1 note: Check 1's own canonical-link corroboration step (FIX 1) now fetches this HTML too, but it has no <link rel=\"canonical\"> tag, so it is a no-op here. check_defect/check_contact never fetch it -- stride FAILs at Check 1.</body></html>",
+  "ttfb": 0.3,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- stride FAILs at Check 1"}
+}

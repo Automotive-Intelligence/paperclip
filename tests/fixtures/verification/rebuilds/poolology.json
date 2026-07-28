@@ -1,0 +1,17 @@
+{
+  "_note": "Pool-ology, 2026-07-15 rebuild lead. Real primary site is the domain on file. TTFB measured at 2.3s (documented evidence, spec section 9) -> Check 2 finds slow_load (site otherwise has a tel: link, form, and CTA copy, so it clears the no_contact_path check first). Check 3 verifies the phone straight off the homepage tel: link.",
+  "entity": {
+    "company_name": "Pool-ology",
+    "domain_on_file": "poolologypools.com",
+    "city": "Southlake, TX",
+    "contact_name": "Pool-ology Front Desk"
+  },
+  "headers": {
+    "cert_cn": "poolologypools.com",
+    "location": null,
+    "status": 200
+  },
+  "html": "<html><body><form><input type=\"text\" name=\"q\"></form>Call now <a href=\"tel:+18175550199\">(817) 555-0199</a> or contact us for a quote.</body></html>",
+  "ttfb": 2.3,
+  "llm": {"verdict": "NEEDS_HUMAN", "rationale": "not used -- poolology's defect is slow_load, not site_down"}
+}
