@@ -112,3 +112,34 @@ PINNED INTERFACES (Task 0 -- read from source 2026-07-27, do not guess)
 """
 
 from __future__ import annotations
+
+# --------------------------------------------------------------------------- business_key normalization (spec section 4)
+
+_DESK_TO_RUNTIME = {
+    "wd": "callingdigital",
+    "avi": "autointelligence",
+    "aipg": "aiphoneguy",
+    "bookd": "bookd",
+}
+
+
+def resolve_business_key(desk_key: str) -> str:
+    """Desk key (wd/avi/aipg/bookd) -> runtime CRM key. Pure boundary
+    translation -- does NOT rename the underlying `callingdigital` slug
+    (spec section 4, decision 2026-07-27). Raises ValueError on an unknown
+    desk key rather than silently defaulting, so a typo never misroutes."""
+    try:
+        return _DESK_TO_RUNTIME[(desk_key or "").strip().lower()]
+    except KeyError:
+        raise ValueError(f"unknown desk business key: {desk_key!r}")
+
+
+def crm_ready(runtime_key: str) -> bool:
+    """True iff the runtime key's mapped CRM provider is fully configured.
+    Composes the real `business_crm_map` + `crm_provider_ready` (Task 0 --
+    `settings.crm_ready_for` does not exist)."""
+    from config.runtime import get_settings
+
+    settings = get_settings()
+    provider = settings.business_crm_map.get(runtime_key, "ghl")
+    return settings.crm_provider_ready(provider, business_key=runtime_key)
