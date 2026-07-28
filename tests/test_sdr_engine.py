@@ -73,32 +73,42 @@ def test_reads_and_filters_out_already_verified(monkeypatch):
 
 
 def test_shadow_mode_writes_nothing(monkeypatch):
-    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com"}])
+    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
     monkeypatch.setattr(
         "services.sdr_engine._gate_run",
-        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None, "reason": "ok"},
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
     )
     pushed = []
     monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    queued = []
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: queued.append(k))
+    tagged = []
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: tagged.append(k))
     out = run_sdr_engine("wd", commit=False)
-    assert out["pass"] == 1 and out["written"] == 0 and pushed == []  # shadow: never writes
+    assert out["pass"] == 1 and out["written"] == 0
+    assert pushed == [] and queued == [] and tagged == []  # shadow: never writes anything
 
 
 def test_commit_writes_only_pass(monkeypatch):
     _candidates(monkeypatch, [
-        {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com"},
-        {"twenty_id": "2", "company_name": "Fail", "domain_on_file": "f.com"},
+        {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com", "tags": []},
+        {"twenty_id": "2", "company_name": "Fail", "domain_on_file": "f.com", "tags": []},
     ])
 
     def gate(**k):
-        return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None, "reason": "ok"} \
+        return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                 "reason": "ok", "confidence": 0.85} \
             if k["request"].entity["company_name"] == "Pass" \
-            else {"verdict": "FAIL", "queue_status": None, "crm": None, "reason": "real site elsewhere"}
+            else {"verdict": "FAIL", "queue_status": None, "crm": None,
+                  "reason": "real site elsewhere", "confidence": 0.0}
 
     monkeypatch.setattr("services.sdr_engine._gate_run", gate)
     pushed = []
     monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
     # A commit=True run also publishes its digest receipt (Task 4); stub the
     # publish seam so this unit test never hits the network regardless of
     # ambient SLIPSTREAM_GH_TOKEN state.
@@ -106,6 +116,137 @@ def test_commit_writes_only_pass(monkeypatch):
     out = run_sdr_engine("wd", commit=True)
     assert out["written"] == 1 and out["fail"] == 1
     assert len(pushed) == 1 and pushed[0]["business_key"] == "callingdigital"
+
+
+def test_commit_pushes_with_runtime_key_never_desk_key_or_ghl_default(monkeypatch):
+    """Finding 1 (CRITICAL) regression: the real crm_router.push_prospects_to_crm
+    must be called EXACTLY ONCE, keyed by the resolved runtime key
+    ("callingdigital"), never the raw desk key ("wd") and never let
+    resolve_crm_provider's business_crm_map.get(..., "ghl") default fire."""
+    _candidates(monkeypatch, [
+        {"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com",
+         "contact_name": "Pat", "contact_phone": "+15551230000", "contact_email": None, "tags": []},
+    ])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    calls = []
+
+    def fake_push(prospects, source_agent, business_key):
+        calls.append({"prospects": prospects, "source_agent": source_agent, "business_key": business_key})
+        return ("twenty", [{"status": "created"}])
+
+    monkeypatch.setattr("tools.crm_router.push_prospects_to_crm", fake_push)
+
+    out = run_sdr_engine("wd", commit=True)
+
+    assert len(calls) == 1
+    assert calls[0]["business_key"] == "callingdigital"
+    assert calls[0]["business_key"] not in ("wd", "ghl")
+    assert out["written"] == 1
+
+
+@pytest.mark.parametrize("desk_key,runtime_key", [
+    ("wd", "callingdigital"),
+    ("avi", "autointelligence"),
+    ("aipg", "aiphoneguy"),
+    ("bookd", "bookd"),
+])
+def test_commit_never_pushes_the_raw_desk_key(monkeypatch, desk_key, runtime_key):
+    """Finding 1: no path passes a raw desk key ("wd"/"avi"/"aipg"/"bookd")
+    into crm_router, for any brand."""
+    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    run_sdr_engine(desk_key, commit=True)
+
+    assert len(pushed) == 1
+    assert pushed[0]["business_key"] == runtime_key
+    assert pushed[0]["business_key"] not in ("wd", "avi", "aipg", "ghl")
+
+
+def test_commit_not_ready_queues_pending_never_pushes(monkeypatch):
+    """Finding 1: commit=True but crm_ready False for that brand -- push
+    must NOT fire; the candidate is queued pending instead of misrouted."""
+    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: False)
+    pushed = []
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    queued = []
+    monkeypatch.setattr("services.sdr_engine._queue_approval",
+                        lambda **k: (queued.append(k), "pending_approval")[1])
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    out = run_sdr_engine("wd", commit=True)
+
+    assert pushed == []
+    assert out["written"] == 0
+    assert len(queued) == 1
+    assert queued[0]["business_key"] == "callingdigital"
+    assert queued[0]["risk_level"] == "medium"
+
+
+def test_commit_tags_processed_candidates_shadow_never_tags(monkeypatch):
+    """Finding 2 (IMPORTANT): commit mode tags every processed (pushed or
+    queued) candidate so the next run's dedup skips it; shadow never tags
+    (tagging is itself a write, and shadow must stay side-effect-free)."""
+    _candidates(monkeypatch, [
+        {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com", "tags": []},
+        {"twenty_id": "2", "company_name": "Human", "domain_on_file": "h.com", "tags": ["existing"]},
+    ])
+
+    def gate(**k):
+        name = k["request"].entity["company_name"]
+        if name == "Pass":
+            return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                    "reason": "ok", "confidence": 0.85}
+        return {"verdict": "NEEDS_HUMAN", "queue_status": "pending_approval", "crm": None,
+                "reason": "contact unverified", "confidence": 0.5}
+
+    monkeypatch.setattr("services.sdr_engine._gate_run", gate)
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: None)
+    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    tagged = []
+    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: tagged.append(k))
+
+    run_sdr_engine("wd", commit=True)
+    assert len(tagged) == 2
+    assert {t["twenty_id"] for t in tagged} == {"1", "2"}
+    assert {t["runtime_key"] for t in tagged} == {"callingdigital"}
+    # the existing "existing" tag must be threaded through, not dropped
+    human_tag_call = next(t for t in tagged if t["twenty_id"] == "2")
+    assert human_tag_call["existing_tags"] == ["existing"]
+
+    # Shadow: same candidates, same gate verdicts -- tag-write must never fire.
+    tagged.clear()
+    run_sdr_engine("wd", commit=False)
+    assert tagged == []
 
 
 def test_digest_always_produced_publish_only_on_commit(monkeypatch):
