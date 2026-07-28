@@ -14,12 +14,12 @@ Sub-project #1 built the Verification Gate: given a candidate, it verifies real 
 
 ## 2. Scope of THIS spec
 
-Build one bounded Railway engine, `services/sdr_engine.py`, plus the `business_key` normalization it requires. ONE signal source (`permit_feed`, WD rebuild motion). Shadow mode default. No live send, no research/voice skills, no multi-source — those are later sub-projects.
+Build one bounded Railway engine, `services/sdr_engine.py`, plus the `business_key` normalization it requires. ONE signal source: **unverified candidates already in the brand's Twenty CRM** (the DataMoon/intent webhook already drops raw candidates there; the 7 WD rebuilds are present now). Shadow mode default. No live send, no research/voice skills, no auto-sourcing of brand-new leads (a real permit/website fetcher is a later sub-project). **NOTE: the original `permit_feed` source named in an earlier draft does not exist as source (only a stale .pyc); corrected to read-from-Twenty, which is real and needs no new fetcher.**
 
 ## 3. What already exists (reused, not rebuilt)
 
 - `services/sdr_verification_gate.run(VerificationRequest) -> dict` — the gate (#1).
-- `tools/permit_feed` — the signal source (WD rebuild permits).
+- `tools/twenty.py` — read unverified candidates from the brand's Twenty (the real signal source; `permit_feed` is a phantom pyc, not used).
 - `tools/crm_router.push_prospects_to_crm(prospects, source_agent, business_key)` — per-brand CRM write.
 - `services/approval_queue` — the risk gate (auto / pending / drop).
 - `services/studio_social_engine` — the Railway engine PATTERN to mirror: dry-run default, produce -> gate -> receipt, `POST /admin/run-*` on-demand entry, schedule once proven.
@@ -42,7 +42,7 @@ The engine resolves the desk key to the runtime key and asserts the target CRM i
 
 ## 5. Contract (the engine's interface)
 
-`run_sdr_engine(brand_key: str, source: str = "permit_feed", commit: bool = False) -> dict`
+`run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bool = False) -> dict`
 
 - `commit=False` (DEFAULT) = shadow mode: read-only, side-effect-free, produces a digest of what it WOULD do. `commit=True` = live-write to CRM (still never SENDS outreach; sending is sub-project #4).
 - Returns `{"produced": int, "pass": int, "needs_human": int, "fail": int, "written": int, "digest_path": str}`.
@@ -50,7 +50,7 @@ The engine resolves the desk key to the runtime key and asserts the target CRM i
 
 ## 6. The loop (one run)
 
-1. **Pull fresh signals** from `permit_feed` for `brand_key`. Bucket by recency (principle 9): MOVE TODAY (<14d), THIS MONTH (15-45d), drop >45d. Work newest first.
+1. **Pull unverified candidates** from the brand's Twenty via `tools/twenty.py` (recent people/opportunities with no gate-verified stamp). Bucket by recency (principle 9): newest first; a stale record (>45d untouched) is deprioritized. For the first WD run these are the rebuild candidates already present.
 2. **Dedup** against what the CRM already has and what a prior run already produced (principle: never double-create). Skip anything already an opportunity or in-sequence.
 3. **Each candidate → `sdr_verification_gate.run(...)`** with `motion="rebuild"`, the resolved `business_key`, and the permit-derived entity.
 4. **Route by the gate's returned verdict/queue_status:**
@@ -80,7 +80,7 @@ The engine resolves the desk key to the runtime key and asserts the target CRM i
 - **Verdict routing:** a PASS candidate (commit=True) calls `push_prospects_to_crm` with the resolved key; a FAIL candidate never does; a NEEDS_HUMAN candidate queues pending, never pushes.
 - **Dedup:** a candidate already present is skipped, not re-created.
 - **Recency bucketing:** a >45d permit is dropped; a <14d permit is worked first.
-- **Ship criterion:** a full shadow run over a fixture permit batch produces a correct digest and makes zero live writes/sends.
+- **Ship criterion:** a full shadow run over a fixture batch of unverified Twenty candidates produces a correct digest (each candidate's gate verdict + evidence) and makes zero live writes/sends.
 
 ## 10. Out of scope (explicit)
 
