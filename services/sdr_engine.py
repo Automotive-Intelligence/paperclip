@@ -143,3 +143,43 @@ def crm_ready(runtime_key: str) -> bool:
     settings = get_settings()
     provider = settings.business_crm_map.get(runtime_key, "ghl")
     return settings.crm_provider_ready(provider, business_key=runtime_key)
+
+
+# --------------------------------------------------------------------------- read unverified candidates from Twenty
+
+def _twenty_get_people(runtime_key: str, limit: int) -> list:
+    """Hand-rolled `GET /rest/people` -- tools/twenty.py has no ready-made
+    reader (Task 0). Isolated here so tests monkeypatch this one seam and
+    never touch the wire."""
+    import requests
+    from tools.twenty import _headers, _workspace_config
+
+    base_url, api_key = _workspace_config(runtime_key)
+    r = requests.get(
+        f"{base_url}/rest/people",
+        headers=_headers(api_key),
+        params={"limit": limit},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return (r.json().get("data") or {}).get("people") or []
+
+
+def read_unverified_candidates(runtime_key: str, limit: int = 100) -> list:
+    """Candidates from the brand's Twenty with no `gate-verified` tag.
+    Returns `{twenty_id, company_name, domain_on_file, contact_name,
+    contact_phone, contact_email, created_at}` per candidate."""
+    out = []
+    for p in _twenty_get_people(runtime_key, limit):
+        if "gate-verified" in (p.get("tags") or []):
+            continue
+        out.append({
+            "twenty_id": p.get("id"),
+            "company_name": p.get("companyName"),
+            "domain_on_file": (p.get("domainName") or {}).get("primaryLinkUrl"),
+            "contact_name": (p.get("name") or {}).get("firstName"),
+            "contact_phone": (p.get("phones") or {}).get("primaryPhoneNumber"),
+            "contact_email": (p.get("emails") or {}).get("primaryEmail"),
+            "created_at": p.get("createdAt"),
+        })
+    return out

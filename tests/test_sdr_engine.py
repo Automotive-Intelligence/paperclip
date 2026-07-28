@@ -7,7 +7,7 @@ touches the wire.
 
 import pytest
 
-from services.sdr_engine import crm_ready, resolve_business_key
+from services.sdr_engine import crm_ready, read_unverified_candidates, resolve_business_key
 
 
 def test_desk_keys_map_to_runtime_keys():
@@ -46,3 +46,16 @@ def test_crm_not_ready_when_unconfigured(monkeypatch):
         assert crm_ready("autointelligence") is False
     finally:
         runtime.get_settings.cache_clear()
+
+
+def test_reads_and_filters_out_already_verified(monkeypatch):
+    fake_people = [
+        {"id": "1", "name": {"firstName": "A"}, "companyName": "Acme",
+         "domainName": {"primaryLinkUrl": "acme.com"},
+         "emails": {"primaryEmail": "a@acme.com"}, "phones": {"primaryPhoneNumber": "+1555"},
+         "createdAt": "2026-07-20", "tags": []},
+        {"id": "2", "name": {"firstName": "B"}, "companyName": "Verified Co", "tags": ["gate-verified"]},
+    ]
+    monkeypatch.setattr("services.sdr_engine._twenty_get_people", lambda rk, limit: fake_people)
+    out = read_unverified_candidates("callingdigital")
+    assert len(out) == 1 and out[0]["twenty_id"] == "1" and out[0]["domain_on_file"] == "acme.com"
