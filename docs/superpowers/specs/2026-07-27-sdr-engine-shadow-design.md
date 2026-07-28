@@ -36,7 +36,9 @@ The desk speaks `wd`/`avi`/`aipg`/`bookd`; the runtime speaks `aiphoneguy`/`call
 | `avi` | `autointelligence` | Twenty (AvI) |
 | `bookd` | `bookd` | Twenty (Book'd) |
 
-The engine resolves the desk key to the runtime key and asserts the target CRM is `*_ready` before writing; if not ready, the opportunity holds in `approval_queue` pending rather than misrouting. (Open item 11.1: confirm `wd` maps to `callingdigital` vs a distinct `wd` runtime key.)
+The engine resolves the desk key to the runtime key and asserts the target CRM is `*_ready` before writing; if not ready, the opportunity holds in `approval_queue` pending rather than misrouting.
+
+**RESOLVED 2026-07-27 (was open item 11.1):** `wd` -> `callingdigital` is confirmed from source (`services/intent_inbound.py:155` `"wd": "callingdigital"  # WD workspace`; `tools/twenty.py` maps `callingdigital` -> `TWENTY_WD_URL`/`TWENTY_WD_API_KEY`/`crm.worshipdigital.co`). This normalization is a **pure boundary translation** (desk keys -> the runtime keys that already work); it does NOT rename the underlying `callingdigital` slug. The full CD->WD internal-slug rename (125 refs / 34 files / 2 dirs / live-data key migration) is a DEFERRED, separate low-priority project — no customer sees the slug, secrets are already `TWENTY_WD_*`, and a hard rename would risk routing + orphaned records. Decision by Michael 2026-07-27.
 
 ## 5. Contract (the engine's interface)
 
