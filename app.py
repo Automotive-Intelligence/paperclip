@@ -9604,3 +9604,14 @@ async def admin_flag_respond_now(
 
     resp = await asyncio.to_thread(respond_to_flag, seat_obj, flag, ch_id, parent_ts)
     return {"parent_post": {"channel": ch_id, "ts": parent_ts}, "responder": resp}
+
+
+@app.post("/concierge/chatwoot")
+async def concierge_chatwoot(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Agent Bot webhook for the Concierge (deliverable 152). Shadow-mode default."""
+    from services.concierge import handle_webhook
+    try:
+        return handle_webhook(payload or {})
+    except Exception as e:
+        logging.exception("concierge webhook failed")
+        return {"ok": False, "error": str(e)[:200]}
