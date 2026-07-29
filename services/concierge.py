@@ -5,7 +5,8 @@ SHADOW MODE by default: logs + drafts, sends nothing, until CONCIERGE_LIVE=1.
 Brain rules: per-brand voice, wired-CTA registry ONLY, no pricing, no em-dashes,
 hot-thread handoff (conversation opened to human inbox) on qualification signal.
 """
-import os, json, re, logging, urllib.request
+import os, json, re, logging
+import requests
 
 CHATWOOT_URL = os.getenv("CHATWOOT_URL", "https://portal.worshipdigital.co").rstrip("/")
 BOT_TOKEN = os.getenv("CHATWOOT_BOT_TOKEN", "")
@@ -31,27 +32,21 @@ VOICE = {
 HOT = re.compile(r"price|cost|how much|call me|talk|meeting|ready|sign", re.I)
 
 def _claude(system, user):
-    body = json.dumps({"model": MODEL, "max_tokens": 300, "system": system,
-                       "messages": [{"role": "user", "content": user}]}).encode()
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
-        "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)["content"][0]["text"]
+    r = requests.post("https://api.anthropic.com/v1/messages", timeout=30, headers={
+        "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+        json={"model": MODEL, "max_tokens": 300, "system": system,
+              "messages": [{"role": "user", "content": user}]})
+    r.raise_for_status()
+    return r.json()["content"][0]["text"]
 
 def _send(account_id, conversation_id, text):
-    body = json.dumps({"content": text}).encode()
-    req = urllib.request.Request(
-        f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages",
-        data=body, headers={"api_access_token": BOT_TOKEN, "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return r.status
+    r = requests.post(f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages",
+        timeout=15, headers={"api_access_token": BOT_TOKEN}, json={"content": text})
+    return r.status_code
 
 def _handoff(account_id, conversation_id):
-    body = json.dumps({"status": "open"}).encode()
-    req = urllib.request.Request(
-        f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/toggle_status",
-        data=body, headers={"api_access_token": BOT_TOKEN, "content-type": "application/json"})
-    urllib.request.urlopen(req, timeout=15)
+    requests.post(f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/toggle_status",
+        timeout=15, headers={"api_access_token": BOT_TOKEN}, json={"status": "open"})
 
 def handle_webhook(payload: dict) -> dict:
     """Chatwoot agent_bot webhook. Returns a receipt dict (also the shadow log line)."""
@@ -73,7 +68,8 @@ def handle_webhook(payload: dict) -> dict:
                   f"End with exactly that link/line. One question max to qualify them.")
         try:
             reply = _claude(system, f'They wrote: "{text}"')
-        except Exception as e:
+        except Exception:
+            logging.exception("[concierge] claude call failed; using fulfillment fallback")
             reply, hot = fulfill, True   # fulfillment never fails; flag human
         if "—" in reply or "–" in reply: reply = reply.replace("—", ",").replace("–", ",")
     else:
