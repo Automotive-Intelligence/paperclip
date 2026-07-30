@@ -1,0 +1,210 @@
+persona: bt
+description: |
+  Decision runbook for the Build & Tech persona. When bt.yaml scorecard KPIs
+  land in yellow or red, the persona wake loop looks these rules up in
+  KPI-name order and asks a Claude session to pick a lever using
+  selection_prompt. Levers are BOUNDED — the persona can only execute
+  actions listed here. Add new levers via PR review, not autonomously.
+
+  Reversibility: GREEN auto-ships; AMBER auto-ships + Owner Brief AMBER note;
+  RED never auto-ships, always queued for Michael.
+  Impact: HIGH-IMPACT wakes an immediate email; ROUTINE flows into the daily brief.
+
+rules:
+  - when_kpi: agent_error_rate
+    when_status: yellow
+    candidate_levers:
+      - id: spawn_error_diagnostic
+        action: spawn_agent
+        target_agent: agent_diagnostic_probe
+        payload_template:
+          window_hours: 24
+          top_offender_only: true
+        reversibility: GREEN
+        impact: ROUTINE
+      - id: pause_top_offender
+        action: spawn_agent
+        target_agent: agent_pause_toggle
+        payload_template:
+          agent: "{top_offender_agent}"
+          duration_minutes: 60
+          reason: "elevated error rate — pause pending diagnostic"
+        reversibility: AMBER
+        impact: ROUTINE
+    selection_prompt: |
+      Agent error rate crossed the yellow threshold. Prefer the diagnostic
+      probe first — it's GREEN (auto-reversible) and produces the data
+      needed to justify a pause. Only escalate to pause_top_offender if
+      you already have three or more diagnostic runs showing the same
+      offender, OR the error rate has trended up 4+ points in the last
+      24h (a diagnostic pass won't stop bleeding fast enough).
+
+  - when_kpi: agent_error_rate
+    when_status: red
+    candidate_levers:
+      - id: pause_top_offender
+        action: spawn_agent
+        target_agent: agent_pause_toggle
+        payload_template:
+          agent: "{top_offender_agent}"
+          duration_minutes: 240
+          reason: "RED-tier error rate"
+        reversibility: AMBER
+        impact: HIGH_IMPACT
+      - id: escalate_to_owner
+        action: escalate_to_red
+        message: "Agent error rate RED. Top offender: {top_offender_agent}. Suggest a longer pause OR rollback of the last deploy touching that agent's path."
+        reversibility: RED
+        impact: HIGH_IMPACT
+    selection_prompt: |
+      RED tier means real damage is compounding. Pause first (AMBER,
+      auto-reversible) to stop the bleeding, then queue an owner escalate
+      for the strategic call (rollback vs code fix). Choose escalate_only
+      when you can't identify a single top offender — a broad pause is
+      too aggressive without a target.
+
+  - when_kpi: agent_run_completion_rate
+    when_status: yellow
+    candidate_levers:
+      - id: timeout_audit
+        action: spawn_agent
+        target_agent: timeout_audit_probe
+        payload_template:
+          window_hours: 24
+        reversibility: GREEN
+        impact: ROUTINE
+    selection_prompt: |
+      Completion rate slipping usually means a specific agent is timing
+      out or hanging. Run the audit first. It's cheap and identifies
+      whether the pattern is one agent or infra-wide.
+
+  - when_kpi: agent_run_completion_rate
+    when_status: red
+    candidate_levers:
+      - id: escalate_completion_red
+        action: escalate_to_red
+        message: "Agent completion rate RED — {completion_pct}%. Multiple agents timing out or hanging. Suggest immediate B&T infra review."
+        reversibility: RED
+        impact: HIGH_IMPACT
+
+  - when_kpi: api_uptime_per_service
+    when_status: yellow
+    candidate_levers:
+      - id: uptime_recheck
+        action: spawn_agent
+        target_agent: infrastructure_sweep_ondemand
+        payload_template:
+          scope: infra
+        reversibility: GREEN
+        impact: ROUTINE
+    selection_prompt: |
+      Uptime dip could be transient. Re-run the sweep to confirm before
+      escalating.
+
+  - when_kpi: api_uptime_per_service
+    when_status: red
+    candidate_levers:
+      - id: escalate_uptime_red
+        action: escalate_to_red
+        message: "Service uptime RED. Failed URLs: {failed_urls}. Immediate manual eyes needed — auto-remediation not safe here."
+        reversibility: RED
+        impact: HIGH_IMPACT
+
+  - when_kpi: domain_ssl_green_rate
+    when_status: yellow
+    candidate_levers:
+      - id: ssl_expiry_report
+        action: spawn_agent
+        target_agent: ssl_expiry_probe
+        payload_template:
+          window_days: 30
+        reversibility: GREEN
+        impact: ROUTINE
+
+  - when_kpi: domain_ssl_green_rate
+    when_status: red
+    candidate_levers:
+      - id: escalate_ssl_red
+        action: escalate_to_red
+        message: "SSL green-rate RED. Domain(s) within 7 days of expiry — manual renewal required for registrar-level certs."
+        reversibility: RED
+        impact: HIGH_IMPACT
+
+  - when_kpi: time_to_resolution_flagged_issues
+    when_status: yellow
+    candidate_levers:
+      - id: flag_triage
+        action: spawn_agent
+        target_agent: flag_triage_sweep
+        payload_template:
+          age_hours_gte: 24
+        reversibility: GREEN
+        impact: ROUTINE
+
+  - when_kpi: deploy_frequency
+    when_status: yellow
+    candidate_levers:
+      - id: pr_backlog_report
+        action: spawn_agent
+        target_agent: pr_backlog_report
+        reversibility: GREEN
+        impact: ROUTINE
+    selection_prompt: |
+      Deploy frequency dip usually means PR backlog. Report first — the
+      surface Michael needs is 'which PRs are stalled and why'.
+
+  - when_kpi: secrets_rotation_compliance
+    when_status: yellow
+    candidate_levers:
+      - id: rotation_reminder
+        action: post_flag
+        target_persona: bt
+        message: "Secrets rotation compliance at {compliance_pct}% — {stale_count} secrets past 90d window. Top offenders: {stale_sample}."
+        reversibility: GREEN
+        impact: ROUTINE
+
+  - when_kpi: token_budget_burn_rate
+    when_status: yellow
+    candidate_levers:
+      - id: burn_rate_report
+        action: post_flag
+        target_persona: bt
+        message: "Token burn rate {value_usd} over trailing 24h. Top personas: {top_personas}. Watch budget ceiling."
+        reversibility: GREEN
+        impact: ROUTINE
+      - id: pause_lowest_priority
+        action: spawn_agent
+        target_agent: persona_rate_limiter
+        payload_template:
+          persona_priority: "lowest"
+          minutes: 60
+        reversibility: AMBER
+        impact: ROUTINE
+    selection_prompt: |
+      Yellow burn rate means we're trending toward the ceiling but not
+      over. Report first. Only rate-limit if the trailing 6h burn is
+      >2x the trailing 24h average — that means a runaway loop, not
+      normal load.
+
+  - when_kpi: token_budget_burn_rate
+    when_status: red
+    candidate_levers:
+      - id: pause_lowest_priority
+        action: spawn_agent
+        target_agent: persona_rate_limiter
+        payload_template:
+          persona_priority: "lowest"
+          minutes: 240
+        reversibility: AMBER
+        impact: HIGH_IMPACT
+      - id: escalate_burn_red
+        action: escalate_to_red
+        message: "Token burn rate RED — {value_usd} trailing 24h vs ceiling. Rate-limiter engaged on lowest-priority persona. Manual budget review needed."
+        reversibility: RED
+        impact: HIGH_IMPACT
+
+# Global rules that apply regardless of KPI
+global_constraints:
+  max_actions_per_wake: 5           # v1 safety cap; observability week tunes
+  never_execute_reversibility_red: true
+  require_adversarial_review: [AMBER, GREEN]  # RED skips (goes straight to Owner queue)
