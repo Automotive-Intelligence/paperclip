@@ -57,7 +57,7 @@ NUMERIC = re.compile(r"\$\s?\d|\d+\s?%|\b\d+\s?(?:percent|dollars)\b", re.I)
 def _claude(system, user):
     r = requests.post("https://api.anthropic.com/v1/messages", timeout=30, headers={
         "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-        json={"model": MODEL, "max_tokens": 300, "system": system,
+        json={"model": MODEL, "max_tokens": 1024, "system": system,
               "messages": [{"role": "user", "content": user}]})
     r.raise_for_status()
     blocks = r.json().get("content") or []
