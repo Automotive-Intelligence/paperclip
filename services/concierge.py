@@ -19,19 +19,23 @@ MODEL = os.getenv("CONCIERGE_MODEL", "claude-sonnet-5")
 
 # keyword registry: keyword -> (brand, fulfillment line). ONLY wired paths. (152 registry)
 REGISTRY = {
-    "EQUITY":     ("avi",  "Here is the short version of how mined equity works, and the free 30-minute diagnostic where we pull it from your own data: automotiveintelligence.io/diagnostic-call"),
-    "DIAGNOSTIC": ("avi",  "Book the free 30-minute diagnostic here: automotiveintelligence.io/diagnostic-call"),
-    "PLAYBOOK":   ("aipg", "Here is the free Missed Call Playbook: theaiphoneguy.com/discovery"),
+    "EQUITY":     ("avi",  "Here is the short version of how mined equity works, and the free 30-minute diagnostic where we pull it from your own data: automotiveintelligence.io/diagnostic-call?utm_source=concierge&utm_medium=dm&utm_campaign=equity"),
+    "DIAGNOSTIC": ("avi",  "Book the free 30-minute diagnostic here: automotiveintelligence.io/diagnostic-call?utm_source=concierge&utm_medium=dm&utm_campaign=diagnostic"),
+    "PLAYBOOK":   ("aipg", "Here is the free Missed Call Playbook: theaiphoneguy.com/discovery?utm_source=concierge&utm_medium=dm&utm_campaign=playbook"),
     "DEMO":       ("aipg", "Grab a 15-minute demo slot here: theaiphoneguy.com (booking link in the top nav)."),
-    "SAMPLE":     ("wd",   "We will build you a free sample first, no invoice attached. Start here: worshipdigital.co"),
+    "SAMPLE":     ("wd",   "We will build you a free sample first, no invoice attached. Start here: worshipdigital.co?utm_source=concierge&utm_medium=dm&utm_campaign=sample"),
     "BUILD":      ("bae",  "The community is on Skool: skool.com/agent-empire-4291"),
+    "DEMO2":      ("bookd", "See it working at bookd.cx (demo link in the top nav)."),
 }
 VOICE = {
     "avi":  "Plain-spoken dealership operator. I sell cars for a living and build AI for stores like mine. Never discuss pricing; offer the free diagnostic.",
     "aipg": "The AI Phone Guy. DFW trades. Never say chatbot; we catch calls your team can not get to. Never discuss pricing.",
     "wd":   "Worship Digital, founder-run full-service agency. Plain English, no jargon. Lead with the free sample.",
     "bae":  "Agent Empire. Anti-guru, operator-to-operator. No income claims ever.",
+    "bookd": "book'd, the compliance-first CRM for life insurance agents. Ryan-default voice: plain, direct, agent-to-agent. NEVER discuss pricing, NEVER income/earnings claims (insurance compliance). Point to the demo at bookd.cx.",
 }
+# Brands held in shadow even when CONCIERGE_LIVE=1 (e.g. partner brands pending standing sign-off)
+BRAND_HOLD = set(json.loads(os.getenv("CONCIERGE_BRAND_HOLD", '["bookd"]')))
 HOT = re.compile(r"price|cost|how much|call me|talk|meeting|ready|sign", re.I)
 
 def _claude(system, user):
@@ -87,7 +91,7 @@ def handle_webhook(payload: dict) -> dict:
                "inbox": inbox_id or inbox, "inbox_brand": inbox_brand, "kw": kw, "brand": brand, "hot": hot,
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
-    if LIVE and account_id and conv_id:
+    if LIVE and account_id and conv_id and (brand not in BRAND_HOLD):
         if reply: _send(account_id, conv_id, reply)
         if hot: _handoff(account_id, conv_id)
     return receipt
@@ -143,6 +147,6 @@ def handle_zernio(payload: dict) -> dict:
                "platform": msg.get("platform"), "kw": kw, "hot": hot,
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
-    if LIVE and reply and conv_id:
+    if LIVE and reply and conv_id and (brand not in BRAND_HOLD):
         _zernio_send(conv_id, reply)
     return receipt
