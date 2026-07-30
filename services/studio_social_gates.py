@@ -107,12 +107,46 @@ def scrutineer_review(posts: List[Dict[str, Any]], brand_cfg: Dict[str, Any]) ->
     return _review_copy(posts, system, "scrutineer")
 
 
+# A CTA that promises a reply to a DM or a comment-keyword is UNWIRED: no brand has a
+# DM-capture rail. Catch those deterministically as a safety net behind the gate prompt.
+_UNWIRED_CTA_RE = re.compile(
+    r"\bDM\b|\bsend (?:us |me )?a (?:dm|message)\b|"
+    r"\bcomment\b[^.\n]{0,40}\b(?:below|and (?:i|we)|to get|for the|for a)\b",
+    re.I)
+
+
+def unwired_cta_hits(posts: List[Dict[str, Any]]) -> List[str]:
+    """Post/platform keys whose CTA promises an unwired DM/comment-keyword reply."""
+    hits = []
+    for post in posts:
+        for plat, text in (post.get("platforms") or {}).items():
+            if isinstance(text, str) and _UNWIRED_CTA_RE.search(text):
+                hits.append(f"{post.get('key')}:{plat}")
+    return hits
+
+
 def conversion_review(posts: List[Dict[str, Any]], brand_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ctas = brand_cfg.get("allowed_ctas") or []
+    cta_block = ("\n".join(f"  - {c}" for c in ctas)
+                 if ctas else "  (none configured -- use no CTA beyond visiting the brand site)")
     system = (
         "You are the CONVERSION STRATEGIST (direct response) for %s. For each post: "
         "ensure ONE CTA matched to the funnel stage, a loss-framed / stakes-first hook, "
         "the top objection pre-answered, and friction removed. Lead with the stake, not "
         "a self-introduction. NO em-dashes. Keep the brand voice; rewrite only to lift "
-        "response." % brand_cfg.get("display_name", "")
+        "response.\n\n"
+        "HARD CTA RULE (a promised follow-up with no rail is worse than no CTA): the CTA "
+        "may ONLY direct to one of this brand's WIRED fulfillment paths:\n%s\n"
+        "NEVER write a CTA that tells the reader to DM a keyword, send a DM/message, or "
+        "'comment X below' -- there is NO DM/comment-capture rail on any brand, so those "
+        "go unanswered. Rewrite any such CTA to one of the wired paths above."
+        % (brand_cfg.get("display_name", ""), cta_block)
     )
-    return _review_copy(posts, system, "conversion")
+    out = _review_copy(posts, system, "conversion")
+    residual = unwired_cta_hits(out["posts"])
+    if residual:
+        logger.warning("[studio-social] UNWIRED CTA survived conversion gate: %s", residual)
+        out["notes"] = list(out.get("notes") or []) + [
+            f"WARNING unwired CTA (no DM/comment rail): {', '.join(residual)}"]
+    out["unwired_cta"] = residual
+    return out
