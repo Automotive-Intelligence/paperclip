@@ -34,11 +34,23 @@ from tools.zernio import (  # noqa: E402
 from tools.social_load import PostJob, load_jobs, canonical_brand  # noqa: E402
 
 # Brands that publish through a PARTNER's Zernio account via a SEPARATE API key.
-# Book'd is intentionally NOT here: we accepted Ryan's team invite, so our default
-# key already reaches his "book'd" profile. Kept for any future separate-key brand.
+# Currently none. Book'd is NOT here: it is now directly connected under our
+# (salesdroid) Zernio key as the profile "Bookd" (id 6a668d6c6551027c8175f883)
+# — Facebook Page "Book'd", Instagram @bookdcx, LinkedIn (Ryan's personal) — and
+# posts via the zernio rail like every other brand. Kept for any future
+# separate-key brand.
 BRAND_KEY_ENV = {}
 
+# Deliverable brand heading -> Zernio profile ID. Preferred over name matching:
+# an apostrophe/name change on the live profile cannot break id resolution. The
+# live Book'd profile is named "Bookd" (no apostrophe), so a name match misses it.
+BRAND_TO_PROFILE_ID = {
+    "book'd": "6a668d6c6551027c8175f883",
+    "bookd": "6a668d6c6551027c8175f883",
+}
+
 # Deliverable brand heading -> Zernio profile name. Extend as brands connect.
+# Used as a case-insensitive fallback when the brand has no pinned profile id.
 BRAND_TO_PROFILE = {
     "automotive intelligence": "Automotive Intelligence",
     # WD reuses the legacy Calling Digital profile (its pre-rebrand identity;
@@ -47,9 +59,39 @@ BRAND_TO_PROFILE = {
     "the ai phone guy": "AI Phone Guy",
     "ai phone guy": "AI Phone Guy",
     "agent empire": "Agent Empire",
-    "book'd": "Book'd",
-    "bookd": "Book'd",
+    # Live profile name is "Bookd" (no apostrophe); id-pinned above is preferred,
+    # this name is the fallback and is kept in sync with the live profile.
+    "book'd": "Bookd",
+    "bookd": "Bookd",
 }
+
+
+def resolve_profile(name: str, profiles: Dict[str, str]) -> tuple:
+    """Map a deliverable brand heading to a live Zernio profile.
+
+    Returns (display_name, profile_id); profile_id is None if the brand is not
+    connected. Resolution prefers a pinned PROFILE ID (BRAND_TO_PROFILE_ID) so a
+    name/apostrophe change on the live profile cannot break it — Book'd's live
+    profile is "Bookd" (no apostrophe). Falls back to a case-insensitive name
+    match against BRAND_TO_PROFILE. `profiles` is {profile_name: profile_id}.
+    """
+    key = name.lower()
+    id_by_name = {n: str(i) for n, i in profiles.items()}
+    live_ids = set(id_by_name.values())
+    target_id = BRAND_TO_PROFILE_ID.get(key)
+    if target_id and target_id in live_ids:
+        # Recover the live display name for the console line.
+        disp = next((n for n, i in id_by_name.items() if i == target_id),
+                    BRAND_TO_PROFILE.get(key))
+        return disp, target_id
+    prof_name = BRAND_TO_PROFILE.get(key)
+    if prof_name:
+        pid = next((i for n, i in profiles.items()
+                    if (n or "").lower() == prof_name.lower()), None)
+        return prof_name, pid
+    return prof_name, None
+
+
 # Deliverable sub-headers -> Zernio platform ids. Image-only batch (no TikTok/YouTube).
 SECTION_TO_PLATFORM = {
     "linkedin": "linkedin",
@@ -170,11 +212,10 @@ def main() -> int:
                 profiles, accts = default_profiles, default_accts
                 src = "default account"
 
-            prof_name = BRAND_TO_PROFILE.get(name.lower())
-            prof_id = None
-            if prof_name:  # case-insensitive (Ryan's profile is "book'd", brand is "Book'd")
-                prof_id = next((pid_ for pname, pid_ in profiles.items()
-                                if pname.lower() == prof_name.lower()), None)
+            # Prefer id-based resolution (robust to a profile name/apostrophe
+            # change); fall back to case-insensitive name match. Book'd's live
+            # profile is "Bookd" and is pinned by id 6a668d6c6551027c8175f883.
+            prof_name, prof_id = resolve_profile(name, profiles)
             print(f"# {name}  ->  profile: {prof_name or '?'} "
                   f"{'('+prof_id+')' if prof_id else '[NOT CONNECTED]'}  [{src}]")
             if not prof_id:
