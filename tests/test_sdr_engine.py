@@ -81,8 +81,23 @@ def test_reads_companies_filters_verified_junk_and_domainless(monkeypatch):
     assert len(out) == 1
     assert out[0]["twenty_id"] == "1"
     assert out[0]["company_name"] == "Acme"
-    assert out[0]["domain_on_file"] == "https://acme.com"
+    # scheme stripped so the gate's `https://{domain}` probe is well-formed
+    assert out[0]["domain_on_file"] == "acme.com"
     assert out[0]["contact_name"] is None
+
+
+def test_domain_on_file_scheme_is_stripped_for_the_gate(monkeypatch):
+    # Twenty stores domains WITH a scheme; the gate prepends its own https://,
+    # so a scheme left here becomes https://https://... and always fails.
+    fake_companies = [
+        {"id": "a", "name": "Bare", "domainName": {"primaryLinkUrl": "bare.com"}, "tags": []},
+        {"id": "b", "name": "Https", "domainName": {"primaryLinkUrl": "https://scheme.com"}, "tags": []},
+        {"id": "c", "name": "Path", "domainName": {"primaryLinkUrl": "https://has.com/mckinney"}, "tags": []},
+        {"id": "d", "name": "Doubled", "domainName": {"primaryLinkUrl": "https://https://dbl.com"}, "tags": []},
+    ]
+    monkeypatch.setattr("services.sdr_engine._twenty_get_companies", lambda rk, limit: fake_companies)
+    got = {c["twenty_id"]: c["domain_on_file"] for c in read_unverified_candidates("callingdigital")}
+    assert got == {"a": "bare.com", "b": "scheme.com", "c": "has.com/mckinney", "d": "dbl.com"}
 
 
 def test_shadow_mode_writes_nothing(monkeypatch):
