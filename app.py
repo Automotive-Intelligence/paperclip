@@ -9615,3 +9615,14 @@ async def concierge_zernio(payload: Optional[Dict[str, Any]] = Body(default=None
     except Exception as e:
         logging.exception("concierge zernio webhook failed")
         return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/concierge/chatwoot")
+async def concierge_chatwoot(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Agent Bot webhook for the Concierge (deliverable 152). Shadow-mode default."""
+    from services.concierge import handle_webhook
+    try:
+        return handle_webhook(payload or {})
+    except Exception as e:
+        logging.exception("concierge webhook failed")
+        return {"ok": False, "error": str(e)[:200]}
