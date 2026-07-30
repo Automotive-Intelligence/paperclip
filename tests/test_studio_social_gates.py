@@ -52,3 +52,27 @@ def test_copy_gate_passes_through_on_error():
     with mock.patch.object(GT, "llm_json", side_effect=LLMError("down")):
         out = GT.conversion_review(posts, CFG)
     assert out["posts"][0]["platforms"]["x"] == "orig"   # copy preserved, post not dropped
+
+
+# --- WIRED-CTA registry (2026-07-28 unwired-DM-CTA incident) ---
+def test_unwired_cta_detector_flags_dm_and_comment():
+    posts = [
+        {"key": "p1", "platforms": {"ig": "Great tip. DM 'EQUITY' to get yours."}},
+        {"key": "p2", "platforms": {"x": "Comment BELOW and we will send it."}},
+        {"key": "p3", "platforms": {"li": "Book a call at https://x.co/diagnostic-call"}},
+    ]
+    hits = GT.unwired_cta_hits(posts)
+    assert "p1:ig" in hits and "p2:x" in hits
+    assert "p3:li" not in hits   # a URL CTA is wired, not flagged
+
+
+def test_conversion_gate_flags_residual_unwired_cta():
+    cfg = {"display_name": "Automotive Intelligence",
+           "allowed_ctas": ["book a call at https://automotiveintelligence.io/diagnostic-call"]}
+    posts = [{"key": "p1", "platforms": {"ig": "old"}}]
+    # LLM ignores the rule and returns a DM CTA -> the deterministic net must catch it.
+    bad = {"posts": {"p1": {"ig": "DM 'EQUITY' for the audit"}}, "notes": []}
+    with mock.patch.object(GT, "llm_json", return_value=bad):
+        out = GT.conversion_review(posts, cfg)
+    assert out["unwired_cta"] == ["p1:ig"]
+    assert any("unwired CTA" in n for n in out["notes"])

@@ -13,6 +13,14 @@
 # Zernio profile display name (WD posts through the legacy Calling Digital
 # profile). platforms = the platforms to PRODUCE for; the live account set still
 # gates what actually schedules.
+#
+# allowed_ctas = the ONLY fulfillment paths a post's CTA may direct to. Every
+# entry is a rail that actually EXISTS (a live URL). The Conversion gate is bound
+# to this list: it may NOT write a CTA that promises a DM / comment-keyword reply,
+# because NO brand has a DM-capture rail (Sonar's inbox = comments/mentions read
+# only; GHL DM automation = AIPG-only-if-wired; AvI/WD = none). 2026-07-28 incident:
+# the engine shipped "DM 'EQUITY'" CTAs with no capture behind them. A promised
+# follow-up with no rail is worse than no CTA. Add a rail here BEFORE a CTA may use it.
 brands:
   automotive_intelligence:
     display_name: "Automotive Intelligence"
@@ -24,6 +32,9 @@ brands:
     voice: "restrained, diagnostic, anti-hype, operator-grounded; speaks to dealership GMs and dealers"
     # No Agent-Empire jargon (22 agents / 5 rivers / 3 live CRMs) -- translate to dealer value.
     themes_note: "dealer AI value: lead response, un-worked equity, vendor-guarantee scrutiny, time saved. No OEM vehicle hero shots (recognizable-OEM = hard fail); prefer abstract data/interior/operator scenes."
+    allowed_ctas:
+      - "book a free AI diagnostic call at https://automotiveintelligence.io/diagnostic-call"
+      - "run the free AI Reality Check at https://automotiveintelligence.io/ai-reality-check"
   ai_phone_guy:
     display_name: "The AI Phone Guy"
     business_key: aiphoneguy
@@ -33,6 +44,9 @@ brands:
     platforms: ["facebook", "instagram"]   # only FB+IG connected (live check confirms)
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners (HVAC, plumbing, electrical)"
     themes_note: "never-miss-a-call, after-hours booking, one-truck shops. Show the buyer's world (vans/ladders/phones), not a desk. No brand badges on vehicles."
+    allowed_ctas:
+      - "see how it works / book a discovery call at https://theaiphoneguy.com/discovery"
+      - "get in touch at https://theaiphoneguy.com/contact"
   worship_digital:
     display_name: "Worship Digital"
     business_key: worshipdigital
@@ -42,6 +56,11 @@ brands:
     platforms: ["facebook", "linkedin", "instagram", "x"]
     voice: "full-service SMB marketing agency for the 380 corridor; practical, results-first; NOT faith-centered"
     themes_note: "SMB marketing: reporting clarity, stop-boosting-random-posts, local lead gen. Not churchy."
+    # TODO(CMG/Studio): confirm WD's exact free-sample / audit-request URL and add it
+    # here. Until then CTAs point to the live site root (verified 200), never an
+    # invented deep-link and never a DM/comment keyword.
+    allowed_ctas:
+      - "request a free marketing review at https://worshipdigital.co"
   # agent_empire + book'd are intentionally NOT enabled here:
   #  - agent_empire: zero connected Zernio accounts (OAuth, Michael's scope).
   #  - book'd: always Ryan's sign-off; tools/social_load raises NoRailError for it,
