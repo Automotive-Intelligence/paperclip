@@ -61,7 +61,19 @@ brands:
     # invented deep-link and never a DM/comment keyword.
     allowed_ctas:
       - "request a free marketing review at https://worshipdigital.co"
-  # agent_empire + book'd are intentionally NOT enabled here:
-  #  - agent_empire: zero connected Zernio accounts (OAuth, Michael's scope).
+  agent_empire:
+    display_name: "Agent Empire"
+    business_key: agentempire
+    zernio_profile: "Agent Empire"
+    enabled: true          # OAuth landed 2026-07-20 (FB + IG + YouTube connected); was zero-account
+    posts_per_run: 3
+    platforms: ["facebook", "instagram"]   # connected text platforms; LinkedIn/X not connected, YouTube is not a text post
+    voice: "builder field-notes, honest, plain; B2C for people building agent businesses; ledger-only numbers"
+    # COMPLIANCE: no income/earnings/outcome claims (same discipline as Book'd); no "22 agents / 5 rivers / 3 CRMs" jargon in outward copy -- translate to builder value.
+    themes_note: "what it actually costs / takes to run an agent build, honest field notes from real builds, no hype, no get-rich framing. Abstract build/ops visuals, no fabricated dashboards."
+    allowed_ctas:
+      - "see the build at https://buildagentempire.com/10-agents"
+      - "read the field notes at https://buildagentempire.com/blog"
+  # book'd is intentionally NOT enabled here:
   #  - book'd: always Ryan's sign-off; tools/social_load raises NoRailError for it,
   #    so it is structurally held even if produced. Stage-and-flag only.
