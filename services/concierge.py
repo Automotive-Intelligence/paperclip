@@ -45,6 +45,8 @@ def _claude(system, user):
 def _send(account_id, conversation_id, text):
     r = requests.post(f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages",
         timeout=15, headers={"api_access_token": BOT_TOKEN}, json={"content": text})
+    if r.status_code >= 300:
+        logging.error("[concierge] chatwoot send FAILED %s: %s", r.status_code, r.text[:200])
     return r.status_code
 
 def _handoff(account_id, conversation_id):
