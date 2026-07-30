@@ -199,45 +199,88 @@ def crm_ready(runtime_key: str) -> bool:
 
 # --------------------------------------------------------------------------- read unverified candidates from Twenty
 
-def _twenty_get_people(runtime_key: str, limit: int) -> list:
-    """Hand-rolled `GET /rest/people` -- tools/twenty.py has no ready-made
-    reader (Task 0). Isolated here so tests monkeypatch this one seam and
-    never touch the wire."""
+def _twenty_get_companies(runtime_key: str, limit: int) -> list:
+    """Hand-rolled `GET /rest/companies` -- tools/twenty.py has no ready-made
+    reader. Isolated here so tests monkeypatch this one seam and never touch
+    the wire. Companies (not people) are the rebuild-motion signal: a company
+    record carries `name` + `domainName.primaryLinkUrl`, exactly the two
+    fields the gate's site/defect checks consume. People records in this
+    workspace carry no company/domain, which is why an earlier `people` read
+    produced all-null candidates."""
     import requests
     from tools.twenty import _headers, _workspace_config
 
     base_url, api_key = _workspace_config(runtime_key)
     r = requests.get(
-        f"{base_url}/rest/people",
+        f"{base_url}/rest/companies",
         headers=_headers(api_key),
         params={"limit": limit},
         timeout=20,
     )
     r.raise_for_status()
-    return (r.json().get("data") or {}).get("people") or []
+    return (r.json().get("data") or {}).get("companies") or []
+
+
+# Obvious test/junk records seeded into the CRM -- never real prospects.
+_JUNK_NAME_MARKERS = ("delete-me", "smoke-test", "probeco")
+_JUNK_DOMAIN_HOSTS = frozenset({
+    "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com",
+    "aol.com", "live.com", "protonmail.com", "notion.com", "stripe.com",
+})
+
+
+def _domain_host(url: str) -> str:
+    """Bare host of a domain-on-file URL, lowercased (scheme/path stripped)."""
+    h = (url or "").strip().lower()
+    h = h.split("://", 1)[-1]
+    h = h.split("/", 1)[0]
+    return h[4:] if h.startswith("www.") else h
+
+
+def _is_junk_company(name: str, host: str) -> bool:
+    n = (name or "").strip().lower()
+    if any(m in n for m in _JUNK_NAME_MARKERS):
+        return True
+    if host in _JUNK_DOMAIN_HOSTS:
+        return True
+    if host.endswith((".example", ".test", ".invalid")):
+        return True
+    if host == "example.com" or host.endswith(".example.com"):
+        return True
+    return False
 
 
 def read_unverified_candidates(runtime_key: str, limit: int = 100) -> list:
-    """Candidates from the brand's Twenty with no `gate-verified` tag.
-    Returns `{twenty_id, company_name, domain_on_file, contact_name,
-    contact_phone, contact_email, created_at, tags}` per candidate. `tags`
-    (the person's existing tag list, sans `gate-verified` by definition of
-    this filter) is threaded through so a downstream commit-mode write can
-    append `gate-verified` to it (`_tag_verified`, finding 2) without
-    clobbering any tag already on the record."""
+    """Rebuild-motion candidates from the brand's Twenty COMPANIES with a real
+    domain and no `gate-verified` tag. Returns `{twenty_id, company_name,
+    domain_on_file, contact_name, contact_phone, contact_email, created_at,
+    tags}` per candidate. A company with no domain-on-file, or an obvious
+    test/junk seed, is skipped -- nothing to verify. Contact fields are null
+    at read time (a bare company carries no person), so the gate verifies the
+    real primary site and defect and fails closed on the missing contact
+    rather than inventing one. `tags` is threaded through for the commit-mode
+    `gate-verified` write; companies in this workspace carry no tag field, so
+    it is an empty list -- dedup for a live company source is a follow-up to
+    settle before `commit=True`."""
     out = []
-    for p in _twenty_get_people(runtime_key, limit):
-        tags = p.get("tags") or []
+    for c in _twenty_get_companies(runtime_key, limit):
+        tags = c.get("tags") or []
         if "gate-verified" in tags:
             continue
+        domain = (c.get("domainName") or {}).get("primaryLinkUrl")
+        host = _domain_host(domain)
+        if not host:
+            continue
+        if _is_junk_company(c.get("name"), host):
+            continue
         out.append({
-            "twenty_id": p.get("id"),
-            "company_name": p.get("companyName"),
-            "domain_on_file": (p.get("domainName") or {}).get("primaryLinkUrl"),
-            "contact_name": (p.get("name") or {}).get("firstName"),
-            "contact_phone": (p.get("phones") or {}).get("primaryPhoneNumber"),
-            "contact_email": (p.get("emails") or {}).get("primaryEmail"),
-            "created_at": p.get("createdAt"),
+            "twenty_id": c.get("id"),
+            "company_name": c.get("name"),
+            "domain_on_file": domain,
+            "contact_name": None,
+            "contact_phone": None,
+            "contact_email": None,
+            "created_at": c.get("createdAt"),
             "tags": tags,
         })
     return out
