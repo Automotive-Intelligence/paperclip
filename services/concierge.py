@@ -60,7 +60,11 @@ def _claude(system, user):
         json={"model": MODEL, "max_tokens": 300, "system": system,
               "messages": [{"role": "user", "content": user}]})
     r.raise_for_status()
-    return r.json()["content"][0]["text"]
+    blocks = r.json().get("content") or []
+    texts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+    if not texts:
+        raise ValueError(f"no text block in response (types: {[b.get('type') for b in blocks]})")
+    return "\n".join(texts).strip()
 
 def _send(account_id, conversation_id, text):
     r = requests.post(f"{CHATWOOT_URL}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages",
