@@ -36,7 +36,23 @@ VOICE = {
 }
 # Brands held in shadow even when CONCIERGE_LIVE=1 (e.g. partner brands pending standing sign-off)
 BRAND_HOLD = set(json.loads(os.getenv("CONCIERGE_BRAND_HOLD") or '["bookd"]'))
-HOT = re.compile(r"price|cost|how much|call me|talk|meeting|ready|sign", re.I)
+# Any HOT match forces a human handoff AND suppresses the auto-reply. Two groups:
+#   pricing / qualification signals (existing), and
+#   legal / medical / financial RISK terms (word-boundaried on the left so common
+#   inflections still match, e.g. refund/refunded, invest/investment, sue/sued).
+# Erring toward extra handoffs is the safe direction; a false handoff is fine.
+HOT = re.compile(
+    r"price|cost|how much|call me|talk|meeting|ready|sign"
+    r"|\b(?:legal|lawyer|attorney|lawsuit|sue|liable|liability"
+    r"|medical|doctor|health|diagnosis|refund|chargeback|dispute"
+    r"|financial|invest|guarantee)",
+    re.I,
+)
+# Post-generation scrub: never emit a $ amount, a percentage, or a numeric
+# "<n> percent/dollars" claim, even if the LLM prompt is bypassed. Benign counts
+# like "30-minute" are intentionally NOT matched. When a reply trips this, we
+# suppress it and hand off to a human (a wrong number to a customer is never ok).
+NUMERIC = re.compile(r"\$\s?\d|\d+\s?%|\b\d+\s?(?:percent|dollars)\b", re.I)
 
 def _claude(system, user):
     r = requests.post("https://api.anthropic.com/v1/messages", timeout=30, headers={
@@ -84,15 +100,19 @@ def handle_webhook(payload: dict) -> dict:
             logging.exception("[concierge] claude call failed; using fulfillment fallback")
             reply, hot = fulfill, True   # fulfillment never fails; flag human
         if "—" in reply or "–" in reply: reply = reply.replace("—", ",").replace("–", ",")
+        if reply and NUMERIC.search(reply):
+            hot = True                   # generated a $/%/number -> suppress + human
     else:
         reply, hot = None, True          # unknown intent -> human
 
+    suppressed = bool(hot and reply)     # drafted but withheld (logged, not sent)
     receipt = {"mode": "LIVE" if LIVE else "SHADOW", "conv": conv_id, "acct": account_id,
-               "inbox": inbox_id or inbox, "inbox_brand": inbox_brand, "kw": kw, "brand": brand, "hot": hot,
+               "inbox": inbox_id or inbox, "inbox_brand": inbox_brand, "kw": kw, "brand": brand,
+               "hot": hot, "suppressed": suppressed,
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
     if LIVE and account_id and conv_id and (brand not in BRAND_HOLD):
-        if reply: _send(account_id, conv_id, reply)
+        if reply and not hot: _send(account_id, conv_id, reply)   # HOT -> suppress auto-reply
         if hot: _handoff(account_id, conv_id)
     return receipt
 
@@ -137,16 +157,19 @@ def handle_zernio(payload: dict) -> dict:
             reply = _claude(system, f'They wrote: "{text}"')
             if "—" in reply or "–" in reply:
                 reply = reply.replace("—", ",").replace("–", ",")
+            if reply and NUMERIC.search(reply):
+                hot = True  # generated a $/%/number -> suppress (human handles it)
         except Exception:
             logging.exception("[concierge-zernio] claude failed; fulfillment fallback")
             reply, hot = fulfill, True
     else:
         hot = True  # unmapped account, no keyword, or off-brand keyword -> human only
+    suppressed = bool(hot and reply)  # drafted but withheld (Zernio handoff = no auto-reply)
     receipt = {"transport": "zernio", "mode": "LIVE" if LIVE else "SHADOW",
                "conv": conv_id, "acct": acct, "brand": brand,
-               "platform": msg.get("platform"), "kw": kw, "hot": hot,
+               "platform": msg.get("platform"), "kw": kw, "hot": hot, "suppressed": suppressed,
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
-    if LIVE and reply and conv_id and (brand not in BRAND_HOLD):
+    if LIVE and reply and not hot and conv_id and (brand not in BRAND_HOLD):
         _zernio_send(conv_id, reply)
     return receipt
