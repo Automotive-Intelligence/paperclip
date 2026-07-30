@@ -76,7 +76,11 @@ class WdBlockedError(RuntimeError):
 
 
 class NoRailError(RuntimeError):
-    """Brand has no distribution rail yet (e.g. Book'd until Ryan's key)."""
+    """Brand has no distribution rail yet. Reserved for a future brand that is
+    produced but has no connected scheduler. (Book'd used to raise this; it is now
+    directly connected under our Zernio key and rides the zernio rail — see
+    route_for_brand.) load_jobs still catches it so any such brand is held, never
+    posted, until a rail exists."""
 
 
 class MediaUnreachableError(RuntimeError):
@@ -125,8 +129,11 @@ def route_for_brand(brand: str, cfg: Optional[dict] = None) -> str:
     b = canonical_brand(brand)
     if b == "paperandpurpose":
         return "buffer"
-    if b == "bookd":
-        raise NoRailError("Book'd has no rail: Ryan posts himself or issues a scoped key (file 121).")
+    # Book'd ("book'd" and "bookd" both canonicalize to "bookd") now rides the
+    # zernio rail like every other brand: it is directly connected under our
+    # (salesdroid) Zernio key as the profile "Bookd" (id 6a668d6c6551027c8175f883).
+    # This only OPENS the rail — actual posting still needs a gated batch + --commit
+    # (studio_publish.py); nothing here auto-publishes.
     if b == "wd":
         conf = cfg if cfg is not None else load_config()
         if not conf.get("wd_rename_done"):

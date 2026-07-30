@@ -71,10 +71,14 @@ class TestRouting(unittest.TestCase):
             route_for_brand("wd", cfg={"wd_rename_done": False})
         self.assertEqual(route_for_brand("wd", cfg={"wd_rename_done": True}), "zernio")
 
-    def test_bookd_has_no_rail(self):
-        from tools.social_load import route_for_brand, NoRailError
-        with self.assertRaises(NoRailError):
-            route_for_brand("bookd")
+    def test_bookd_routes_zernio(self):
+        # Book'd is now directly connected under our Zernio key (profile "Bookd",
+        # id 6a668d6c6551027c8175f883): it rides the zernio rail like every other
+        # brand and must NOT raise NoRailError. Both spellings canonicalize to bookd.
+        from tools.social_load import route_for_brand
+        self.assertEqual(route_for_brand("book'd"), "zernio")
+        self.assertEqual(route_for_brand("bookd"), "zernio")
+        self.assertEqual(route_for_brand("Book'd"), "zernio")
 
 
 class TestQueueGuard(unittest.TestCase):
@@ -230,6 +234,21 @@ class TestLoadJobs(unittest.TestCase):
         self.assertEqual(res[0]["action"], "drafted")
         self.assertEqual(len(calls["draft"]), 1)
         self.assertEqual(calls["publish"], [])
+
+    def test_bookd_reaches_schedule_path_not_blocked(self):
+        # With the rail open, a Book'd job now flows to the zernio schedule path.
+        # In dry-run it reports "dry-run" (NOT "blocked") and publishes nothing —
+        # the rail is open but posting still requires commit=True + a gated batch.
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        res = load_jobs([self._job(brand="book'd", platform="facebook", account_id="bk1")],
+                        commit=False, rails=rails)
+        self.assertEqual(res[0]["action"], "dry-run")
+        self.assertEqual(calls["publish"], [])
+        # and both spellings behave identically
+        res2 = load_jobs([self._job(brand="bookd", platform="facebook", account_id="bk1")],
+                         commit=False, rails=rails)
+        self.assertEqual(res2[0]["action"], "dry-run")
 
 
 class TestMediaRehost(unittest.TestCase):
