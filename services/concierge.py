@@ -11,6 +11,9 @@ import requests
 CHATWOOT_URL = os.getenv("CHATWOOT_URL", "https://portal.worshipdigital.co").rstrip("/")
 BOT_TOKEN = os.getenv("CHATWOOT_BOT_TOKEN", "")
 LIVE = os.getenv("CONCIERGE_LIVE", "0") == "1"
+# inbox->brand map: {"1": "*"} = test inbox, all brands; {"5": "avi"} = AvI-only.
+# An inbox NOT in this map NEVER auto-replies (human handoff only) — safe default.
+INBOX_BRANDS = json.loads(os.getenv("CONCIERGE_INBOX_BRANDS", '{"1": "*"}'))
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 MODEL = os.getenv("CONCIERGE_MODEL", "claude-sonnet-5")
 
@@ -58,7 +61,10 @@ def handle_webhook(payload: dict) -> dict:
     conv_id = conv.get("display_id") or conv.get("id")
     inbox = (conv.get("meta") or {}).get("channel") or ""
 
-    kw = next((k for k in REGISTRY if re.search(rf"\b{k}\b", text, re.I)), None)
+    inbox_id = str(conv.get("inbox_id") or payload.get("inbox", {}).get("id") or "")
+    inbox_brand = INBOX_BRANDS.get(inbox_id)
+    kw = next((k for k in REGISTRY if re.search(rf"\b{k}\b", text, re.I)
+               and (inbox_brand == "*" or REGISTRY[k][0] == inbox_brand)), None)
     brand, fulfill = REGISTRY.get(kw, (None, None)) if kw else (None, None)
     hot = bool(HOT.search(text))
 
@@ -76,7 +82,7 @@ def handle_webhook(payload: dict) -> dict:
         reply, hot = None, True          # unknown intent -> human
 
     receipt = {"mode": "LIVE" if LIVE else "SHADOW", "conv": conv_id, "acct": account_id,
-               "inbox": inbox, "kw": kw, "brand": brand, "hot": hot,
+               "inbox": inbox_id or inbox, "inbox_brand": inbox_brand, "kw": kw, "brand": brand, "hot": hot,
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
     if LIVE and account_id and conv_id:
