@@ -59,17 +59,30 @@ def test_crm_not_ready_when_unconfigured(monkeypatch):
         runtime.get_settings.cache_clear()
 
 
-def test_reads_and_filters_out_already_verified(monkeypatch):
-    fake_people = [
-        {"id": "1", "name": {"firstName": "A"}, "companyName": "Acme",
-         "domainName": {"primaryLinkUrl": "acme.com"},
-         "emails": {"primaryEmail": "a@acme.com"}, "phones": {"primaryPhoneNumber": "+1555"},
+def test_reads_companies_filters_verified_junk_and_domainless(monkeypatch):
+    fake_companies = [
+        {"id": "1", "name": "Acme",
+         "domainName": {"primaryLinkUrl": "https://acme.com"},
          "createdAt": "2026-07-20", "tags": []},
-        {"id": "2", "name": {"firstName": "B"}, "companyName": "Verified Co", "tags": ["gate-verified"]},
+        # already gate-verified -> skip
+        {"id": "2", "name": "Verified Co",
+         "domainName": {"primaryLinkUrl": "https://verified.com"}, "tags": ["gate-verified"]},
+        # no domain -> nothing to verify -> skip
+        {"id": "3", "name": "No Domain Co", "domainName": None, "tags": []},
+        # seeded test junk (name marker + example.com) -> skip
+        {"id": "4", "name": "TWENTY-WRITER-PHASE1-SMOKE-TEST-DELETE-ME",
+         "domainName": {"primaryLinkUrl": "https://example.com"}, "tags": []},
+        # generic mailbox domain, not a business site -> skip
+        {"id": "5", "name": "gmail.com",
+         "domainName": {"primaryLinkUrl": "gmail.com"}, "tags": []},
     ]
-    monkeypatch.setattr("services.sdr_engine._twenty_get_people", lambda rk, limit: fake_people)
+    monkeypatch.setattr("services.sdr_engine._twenty_get_companies", lambda rk, limit: fake_companies)
     out = read_unverified_candidates("callingdigital")
-    assert len(out) == 1 and out[0]["twenty_id"] == "1" and out[0]["domain_on_file"] == "acme.com"
+    assert len(out) == 1
+    assert out[0]["twenty_id"] == "1"
+    assert out[0]["company_name"] == "Acme"
+    assert out[0]["domain_on_file"] == "https://acme.com"
+    assert out[0]["contact_name"] is None
 
 
 def test_shadow_mode_writes_nothing(monkeypatch):
