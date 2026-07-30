@@ -13,7 +13,7 @@ BOT_TOKEN = os.getenv("CHATWOOT_BOT_TOKEN", "")
 LIVE = os.getenv("CONCIERGE_LIVE", "0") == "1"
 # inbox->brand map: {"1": "*"} = test inbox, all brands; {"5": "avi"} = AvI-only.
 # An inbox NOT in this map NEVER auto-replies (human handoff only) — safe default.
-INBOX_BRANDS = json.loads(os.getenv("CONCIERGE_INBOX_BRANDS", '{"1": "*"}'))
+INBOX_BRANDS = json.loads(os.getenv("CONCIERGE_INBOX_BRANDS") or '{"1": "*"}')
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 MODEL = os.getenv("CONCIERGE_MODEL", "claude-sonnet-5")
 
@@ -35,7 +35,7 @@ VOICE = {
     "bookd": "book'd, the compliance-first CRM for life insurance agents. Ryan-default voice: plain, direct, agent-to-agent. NEVER discuss pricing, NEVER income/earnings claims (insurance compliance). Point to the demo at bookd.cx.",
 }
 # Brands held in shadow even when CONCIERGE_LIVE=1 (e.g. partner brands pending standing sign-off)
-BRAND_HOLD = set(json.loads(os.getenv("CONCIERGE_BRAND_HOLD", '["bookd"]')))
+BRAND_HOLD = set(json.loads(os.getenv("CONCIERGE_BRAND_HOLD") or '["bookd"]'))
 HOT = re.compile(r"price|cost|how much|call me|talk|meeting|ready|sign", re.I)
 
 def _claude(system, user):
@@ -99,14 +99,14 @@ def handle_webhook(payload: dict) -> dict:
 
 # ---------------- Zernio inbox transport (deliverable 152, transport seam) ----------------
 # Zernio account_id -> brand. Unmapped account NEVER auto-replies (same rule as Chatwoot map).
-ZERNIO_ACCOUNT_BRANDS = json.loads(os.getenv("CONCIERGE_ZERNIO_ACCOUNT_BRANDS", json.dumps({
+ZERNIO_ACCOUNT_BRANDS = json.loads(os.getenv("CONCIERGE_ZERNIO_ACCOUNT_BRANDS") or json.dumps({
     "69c8aef66cb7b8cf4cabaf67": "avi",   # AvI facebook
     "69c8af386cb7b8cf4cabb001": "avi",   # AvI instagram
     "6a43fd0a9d9472faae32a6e6": "aipg",  # AIPG facebook
     "6a43fca79d9472faae32a2a0": "aipg",  # AIPG instagram
     "69c8ac0a6cb7b8cf4caba586": "wd",    # WD (Calling Digital) facebook
     "69c8ac356cb7b8cf4caba743": "wd",    # WD (Calling Digital) instagram
-})))
+}))
 
 def _zernio_send(conversation_id: str, text: str) -> int:
     from tools.zernio import _zernio_request
