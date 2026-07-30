@@ -75,6 +75,9 @@ def test_reads_companies_filters_verified_junk_and_domainless(monkeypatch):
         # generic mailbox domain, not a business site -> skip
         {"id": "5", "name": "gmail.com",
          "domainName": {"primaryLinkUrl": "gmail.com"}, "tags": []},
+        # our OWN brand domain -> never prospect ourselves -> skip
+        {"id": "6", "name": "Automotive Intelligence",
+         "domainName": {"primaryLinkUrl": "https://automotiveintelligence.io"}, "tags": []},
     ]
     monkeypatch.setattr("services.sdr_engine._twenty_get_companies", lambda rk, limit: fake_companies)
     out = read_unverified_candidates("callingdigital")

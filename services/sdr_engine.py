@@ -227,6 +227,14 @@ _JUNK_DOMAIN_HOSTS = frozenset({
     "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com",
     "aol.com", "live.com", "protonmail.com", "notion.com", "stripe.com",
 })
+# Our OWN brand domains -- never prospect ourselves (AvI's own domain was
+# sitting in its company list). Matched on the registrable domain so
+# subdomains/www are covered by _domain_host's www-strip + endswith check.
+_OUR_DOMAINS = frozenset({
+    "automotiveintelligence.io", "worshipdigital.co", "worshipdigital.com",
+    "callingdigital.com", "aiphoneguy.com", "aiphoneguy.ai", "bookd.cx",
+    "buildagentempire.com", "paperandpurpose.com", "customeradvocate.io",
+})
 
 
 def _domain_host(url: str) -> str:
@@ -255,11 +263,19 @@ def _strip_scheme(url: str) -> str:
             return s
 
 
+def _is_our_domain(host: str) -> bool:
+    """True if host is one of our own brand domains (registrable domain or a
+    subdomain of it) -- we never prospect ourselves."""
+    return any(host == d or host.endswith("." + d) for d in _OUR_DOMAINS)
+
+
 def _is_junk_company(name: str, host: str) -> bool:
     n = (name or "").strip().lower()
     if any(m in n for m in _JUNK_NAME_MARKERS):
         return True
     if host in _JUNK_DOMAIN_HOSTS:
+        return True
+    if _is_our_domain(host):
         return True
     if host.endswith((".example", ".test", ".invalid")):
         return True

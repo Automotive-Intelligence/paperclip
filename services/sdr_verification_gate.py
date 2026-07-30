@@ -301,11 +301,23 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
             "kind": "cert_warning",
             "evidence": h.get("cert_error_detail") or f"TLS certificate problem on https://{real_domain}",
         }
-    # ANY status >= 400 (not just the old {404,410,500,502,503} allowlist)
-    # is site_down (fix-round-2, FIX C): a 403, or any other 4xx/5xx code an
-    # explicit list would miss, must never fall through to HTML analysis of
-    # an error page, which can surface a spurious defect (e.g. a 403's
-    # "Forbidden" body has no tel:/form/CTA, which used to misfire as
+    # An access-control code (401/403/429) with a SUCCESSFUL TLS handshake
+    # means the site is UP and serving -- it is WAF/bot-blocking our probe,
+    # not down. Claiming a "your site is down/broken" rebuild defect here
+    # would be a lie (the site is live for real visitors), and a live site is
+    # not a rebuild target, so this is no verifiable defect -> FAIL/drop, NOT
+    # a human-review item. Fail-closed: we would rather MISS a genuinely
+    # broken-for-everyone 403 (a cost-free miss) than pitch a false defect on
+    # a healthy site (a reputation fire). Cloudflare/Akamai 403s are the
+    # overwhelmingly common case. A cert error alongside the block is caught
+    # above as cert_warning, so `not cert_error` isolates the live-but-blocked
+    # site here.
+    if h["status"] in (401, 403, 429) and not h.get("cert_error"):
+        return None
+    # ANY OTHER status >= 400 (404/410/5xx, or None from a dead connection)
+    # is site_down: a broken/unreachable site, a real rebuild defect. Never
+    # fall through to HTML analysis of an error page, which can surface a
+    # spurious defect (e.g. an error body with no tel:/form/CTA misfiring as
     # no_contact_path).
     if h["status"] is None or h["status"] >= 400:
         return {"kind": "site_down", "evidence": f"HTTP {h['status']} on https://{real_domain}"}

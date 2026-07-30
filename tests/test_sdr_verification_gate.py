@@ -133,24 +133,37 @@ def test_check_defect_fetch_failure_is_not_an_exception(monkeypatch):
     assert d and d["kind"] == "fetch_error"
 
 
-def test_403_status_is_site_down_not_analyzed_as_no_contact_path(monkeypatch):
-    # Any status >= 400 must be treated as site_down -- the error-page HTML
-    # must never be analyzed for pinch-zoom/no_contact_path/TTFB defects.
-    # The old down-set ({404,410,500,502,503,None}) missed 403 (and other
-    # 4xx/5xx codes), letting it fall through to HTML analysis.
+def test_403_with_valid_cert_is_not_a_defect(monkeypatch):
+    # A 401/403/429 with a successful TLS handshake means the site is UP and
+    # bot/WAF-blocking our probe -- it is NOT down and NOT a rebuild target.
+    # Pitching a "your site is broken" defect here would be a lie, so it is no
+    # defect (-> FAIL/drop), and must never be queued for a human.
+    for code in (401, 403, 429):
+        monkeypatch.setattr(
+            "services.sdr_verification_gate._probe_headers",
+            lambda d, c=code: {"status": c, "cert_cn": d, "location": None, "cert_error": False},
+        )
+        # Must NOT reach HTML analysis (this body would trip no_contact_path).
+        monkeypatch.setattr(
+            "services.sdr_verification_gate._fetch_html",
+            lambda d: "<html><body>Forbidden</body></html>",
+        )
+        assert check_defect("example.com", "rebuild") is None, f"{code} should be no-defect"
+
+
+def test_404_status_is_site_down(monkeypatch):
+    # A genuinely-down code (404/410/5xx, or a dead connection) IS a real
+    # rebuild defect and must not be HTML-analyzed as an error page.
     monkeypatch.setattr(
         "services.sdr_verification_gate._probe_headers",
-        lambda d: {"status": 403, "cert_cn": d, "location": None},
+        lambda d: {"status": 404, "cert_cn": d, "location": None, "cert_error": False},
     )
-    # If this were (incorrectly) HTML-analyzed, this body would trip
-    # no_contact_path (no tel:, no <form>, no CTA) -- but it must never get
-    # that far, so _fetch_html should not even need to be called correctly.
     monkeypatch.setattr(
-        "services.sdr_verification_gate._fetch_html", lambda d: "<html><body>403 Forbidden</body></html>"
+        "services.sdr_verification_gate._fetch_html", lambda d: "<html><body>404</body></html>"
     )
     d = check_defect("example.com", "rebuild")
     assert d and d["kind"] == "site_down"
-    assert "403" in d["evidence"]
+    assert "404" in d["evidence"]
 
 
 def test_healthy_site_has_no_defect(monkeypatch):
