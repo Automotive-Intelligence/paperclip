@@ -41,6 +41,21 @@ def _encode(content: Union[str, bytes]) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
+def _existing_file_sha(http: Callable, repo_api: str, path: str, branch: str, token: str) -> Union[str, None]:
+    """Return the current blob sha of `path` on `branch`, or None if it does not
+    exist yet. The GitHub Contents API requires the current sha to UPDATE an
+    existing file (create-new files must omit it); WD's ts_posts_array adapter
+    rewrites one existing file (src/content/posts.ts), so its PUT needs the sha,
+    while the MDX brands create fresh {slug}.mdx files (404 here -> no sha)."""
+    try:
+        resp = http("GET", f"{repo_api}/contents/{path}?ref={branch}", token)
+    except PublishError as e:
+        if "-> 404" in str(e) or " 404:" in str(e):
+            return None
+        raise
+    return resp.get("sha") if isinstance(resp, dict) else None
+
+
 def publish_post(
     repo: str,
     branch: str,
@@ -62,11 +77,18 @@ def publish_post(
          {"ref": f"refs/heads/{branch}", "sha": base_sha})
 
     for path, content in files.items():
-        http("PUT", f"{repo_api}/contents/{path}", token, {
+        body: Dict[str, Any] = {
             "message": f"{pr_title} :: {path}",
             "content": _encode(content),
             "branch": branch,
-        })
+        }
+        # Updating an existing file requires its current sha; creating a new one
+        # must omit it. The branch was just cut from `base`, so the file's sha on
+        # `branch` is the one to send.
+        existing_sha = _existing_file_sha(http, repo_api, path, branch, token)
+        if existing_sha:
+            body["sha"] = existing_sha
+        http("PUT", f"{repo_api}/contents/{path}", token, body)
 
     pr = http("POST", f"{repo_api}/pulls", token,
               {"title": pr_title, "head": branch, "base": base, "body": pr_body})
