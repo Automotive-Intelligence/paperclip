@@ -237,6 +237,24 @@ def _domain_host(url: str) -> str:
     return h[4:] if h.startswith("www.") else h
 
 
+def _strip_scheme(url: str) -> str:
+    """Domain-on-file the gate can probe: leading http(s):// scheme(s)
+    removed, host+path kept. Twenty stores e.g. 'https://acme.com/x'; the
+    gate's Check 1 prepends its own 'https://', so a scheme left here yields
+    'https://https://acme.com/x' -- a probe of the literal host 'https' that
+    always fails and forces NEEDS_HUMAN. Strip repeatedly to also heal any
+    already-doubled value in the data."""
+    s = (url or "").strip()
+    while True:
+        low = s.lower()
+        if low.startswith("https://"):
+            s = s[8:]
+        elif low.startswith("http://"):
+            s = s[7:]
+        else:
+            return s
+
+
 def _is_junk_company(name: str, host: str) -> bool:
     n = (name or "").strip().lower()
     if any(m in n for m in _JUNK_NAME_MARKERS):
@@ -276,7 +294,7 @@ def read_unverified_candidates(runtime_key: str, limit: int = 100) -> list:
         out.append({
             "twenty_id": c.get("id"),
             "company_name": c.get("name"),
-            "domain_on_file": domain,
+            "domain_on_file": _strip_scheme(domain),
             "contact_name": None,
             "contact_phone": None,
             "contact_email": None,
