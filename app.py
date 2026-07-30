@@ -3827,6 +3827,50 @@ scheduler.add_job(lambda: _run_metrics_collector("monthly"),
     id="metrics_collector_monthly", name="KPI Collector — Monthly (1st 5 AM)",
     replace_existing=True, misfire_grace_time=7200)
 
+# Persona Cron Loop Phase C1 — persona wake buckets.
+# Each persona wakes on its scorecard's cron_cadence, reads latest snapshots,
+# classifies KPIs, consults its runbook, appends to owner_brief_queue.
+# C1 ships only B&T live (PERSONA_WAKE_ENABLED gate defaults to 'bt'); C4 adds
+# CRO + CMO; C5 fans out to the remaining 6. Wake buckets fire 20-30 min AFTER
+# the metrics_collector buckets so the snapshot is fresh when the persona reads it.
+# Plan: docs/superpowers/plans/2026-06-27-persona-cron-loop-phase-c-wake-and-owners-brief.md
+def _run_persona_wake(cadence: str):
+    try:
+        from services.persona_wake import wake_all_for_cadence
+        summaries = wake_all_for_cadence(cadence)
+        logging.info(f"[Paperclip] persona_wake({cadence}): {summaries}")
+    except Exception as e:
+        logging.error(f"[Paperclip] persona_wake({cadence}) failed: {e}")
+
+# Every-4h wakes (B&T today; CRO later per its hourly scorecard cadence)
+scheduler.add_job(lambda: _run_persona_wake("every_4h"),
+    CronTrigger(hour="6,10,14,18,22", minute=45, timezone=CST),
+    id="persona_wake_every_4h", name="Persona Wake — Every 4h (:45 offset)",
+    replace_existing=True, misfire_grace_time=900,
+    max_instances=1)
+
+# Hourly wakes (reserved for CRO in C4 — deploys quiet until PERSONA_WAKE_ENABLED
+# includes 'cro'; keeps the job registered so C4 rollout is env-flip, not deploy)
+scheduler.add_job(lambda: _run_persona_wake("hourly"),
+    CronTrigger(minute=45, timezone=CST),
+    id="persona_wake_hourly", name="Persona Wake — Hourly (:45)",
+    replace_existing=True, misfire_grace_time=600,
+    max_instances=1)
+
+# Twice-daily wakes (CMO + Internal Marketing + Pit Wall in C4/C5)
+scheduler.add_job(lambda: _run_persona_wake("twice_daily"),
+    CronTrigger(hour="7,18", minute=45, timezone=CST),
+    id="persona_wake_twice_daily", name="Persona Wake — Twice Daily (7am/6pm :45)",
+    replace_existing=True, misfire_grace_time=1800,
+    max_instances=1)
+
+# Daily wakes (CMG + Agent Empire + B2B Ops + Customer Advocate in C5)
+scheduler.add_job(lambda: _run_persona_wake("daily"),
+    CronTrigger(hour=9, minute=15, timezone=CST),
+    id="persona_wake_daily", name="Persona Wake — Daily 9:15am",
+    replace_existing=True, misfire_grace_time=3600,
+    max_instances=1)
+
 # Tammy (Skool Community): every 6 hours
 scheduler.add_job(_run_tammy, IntervalTrigger(hours=6, timezone=CST),
     id="tammy_community_6h", name="Tammy Community (Skool) — Every 6h",
