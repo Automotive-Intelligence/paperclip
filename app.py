@@ -9604,3 +9604,14 @@ async def admin_flag_respond_now(
 
     resp = await asyncio.to_thread(respond_to_flag, seat_obj, flag, ch_id, parent_ts)
     return {"parent_post": {"channel": ch_id, "ts": parent_ts}, "responder": resp}
+
+
+@app.post("/concierge/zernio")
+async def concierge_zernio(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Zernio inbox message.received webhook -> Concierge brain (deliverable 152)."""
+    from services.concierge import handle_zernio
+    try:
+        return handle_zernio(payload or {})
+    except Exception as e:
+        logging.exception("concierge zernio webhook failed")
+        return {"ok": False, "error": str(e)[:200]}
