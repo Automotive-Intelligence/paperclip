@@ -134,9 +134,14 @@ ZERNIO_ACCOUNT_BRANDS = json.loads(os.getenv("CONCIERGE_ZERNIO_ACCOUNT_BRANDS") 
 
 def _zernio_send(conversation_id: str, text: str, account_id: str) -> int:
     from tools.zernio import _zernio_request
-    r = _zernio_request("POST", f"/inbox/conversations/{conversation_id}/messages",
-                        {"message": text, "accountId": account_id})
-    return 200 if r else 500
+    try:
+        r = _zernio_request("POST", f"/inbox/conversations/{conversation_id}/messages",
+                            {"message": text, "accountId": account_id})
+        logging.info("[concierge] zernio send OK conv=%s", conversation_id)
+        return 200 if r else 500
+    except Exception:
+        logging.exception("[concierge] ZERNIO SEND FAILED conv=%s acct=%s", conversation_id, account_id)
+        return 500
 
 def handle_zernio(payload: dict) -> dict:
     if payload.get("event") != "message.received":
