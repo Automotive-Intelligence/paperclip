@@ -339,6 +339,8 @@ def _gate_run(*, request) -> dict:
     res = gate_verify(request)
     if res.verdict == "FAIL":
         return {"verdict": "FAIL", "queue_status": None, "crm": None, "reason": res.reason,
+                "defect": res.verified_defect, "site": res.real_primary_site,
+                "contact": res.verified_contact,
                 "confidence": res.confidence}
     queue_status = (
         "auto_approved"
@@ -346,7 +348,9 @@ def _gate_run(*, request) -> dict:
         else "pending_approval"
     )
     return {"verdict": res.verdict, "queue_status": queue_status, "crm": None, "reason": res.reason,
-            "confidence": res.confidence}
+            "confidence": res.confidence,
+            "defect": res.verified_defect, "site": res.real_primary_site,
+            "contact": res.verified_contact}
 
 
 def _prospect_dict(c: dict) -> dict:
@@ -366,16 +370,6 @@ def _prospect_dict(c: dict) -> dict:
         "contact": contact_name,
         "contact_name": contact_name,
     }
-
-
-def _push_crm(*, prospects: list, business_key: str):
-    """business_key MUST be the runtime key (callingdigital/autointelligence/
-    aiphoneguy/bookd) -- never the raw desk key (finding 1). Every call site
-    in this module passes `runtime_key`, already resolved once per run by
-    `resolve_business_key`."""
-    from tools.crm_router import push_prospects_to_crm
-
-    return push_prospects_to_crm(prospects, source_agent="sdr-engine", business_key=business_key)
 
 
 def _queue_approval(*, business_key: str, confidence: float, risk_level: str,
@@ -411,31 +405,63 @@ def _queue_approval(*, business_key: str, confidence: float, risk_level: str,
     return artifact.status
 
 
-def _tag_verified(*, runtime_key: str, twenty_id: str, existing_tags: list) -> None:
-    """Write the `gate-verified` tag back onto the Twenty person record so
-    the next run's `read_unverified_candidates` skips it (finding 2
-    IMPORTANT, code review 2026-07-27 -- without this, every scheduled run
-    re-processes, and once written, re-pushes, the same candidates
-    forever). COMMIT MODE ONLY: `run_sdr_engine` never calls this from a
-    shadow run -- tagging is itself a write, and shadow must stay 100%
-    side-effect-free. Re-processing the same read-only candidates on the
-    next shadow run is acceptable; a shadow run never advances any state."""
+def _company_has_opportunity(*, runtime_key: str, company_id: str) -> bool:
+    """True if the brand's Twenty already has an opportunity for this company.
+    This is our dedup for a company-sourced desk: companies carry no `tags`
+    field (people do), so the old people-style `gate-verified` tag is not
+    available -- an existing opportunity for the company IS the durable
+    'already worked, do not re-create' signal, and it survives across runs."""
     import requests
     from tools.twenty import _headers, _workspace_config
 
-    if not twenty_id:
-        return
-    tags = list(existing_tags or [])
-    if "gate-verified" not in tags:
-        tags.append("gate-verified")
+    if not company_id:
+        return False
     base_url, api_key = _workspace_config(runtime_key)
-    r = requests.patch(
-        f"{base_url}/rest/people/{twenty_id}",
+    r = requests.get(
+        f"{base_url}/rest/opportunities",
         headers=_headers(api_key),
-        json={"tags": tags},
+        params={"filter": f"companyId[eq]:{company_id}", "limit": 1},
         timeout=20,
     )
     r.raise_for_status()
+    return bool((r.json().get("data") or {}).get("opportunities"))
+
+
+def _opportunity_name(company_name: str, defect: "dict | None") -> str:
+    """Honest opportunity title -- the verified defect IS the rebuild pitch,
+    taken straight from the gate's verified_defect (never fabricated)."""
+    base = (company_name or "Opportunity").strip()
+    kind = (defect or {}).get("kind")
+    label = f"{base} | Website Rebuild (SDR-verified: {kind})" if kind \
+        else f"{base} | Website Rebuild (SDR-verified)"
+    return label[:240]
+
+
+def _write_opportunity(*, runtime_key: str, company_id: str, company_name: str,
+                       defect: "dict | None") -> str:
+    """Create a DEDUPED rebuild opportunity for a PASS company. Returns
+    'exists' (an opportunity is already there -> skip; this is the dedup that
+    keeps repeat/scheduled runs from duplicating) or 'created:<id>'. COMMIT
+    MODE ONLY -- `run_sdr_engine` never calls this from a shadow run. The
+    company_id is the candidate's twenty_id: we read /rest/companies, so the
+    candidate id already IS the company id -- no name/domain search needed."""
+    import requests
+    from tools.twenty import _headers, _workspace_config
+
+    if not company_id:
+        raise ValueError("no company_id for opportunity write")
+    if _company_has_opportunity(runtime_key=runtime_key, company_id=company_id):
+        return "exists"
+    base_url, api_key = _workspace_config(runtime_key)
+    r = requests.post(
+        f"{base_url}/rest/opportunities",
+        headers=_headers(api_key),
+        json={"name": _opportunity_name(company_name, defect), "companyId": company_id},
+        timeout=20,
+    )
+    r.raise_for_status()
+    opp = (r.json().get("data") or {}).get("createOpportunity") or {}
+    return f"created:{opp.get('id')}"
 
 
 # --------------------------------------------------------------------------- the digest receipt (Task 4)
@@ -494,24 +520,22 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
     """One run: pull unverified candidates from the brand's Twenty, verify
     each (the gate's pure `verify()` only -- see `_gate_run`), and route by
     verdict. commit=False (the default) is shadow mode: read-only,
-    side-effect-free, records what it WOULD do -- no push, no
-    approval_queue write, no tag write. commit=True is the ONLY mode that
-    writes, and every write in this run is keyed by `runtime_key`, never
+    side-effect-free, records what it WOULD do -- no opportunity write, no
+    approval_queue write, no receipt publish. commit=True is the ONLY mode
+    that writes, and every write in this run is keyed by `runtime_key`, never
     the raw desk key (finding 1):
 
       PASS + confidence >= AUTO_DISPATCH_MIN_CONFIDENCE + crm_ready:
-        push to CRM once, record auto_approved in approval_queue, tag
-        gate-verified.
+        create ONE deduped rebuild opportunity for the company
+        (`_write_opportunity`; skipped if the company already has one),
+        record auto_approved in approval_queue.
       PASS but low-confidence, OR crm_ready is False:
-        do NOT push -- queue pending_approval in approval_queue instead
-        (holds rather than misroutes), tag gate-verified.
+        do NOT write an opportunity -- queue pending_approval in
+        approval_queue instead (holds rather than misroutes).
       NEEDS_HUMAN:
-        queue pending_approval in approval_queue, never push, tag
-        gate-verified.
+        queue pending_approval in approval_queue, never write an opportunity.
       FAIL:
-        drop + log; no push, no queue, no tag (left for the next run --
-        a permanently-FAIL rebuild target still isn't rebuild-worthy next
-        run either, but re-tagging it is not this round's scope).
+        drop + log; no opportunity, no queue.
 
     This function NEVER lets one bad candidate, or a total read failure,
     kill the run (code review round 3, finding 1 IMPORTANT -- widened from
@@ -529,24 +553,22 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
       yield a digest -- that digest is the entire point (Michael reads it).
     - PER CANDIDATE, the gate call (`_gate_run` -- curl probes, an HTTP
       fetch, and the one LLM judgment call, which the gate DESIGNS to raise
-      on a down/unreachable site) through the full write sequence (push,
-      queue, the tag PATCH) all live in ONE try/except. An exception before
-      a verdict was ever determined is a "verify-failed" entry, tallied
-      under `errors` -- NOT under pass/needs_human/fail/written, so it can
-      never inflate the real verdict counts. An exception AFTER the verdict
-      was already determined (the write sequence itself) is a
+      on a down/unreachable site) through the full write sequence
+      (opportunity write, queue) all live in ONE try/except. An exception
+      before a verdict was ever determined is a "verify-failed" entry,
+      tallied under `errors` -- NOT under pass/needs_human/fail/written, so
+      it can never inflate the real verdict counts. An exception AFTER the
+      verdict was already determined (the write sequence itself) is a
       "write-failed" entry -- the verdict bucket it already earned stays
       counted, but `written` does not increment for it. Either way the loop
       `continue`s to the next candidate; the run completes and the digest
       is produced.
 
-    `_tag_verified` deliberately stays LAST in the write sequence,
-    unchanged from round 2: tag-only-after-a-clean-write gives
-    at-least-once processing -- a candidate that fails mid-write stays
-    untagged and is safely retried next run (a rare duplicate push on retry
-    is the accepted lesser evil; CRM-side email/company dedup in
-    tools/twenty.py + tools/ghl.py already guards the real duplicate case).
-    No dedup added to approval_queue -- out of scope, spec section 10.
+    Dedup for a company-sourced desk is opportunity-existence, not a tag:
+    `_write_opportunity` returns "exists" (skip, not counted written) when
+    the company already has an opportunity, so repeat/scheduled runs never
+    duplicate. A candidate that fails mid-write is safely retried next run;
+    the existence check then guards against a real duplicate.
     """
     from services.sdr_verification_gate import VerificationRequest
 
@@ -599,22 +621,29 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
             if commit:
                 ready = auto_eligible and crm_ready(runtime_key)
                 prospect = _prospect_dict(c)
-                metadata = {"verdict": verdict, "reason": res["reason"]}
                 if ready:
-                    _push_crm(prospects=[prospect], business_key=runtime_key)
+                    result = _write_opportunity(
+                        runtime_key=runtime_key,
+                        company_id=c.get("twenty_id"),
+                        company_name=c.get("company_name"),
+                        defect=res.get("defect"),
+                    )
                     _queue_approval(business_key=runtime_key, confidence=confidence,
-                                     risk_level="low", content=prospect, metadata=metadata)
-                    note = "wrote"
+                                     risk_level="low", content=prospect,
+                                     metadata={"verdict": verdict, "reason": res["reason"],
+                                               "opportunity": result})
+                    if result.startswith("created:"):
+                        counts["written"] += 1
+                        note = f"wrote opportunity ({result})"
+                    else:
+                        note = "opportunity already exists (dedup skip)"
                 else:
                     _queue_approval(business_key=runtime_key, confidence=confidence,
-                                     risk_level="medium", content=prospect, metadata=metadata)
+                                     risk_level="medium", content=prospect,
+                                     metadata={"verdict": verdict, "reason": res["reason"]})
                     note = "queued pending"
-                _tag_verified(runtime_key=runtime_key, twenty_id=c.get("twenty_id"),
-                              existing_tags=c.get("tags") or [])
-                if ready:
-                    counts["written"] += 1
             else:
-                note = "would write" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"
+                note = "would write opportunity" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"
 
             lines.append(f"- {c.get('company_name')} | {verdict} | {res['reason']} | {note}")
 

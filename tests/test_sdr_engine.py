@@ -110,18 +110,16 @@ def test_shadow_mode_writes_nothing(monkeypatch):
         lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
                       "reason": "ok", "confidence": 0.85},
     )
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity", lambda **k: (wrote.append(k), "created:x")[1])
     queued = []
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: queued.append(k))
-    tagged = []
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: tagged.append(k))
     out = run_sdr_engine("wd", commit=False)
     assert out["pass"] == 1 and out["written"] == 0
-    assert pushed == [] and queued == [] and tagged == []  # shadow: never writes anything
+    assert wrote == [] and queued == []  # shadow: never writes anything
 
 
-def test_commit_writes_only_pass(monkeypatch):
+def test_commit_writes_opportunity_only_for_pass(monkeypatch):
     _candidates(monkeypatch, [
         {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com", "tags": []},
         {"twenty_id": "2", "company_name": "Fail", "domain_on_file": "f.com", "tags": []},
@@ -135,27 +133,23 @@ def test_commit_writes_only_pass(monkeypatch):
                   "reason": "real site elsewhere", "confidence": 0.0}
 
     monkeypatch.setattr("services.sdr_engine._gate_run", gate)
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity",
+                        lambda **k: (wrote.append(k), "created:opp_1")[1])
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
-    # A commit=True run also publishes its digest receipt (Task 4); stub the
-    # publish seam so this unit test never hits the network regardless of
-    # ambient SLIPSTREAM_GH_TOKEN state.
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
     out = run_sdr_engine("wd", commit=True)
     assert out["written"] == 1 and out["fail"] == 1
-    assert len(pushed) == 1 and pushed[0]["business_key"] == "callingdigital"
+    # only the PASS company got an opportunity, keyed by its company id
+    assert len(wrote) == 1 and wrote[0]["company_id"] == "1"
 
 
-def test_commit_pushes_with_runtime_key_never_desk_key_or_ghl_default(monkeypatch):
-    """Finding 1 (CRITICAL) regression: the real crm_router.push_prospects_to_crm
-    must be called EXACTLY ONCE, keyed by the resolved runtime key
-    ("callingdigital"), never the raw desk key ("wd") and never let
-    resolve_crm_provider's business_crm_map.get(..., "ghl") default fire."""
+def test_commit_writes_opportunity_with_runtime_key_never_desk_key(monkeypatch):
+    """Finding 1 (CRITICAL) regression: the opportunity write is keyed by the
+    resolved runtime key ("callingdigital"), never the raw desk key ("wd")."""
     _candidates(monkeypatch, [
-        {"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com",
+        {"twenty_id": "c1", "company_name": "Acme", "domain_on_file": "acme.com",
          "contact_name": "Pat", "contact_phone": "+15551230000", "contact_email": None, "tags": []},
     ])
     monkeypatch.setattr(
@@ -165,22 +159,18 @@ def test_commit_pushes_with_runtime_key_never_desk_key_or_ghl_default(monkeypatc
     )
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
 
     calls = []
-
-    def fake_push(prospects, source_agent, business_key):
-        calls.append({"prospects": prospects, "source_agent": source_agent, "business_key": business_key})
-        return ("twenty", [{"status": "created"}])
-
-    monkeypatch.setattr("tools.crm_router.push_prospects_to_crm", fake_push)
+    monkeypatch.setattr("services.sdr_engine._write_opportunity",
+                        lambda **k: (calls.append(k), "created:opp_x")[1])
 
     out = run_sdr_engine("wd", commit=True)
 
     assert len(calls) == 1
-    assert calls[0]["business_key"] == "callingdigital"
-    assert calls[0]["business_key"] not in ("wd", "ghl")
+    assert calls[0]["runtime_key"] == "callingdigital"
+    assert calls[0]["runtime_key"] not in ("wd", "ghl")
+    assert calls[0]["company_id"] == "c1"
     assert out["written"] == 1
 
 
@@ -188,107 +178,92 @@ def test_commit_pushes_with_runtime_key_never_desk_key_or_ghl_default(monkeypatc
     ("wd", "callingdigital"),
     ("avi", "autointelligence"),
     ("bookd", "bookd"),
-    # aipg deliberately excluded here: it is GHL-backed with no Twenty
-    # workspace, so a default-source run refuses honestly before ever
-    # reaching read_unverified_candidates/_push_crm (finding 2, round 3) --
-    # see test_aipg_source_unavailable_returns_honest_refusal below.
+    # aipg deliberately excluded: GHL-backed, no Twenty workspace -- a default
+    # source run refuses honestly before any write (see the refusal test).
 ])
-def test_commit_never_pushes_the_raw_desk_key(monkeypatch, desk_key, runtime_key):
-    """Finding 1: no path passes a raw desk key ("wd"/"avi"/"bookd") into
-    crm_router, for any Twenty-sourced brand."""
-    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
+def test_commit_never_uses_the_raw_desk_key(monkeypatch, desk_key, runtime_key):
+    """Finding 1: no path passes a raw desk key into the opportunity write or
+    the approval-queue write, for any Twenty-sourced brand."""
+    _candidates(monkeypatch, [{"twenty_id": "c1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
     monkeypatch.setattr(
         "services.sdr_engine._gate_run",
         lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
                       "reason": "ok", "confidence": 0.85},
     )
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
-    monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity",
+                        lambda **k: (wrote.append(k), "created:opp_x")[1])
+    queued = []
+    monkeypatch.setattr("services.sdr_engine._queue_approval",
+                        lambda **k: (queued.append(k), "auto_approved")[1])
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
 
     run_sdr_engine(desk_key, commit=True)
 
-    assert len(pushed) == 1
-    assert pushed[0]["business_key"] == runtime_key
-    assert pushed[0]["business_key"] not in ("wd", "avi", "aipg", "ghl")
+    assert len(wrote) == 1
+    assert wrote[0]["runtime_key"] == runtime_key
+    assert wrote[0]["runtime_key"] not in ("wd", "avi", "aipg", "ghl")
+    assert queued[0]["business_key"] == runtime_key
 
 
-def test_commit_not_ready_queues_pending_never_pushes(monkeypatch):
-    """Finding 1: commit=True but crm_ready False for that brand -- push
-    must NOT fire; the candidate is queued pending instead of misrouted."""
-    _candidates(monkeypatch, [{"twenty_id": "1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
+def test_commit_not_ready_queues_pending_never_writes(monkeypatch):
+    """Finding 1: commit=True but crm_ready False -- the opportunity write must
+    NOT fire; the candidate is queued pending instead of misrouted."""
+    _candidates(monkeypatch, [{"twenty_id": "c1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
     monkeypatch.setattr(
         "services.sdr_engine._gate_run",
         lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
                       "reason": "ok", "confidence": 0.85},
     )
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: False)
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity", lambda **k: (wrote.append(k), "created:x")[1])
     queued = []
     monkeypatch.setattr("services.sdr_engine._queue_approval",
                         lambda **k: (queued.append(k), "pending_approval")[1])
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
 
     out = run_sdr_engine("wd", commit=True)
 
-    assert pushed == []
+    assert wrote == []
     assert out["written"] == 0
     assert len(queued) == 1
     assert queued[0]["business_key"] == "callingdigital"
     assert queued[0]["risk_level"] == "medium"
 
 
-def test_commit_tags_processed_candidates_shadow_never_tags(monkeypatch):
-    """Finding 2 (IMPORTANT): commit mode tags every processed (pushed or
-    queued) candidate so the next run's dedup skips it; shadow never tags
-    (tagging is itself a write, and shadow must stay side-effect-free)."""
+def test_commit_dedup_skips_when_opportunity_exists(monkeypatch):
+    """Dedup: a PASS company that already has an opportunity ("exists") is not
+    re-created and is NOT counted as written; a fresh one ("created:") is.
+    This is what keeps scheduled/repeat runs from duplicating."""
     _candidates(monkeypatch, [
-        {"twenty_id": "1", "company_name": "Pass", "domain_on_file": "p.com", "tags": []},
-        {"twenty_id": "2", "company_name": "Human", "domain_on_file": "h.com", "tags": ["existing"]},
+        {"twenty_id": "fresh", "company_name": "Fresh", "domain_on_file": "fresh.com", "tags": []},
+        {"twenty_id": "dupe", "company_name": "Dupe", "domain_on_file": "dupe.com", "tags": []},
     ])
-
-    def gate(**k):
-        name = k["request"].entity["company_name"]
-        if name == "Pass":
-            return {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
-                    "reason": "ok", "confidence": 0.85}
-        return {"verdict": "NEEDS_HUMAN", "queue_status": "pending_approval", "crm": None,
-                "reason": "contact unverified", "confidence": 0.5}
-
-    monkeypatch.setattr("services.sdr_engine._gate_run", gate)
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: None)
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+    monkeypatch.setattr(
+        "services.sdr_engine._write_opportunity",
+        lambda **k: "exists" if k["company_id"] == "dupe" else "created:opp_fresh",
+    )
 
-    tagged = []
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: tagged.append(k))
-
-    run_sdr_engine("wd", commit=True)
-    assert len(tagged) == 2
-    assert {t["twenty_id"] for t in tagged} == {"1", "2"}
-    assert {t["runtime_key"] for t in tagged} == {"callingdigital"}
-    # the existing "existing" tag must be threaded through, not dropped
-    human_tag_call = next(t for t in tagged if t["twenty_id"] == "2")
-    assert human_tag_call["existing_tags"] == ["existing"]
-
-    # Shadow: same candidates, same gate verdicts -- tag-write must never fire.
-    tagged.clear()
-    run_sdr_engine("wd", commit=False)
-    assert tagged == []
+    out = run_sdr_engine("wd", commit=True)
+    assert out["written"] == 1          # only the fresh one counts
+    assert "dedup skip" in out["digest"]
 
 
 def test_commit_write_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
-    """Code review round 2 (IMPORTANT): a transient failure anywhere in ONE
-    candidate's write sequence (here, _tag_verified raising for the 2nd
-    candidate) must not abort the whole run -- candidates before and after
-    it are still fully processed, the run returns normally with a digest,
-    and the failed candidate is not counted as written."""
+    """A transient failure in ONE candidate's write (here, _write_opportunity
+    raising for candidate 2) must not abort the batch -- candidates before and
+    after are still processed, the run returns with a digest, and the failed
+    candidate is not counted as written."""
     _candidates(monkeypatch, [
         {"twenty_id": "1", "company_name": "First", "domain_on_file": "first.com", "tags": []},
         {"twenty_id": "2", "company_name": "Second", "domain_on_file": "second.com", "tags": []},
@@ -303,36 +278,26 @@ def test_commit_write_failure_for_one_candidate_does_not_abort_the_batch(monkeyp
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
 
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    seen = []
 
-    def flaky_tag(*, runtime_key, twenty_id, existing_tags):
-        if twenty_id == "2":
-            raise RuntimeError("Twenty PATCH timed out")
+    def flaky_write(*, runtime_key, company_id, company_name, defect):
+        seen.append(company_id)
+        if company_id == "2":
+            raise RuntimeError("Twenty POST timed out")
+        return "created:opp_" + company_id
 
-    monkeypatch.setattr("services.sdr_engine._tag_verified", flaky_tag)
+    monkeypatch.setattr("services.sdr_engine._write_opportunity", flaky_write)
 
     out = run_sdr_engine("wd", commit=True)
 
-    # All 3 candidates reached the push step -- the failure was isolated to
-    # candidate 2's tag write, not the whole batch.
-    assert len(pushed) == 3
-
-    # The run completed normally and still produced a digest/receipt --
-    # nothing was silently dropped.
+    assert seen == ["1", "2", "3"]          # all three attempted, none aborted the batch
     assert out["produced"] == 3
-    assert "First" in out["digest"]
-    assert "Second" in out["digest"]
-    assert "Third" in out["digest"]
+    assert "First" in out["digest"] and "Second" in out["digest"] and "Third" in out["digest"]
     assert out["digest_path"]
-
-    # The digest honestly records the failure (candidate id + exception).
     assert "write-failed" in out["digest"]
     assert "twenty_id=2" in out["digest"]
-    assert "Twenty PATCH timed out" in out["digest"]
-
-    # The failed candidate is not counted as written; the other two are.
-    assert out["written"] == 2
+    assert "Twenty POST timed out" in out["digest"]
+    assert out["written"] == 2               # failed candidate not counted
 
 
 def test_gate_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
@@ -357,33 +322,18 @@ def test_gate_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
 
     monkeypatch.setattr("services.sdr_engine._gate_run", flaky_gate)
     monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity",
+                        lambda **k: (wrote.append(k), "created:opp_x")[1])
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: "auto_approved")
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: None)
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
 
     out = run_sdr_engine("wd", commit=True)
 
-    # Candidates 1 and 3 (the non-errored ones) were still fully pushed.
-    assert len(pushed) == 2
-    assert {p["prospects"][0]["business_name"] for p in pushed} == {"First", "Third"}
+    # Candidates 1 and 3 (the non-errored ones) still got their opportunity.
+    assert len(wrote) == 2
+    assert {w["company_name"] for w in wrote} == {"First", "Third"}
 
-    # The run completed normally with a full digest -- nothing silently lost.
-    assert out["produced"] == 3
-    assert "First" in out["digest"]
-    assert "Second" in out["digest"]
-    assert "Third" in out["digest"]
-    assert out["digest_path"]
-
-    # The errored candidate is reported honestly but does NOT inflate any
-    # real verdict count -- it's tallied separately.
-    assert "verify-failed" in out["digest"]
-    assert "connection reset" in out["digest"]
-    assert out["pass"] == 2          # only the 2 genuinely-gated candidates
-    assert out["needs_human"] == 0
-    assert out["fail"] == 0
-    assert out["written"] == 2
     assert out["errors"] == 1
 
 

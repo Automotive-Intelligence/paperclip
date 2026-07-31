@@ -1,8 +1,8 @@
 """tests/test_sdr_engine_acceptance.py -- the ship gate for the SDR Engine
 (sub-project #2 of the autonomous SDR desk). A full shadow run over a mixed
 fixture batch of unverified Twenty candidates must produce a correct digest
-and make ZERO live writes: no CRM push, no approval_queue write, no Twenty
-tag write, no receipt publish. `_gate_run` (services/sdr_engine.py) calls
+and make ZERO live writes: no opportunity write, no approval_queue write,
+no receipt publish. `_gate_run` (services/sdr_engine.py) calls
 only the gate's pure `verify()` -- never its write-performing `run()` -- in
 BOTH modes; this engine is the only thing that ever writes, and only when
 commit=True (finding 1, code review 2026-07-27). See docs/superpowers/plans/
@@ -48,22 +48,19 @@ def test_shadow_run_over_mixed_batch_makes_zero_live_writes(monkeypatch):
 
     monkeypatch.setattr("services.sdr_engine._gate_run", fake_gate_run)
 
-    pushed = []
-    monkeypatch.setattr("services.sdr_engine._push_crm", lambda **k: pushed.append(k))
+    wrote = []
+    monkeypatch.setattr("services.sdr_engine._write_opportunity", lambda **k: wrote.append(k) or "created:x")
     queued = []
     monkeypatch.setattr("services.sdr_engine._queue_approval", lambda **k: queued.append(k))
-    tagged = []
-    monkeypatch.setattr("services.sdr_engine._tag_verified", lambda **k: tagged.append(k))
     published = []
     monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: published.append(path))
 
     out = run_sdr_engine("wd", commit=False)
 
     # The ship gate: zero live writes of any kind.
-    assert pushed == []
-    assert queued == []
-    assert tagged == []
-    assert published == []
+    assert wrote == []       # no opportunity created
+    assert queued == []      # no approval_queue write
+    assert published == []   # no receipt publish
 
     # Correct, honest counts -- every real gate verdict accounted for.
     assert out["produced"] == 3
