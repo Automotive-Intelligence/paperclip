@@ -57,6 +57,21 @@ def test_console_diagram_array_prop_flagged():
     assert any("consolediagram" in x.lower() and "array" in x.lower() for x in v)
 
 
+def test_console_diagram_json_child_flagged():
+    # bug 2: <ConsoleDiagram>{...raw JSON...}</ConsoleDiagram> is a bare-brace MDX
+    # child that crashes the build. The gate must flag it (belt-and-suspenders to
+    # the assemble-step normalization).
+    bad = GOOD.replace(
+        '<ConsoleDiagram steps="Lead in | Route | Confirm | Follow up" />',
+        '<ConsoleDiagram>{"steps": ["Lead in", "Route"]}</ConsoleDiagram>',
+    )
+    v = validate_post(bad)
+    assert any(
+        "consolediagram" in x.lower() and ("brace" in x.lower() or "child" in x.lower() or "json" in x.lower())
+        for x in v
+    )
+
+
 def test_missing_answerfirst_flagged():
     bad = GOOD.replace("<AnswerFirst>Map the handoffs first. Most dealership AI fails at the seams between systems, not inside them.</AnswerFirst>", "")
     v = validate_post(bad)

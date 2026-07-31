@@ -2,9 +2,17 @@
 # Most brands are Next.js/Vercel with the MDX component kit (format omitted =>
 # defaults to "mdx"). Worship Digital stores posts as TS objects in one file
 # (format: ts_posts_array) and is human-merged (auto_merge: false).
+
+# Vercel team that owns every brand project. merge_when_green verifies the PR's
+# preview build via the Vercel API (VERCEL_API_TOKEN), NOT GitHub check-runs
+# (the fine-grained PAT lacks checks:read, which 403'd every merge). Per-brand
+# vercel_project_id below scopes the deployment lookup to the right project.
+vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
+
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence
+    vercel_project_id: prj_GwgqlMDuErlGKm2rsLGPGOn2ve51
     domain: automotiveintelligence.io
     enabled: true
     blog_dir: src/content/blog
@@ -15,6 +23,7 @@ brands:
     queue_path: automation/content-queue.md
   aiphoneguy:
     repo: salesdroid/ai-phone-guy-site
+    vercel_project_id: prj_Q26URPlYmK1PFY57BSjTFtUJNLko
     domain: theaiphoneguy.com
     enabled: true
     blog_dir: src/content/blog
@@ -26,6 +35,7 @@ brands:
     queue_path: scripts/blog_queues/aipg_topics.md
   agentempire:
     repo: salesdroid/buildagentempire
+    vercel_project_id: prj_mhJYWyIm1arV3RQhQIlbmfvYG6ot
     domain: buildagentempire.com
     enabled: true
     blog_dir: src/content/blog
@@ -37,6 +47,7 @@ brands:
     queue_path: scripts/blog_queues/bae_topics.md
   worshipdigital:
     repo: salesdroid/worship-digital        # NOTE: worship-digital, NOT worship-digital-site
+    vercel_project_id: prj_6IuzlVBshSxrAeIny3Q6CiJJxSm5   # unused while auto_merge:false, wired for when it flips
     domain: worshipdigital.co
     enabled: true
     auto_merge: false                         # first runs are human-merged; see engine ceiling

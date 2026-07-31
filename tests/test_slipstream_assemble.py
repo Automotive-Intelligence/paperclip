@@ -1,4 +1,4 @@
-from services.slipstream_assemble import assemble_mdx
+from services.slipstream_assemble import assemble_mdx, normalize_console_diagram
 
 POST = {
     "title": "What Should a Dealer Map Before Buying AI",
@@ -49,3 +49,39 @@ def test_colon_in_title_produces_valid_yaml():
     fm = mdx.split("---", 2)[1]
     loaded = yaml.safe_load(fm)  # must not raise (the real build-breaker)
     assert loaded["title"] == "Signal vs. Noise: How to Tell if AI Works"
+
+
+# --- ConsoleDiagram normalization (bug 2: bare-brace MDX child crashes build) ---
+
+def test_console_diagram_json_child_normalized_to_valid_mdx():
+    """The <ConsoleDiagram>{...raw JSON...}</ConsoleDiagram> form the LLM emits is
+    rewritten to the valid self-closing pipe-string form, and the post passes."""
+    bad_body = POST["body_mdx"].replace(
+        '<ConsoleDiagram steps="In | Route | Confirm" />',
+        '<ConsoleDiagram>{"steps": ["Lead in", "Route", "Confirm"], "caption": "the flow"}</ConsoleDiagram>',
+    )
+    mdx, violations = assemble_mdx(dict(POST, body_mdx=bad_body), date_str="2026-07-30")
+    # no bare-brace child survives (that is exactly what crashes the MDX build)
+    assert "</ConsoleDiagram>" not in mdx
+    assert "ConsoleDiagram>{" not in mdx
+    # rewritten to the valid self-closing pipe-delimited form
+    assert '<ConsoleDiagram steps="Lead in | Route | Confirm" caption="the flow" />' in mdx
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+def test_console_diagram_unrecoverable_child_dropped_no_bare_brace():
+    """A JSON child with no recoverable steps is dropped rather than shipped as a
+    bare brace; a Callout keeps the required visual so the post still passes."""
+    bad_body = POST["body_mdx"].replace(
+        '<ConsoleDiagram steps="In | Route | Confirm" />',
+        '<ConsoleDiagram>{"title": "nope"}</ConsoleDiagram>\n\n<Callout>keeps a visual element</Callout>',
+    )
+    mdx, violations = assemble_mdx(dict(POST, body_mdx=bad_body), date_str="2026-07-30")
+    assert "</ConsoleDiagram>" not in mdx
+    assert "ConsoleDiagram>{" not in mdx
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+def test_normalize_leaves_valid_selfclosing_untouched():
+    body = '<ConsoleDiagram steps="A | B | C" caption="x" />'
+    assert normalize_console_diagram(body) == body

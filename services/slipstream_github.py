@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import time
-from typing import Any, Callable, Dict, Union
+from typing import Any, Callable, Dict, List, Optional, Union
+from urllib.parse import urlencode
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 _API = "https://api.github.com/repos"
+_VERCEL_API = "https://api.vercel.com"
 
 
 class PublishError(Exception):
@@ -95,6 +98,50 @@ def publish_post(
     return pr["html_url"]
 
 
+def _default_vercel_http(method: str, url: str, token: str, json_body: Any = None) -> Dict[str, Any]:
+    """HTTP for the Vercel REST API (Bearer VERCEL_API_TOKEN). Separate from the
+    GitHub _default_http because it uses a different host, token, and headers."""
+    r = requests.request(
+        method, url,
+        headers={"Authorization": f"Bearer {token}"},
+        json=json_body, timeout=30,
+    )
+    if not r.ok:
+        raise PublishError(f"{method} {url} -> {r.status_code}: {r.text[:300]}")
+    return r.json() if r.text else {}
+
+
+def _vercel_deployment_for(
+    vercel_http: Callable,
+    vercel_token: str,
+    *,
+    sha: str,
+    ref: Optional[str] = None,
+    project_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the NEWEST Vercel deployment for the PR's head commit `sha` (falling
+    back to the branch `ref` if the commit is not yet mapped), or None if Vercel
+    has not created a deployment yet. Vercel returns deployments newest-first, so
+    index 0 is the latest build attempt for that commit/branch."""
+    def _query(**meta: str) -> List[Dict[str, Any]]:
+        params: Dict[str, str] = {"limit": "20"}
+        if project_id:
+            params["projectId"] = project_id
+        if team_id:
+            params["teamId"] = team_id
+        params.update(meta)
+        url = f"{_VERCEL_API}/v6/deployments?{urlencode(params)}"
+        return vercel_http("GET", url, vercel_token).get("deployments") or []
+
+    # Primary: match the exact head commit sha (unique per push, most precise).
+    deployments = _query(**{"meta-githubCommitSha": sha})
+    # Fallback: the sha->deployment mapping can lag; match the branch ref instead.
+    if not deployments and ref:
+        deployments = _query(**{"meta-githubCommitRef": ref})
+    return deployments[0] if deployments else None
+
+
 def merge_when_green(
     repo: str,
     pr_url: str,
@@ -104,22 +151,57 @@ def merge_when_green(
     poll_sleep: float = 15.0,
     http: Callable = _default_http,
     sleep: Callable = time.sleep,
+    vercel_project_id: Optional[str] = None,
+    vercel_team_id: Optional[str] = None,
+    vercel_token: Optional[str] = None,
+    vercel_http: Callable = _default_vercel_http,
 ) -> Dict[str, Any]:
-    """Poll the PR's Vercel build check; squash-merge on success, HOLD on failure
-    or timeout. This is auto-publish gated on the build-gate, so a broken post is
-    never merged to main."""
+    """Poll the PR's Vercel preview build via the VERCEL API; squash-merge on
+    READY, HOLD on ERROR/CANCELED or timeout. This is auto-publish gated on the
+    build-gate, so a broken post is never merged to main.
+
+    Build verification uses the Vercel REST API (VERCEL_API_TOKEN) rather than
+    GitHub check-runs: the SLIPSTREAM_GH_TOKEN fine-grained PAT lacks checks:read,
+    so GET /commits/{sha}/check-runs 403'd on every poll and no PR ever merged
+    (the 2-week publish blackout). The GitHub token is still used for the two
+    GitHub calls -- reading the PR head sha and the squash-merge PUT.
+    """
     pr_num = int(pr_url.rstrip("/").split("/")[-1])
     repo_api = f"{_API}/{repo}"
-    sha = http("GET", f"{repo_api}/pulls/{pr_num}", token)["head"]["sha"]
+    head = http("GET", f"{repo_api}/pulls/{pr_num}", token)["head"]
+    sha = head["sha"]
+    ref = head.get("ref")
+
+    vercel_token = (vercel_token or os.getenv("VERCEL_API_TOKEN") or "").strip()
+    if not vercel_token:
+        # Fail CLOSED: without a way to verify the build, never auto-merge.
+        return {"merged": False, "reason": "VERCEL_API_TOKEN missing (cannot verify build)",
+                "pr_url": pr_url}
+
+    last_err: Optional[str] = None
     for _ in range(timeout_polls):
-        runs = http("GET", f"{repo_api}/commits/{sha}/check-runs", token).get("check_runs", [])
-        vercel = [r for r in runs if r.get("name") == "Vercel"]
-        if vercel:
-            concl = vercel[0].get("conclusion")
-            if concl == "success":
+        try:
+            dep = _vercel_deployment_for(
+                vercel_http, vercel_token,
+                sha=sha, ref=ref,
+                project_id=vercel_project_id, team_id=vercel_team_id,
+            )
+        except Exception as e:
+            # A transient Vercel API blip must not crash the run (which already
+            # opened the PR). Remember it and keep polling; a persistent error
+            # falls through to a timeout HOLD (fail CLOSED, never a bad merge).
+            last_err = str(e)[:200]
+            dep = None
+        if dep is not None:
+            state = (dep.get("readyState") or dep.get("state") or "").upper()
+            if state == "READY":
                 http("PUT", f"{repo_api}/pulls/{pr_num}/merge", token, {"merge_method": "squash"})
                 return {"merged": True, "pr_url": pr_url}
-            if concl in ("failure", "cancelled", "timed_out", "action_required", "startup_failure"):
-                return {"merged": False, "reason": f"vercel build {concl}", "pr_url": pr_url}
+            if state in ("ERROR", "CANCELED"):
+                return {"merged": False, "reason": f"vercel build {state.lower()}", "pr_url": pr_url}
+            # BUILDING / QUEUED / INITIALIZING -> keep polling.
         sleep(poll_sleep)
-    return {"merged": False, "reason": "vercel build timeout (still pending)", "pr_url": pr_url}
+    reason = "vercel build timeout (still pending)"
+    if last_err:
+        reason = f"vercel verify never returned a ready build (last error: {last_err})"
+    return {"merged": False, "reason": reason, "pr_url": pr_url}
