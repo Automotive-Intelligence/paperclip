@@ -132,9 +132,10 @@ ZERNIO_ACCOUNT_BRANDS = json.loads(os.getenv("CONCIERGE_ZERNIO_ACCOUNT_BRANDS") 
     "69c8ac356cb7b8cf4caba743": "wd",    # WD (Calling Digital) instagram
 }))
 
-def _zernio_send(conversation_id: str, text: str) -> int:
+def _zernio_send(conversation_id: str, text: str, account_id: str) -> int:
     from tools.zernio import _zernio_request
-    r = _zernio_request("POST", f"/inbox/conversations/{conversation_id}/messages", {"text": text})
+    r = _zernio_request("POST", f"/inbox/conversations/{conversation_id}/messages",
+                        {"message": text, "accountId": account_id})
     return 200 if r else 500
 
 def handle_zernio(payload: dict) -> dict:
@@ -175,5 +176,5 @@ def handle_zernio(payload: dict) -> dict:
                "in": text[:120], "reply": (reply or "")[:200]}
     logging.info("[concierge] %s", json.dumps(receipt))
     if LIVE and reply and not hot and conv_id and (brand not in BRAND_HOLD):
-        _zernio_send(conv_id, reply)
+        _zernio_send(conv_id, reply, acct)
     return receipt
