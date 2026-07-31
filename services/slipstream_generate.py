@@ -92,6 +92,24 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
     money = ", ".join(brand_cfg.get("money_pages") or [])
     comps = brand_cfg.get("components") or ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote"]
     comps_str = ", ".join(comps)
+    # Per-component exact syntax for the props-carrying components. These MUST be
+    # self-closing with STRING props: a JSON-object child or an array prop
+    # (<ConsoleDiagram>{...}</ConsoleDiagram>, steps={[...]}, stats={[...]}) is a
+    # bare-brace/array expression that crashes the MDX build.
+    comp_rules = ""
+    if "ConsoleDiagram" in comps:
+        comp_rules += (
+            "- ConsoleDiagram is SELF-CLOSING and takes a single PIPE-delimited STRING. Emit EXACTLY: "
+            "<ConsoleDiagram steps=\"First step | Second step | Third step\" caption=\"optional caption\" />. "
+            "NEVER give it children, a JSON object, or curly braces. Both "
+            "<ConsoleDiagram>{...}</ConsoleDiagram> and steps={[...]} crash the build.\n"
+        )
+    if "StatRow" in comps:
+        comp_rules += (
+            "- StatRow is SELF-CLOSING with scalar STRING props and is ONLY for a real cited stat. Emit EXACTLY: "
+            "<StatRow value=\"54%\" label=\"what it measures\" source=\"Publisher, Year\" href=\"https://...\" />. "
+            "It requires a real source; never pass an array like stats={[...]}.\n"
+        )
     return (
         "You write ONE agency-standard, AEO-maximized blog post for a brand, and return "
         "ONLY a JSON object (no prose, no fence). Brand voice: "
@@ -102,6 +120,7 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         "- The FIRST characters of body_mdx MUST be a complete, CLOSED AnswerFirst: "
         "<AnswerFirst>your 2-4 sentence answer here</AnswerFirst>. Never empty or unclosed.\n"
         f"- Use ONLY these components (the ONLY ones this repo defines): {comps_str}. Using ANY component not in that list crashes the build.\n"
+        f"{comp_rules}"
         "- Every paired component you open MUST be closed on the SAME line, no blank line inside: "
         "<PullQuote>text</PullQuote>, <Callout>text</Callout>, <EntityDefinition term=\"X\">definition</EntityDefinition>.\n"
         "- Do NOT put bare curly braces { } in prose text. MDX parses { } as JavaScript and a stray brace crashes "

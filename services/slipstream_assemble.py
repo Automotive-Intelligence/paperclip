@@ -8,11 +8,83 @@ nothing publishes that would break the build or violate the brand rules.
 from __future__ import annotations
 
 import base64
-from typing import Any, Callable, Dict, List, Tuple
+import json
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
 from services.slipstream_validate import validate_blocks, validate_post
+
+
+# A ConsoleDiagram used as a PAIRED tag with a raw-JSON child:
+# <ConsoleDiagram>{ ...json... }</ConsoleDiagram>. The (?<!/) guard skips the
+# valid self-closing form. Captures the whole child so nested braces survive.
+_CONSOLE_PAIRED = re.compile(r"<ConsoleDiagram\b[^>]*(?<!/)>(.*?)</ConsoleDiagram>", re.S)
+
+
+def _loads_first_json(text: str) -> Any:
+    """Parse the first complete JSON value ({...} or [...]) inside `text`, or
+    None. Uses raw_decode so nested/balanced braces parse correctly."""
+    candidates = [i for i in (text.find("{"), text.find("[")) if i >= 0]
+    if not candidates:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[min(candidates):])
+        return obj
+    except Exception:
+        return None
+
+
+def _attr_safe(s: str) -> str:
+    """Make a value safe inside a double-quoted JSX attribute: collapse
+    whitespace and swap the double-quote for a single-quote (literal inside a
+    double-quoted attribute)."""
+    return " ".join(str(s).split()).replace('"', "'")
+
+
+def _steps_to_pipe(steps: Any) -> str:
+    """Coerce a steps value (list, or a string already using '|'/newlines) into
+    the pipe-delimited string the ConsoleDiagram component expects."""
+    if isinstance(steps, (list, tuple)):
+        parts = [str(s).strip() for s in steps]
+    elif isinstance(steps, str):
+        parts = [p.strip() for p in re.split(r"[|\n]", steps)]
+    else:
+        parts = []
+    return " | ".join(p for p in parts if p)
+
+
+def normalize_console_diagram(body: str) -> str:
+    """Rewrite the build-breaking <ConsoleDiagram>{...raw JSON...}</ConsoleDiagram>
+    form into the valid self-closing
+    <ConsoleDiagram steps="a | b | c" caption="..." /> form.
+
+    In MDX a bare '{' child is parsed as a JS expression and crashes compilation
+    (the AvI/BAE build break). The ConsoleDiagram component only reads the `steps`
+    (pipe string) and `caption` props, so we recover those from the JSON payload.
+    If no steps can be recovered, we DROP the element (a missing optional diagram
+    is safe; a bare brace is not) and let the gate HOLD if that leaves no visual.
+    A paired form with plain-text (no-brace) children is left untouched -- it does
+    not crash the build.
+    """
+    def _repl(m: "re.Match") -> str:
+        child = m.group(1).strip()
+        if "{" not in child and "[" not in child:
+            return m.group(0)  # no bare expression -> not the crash case
+        data = _loads_first_json(child)
+        steps_pipe, caption = "", ""
+        if isinstance(data, dict):
+            steps_pipe = _steps_to_pipe(data.get("steps") or data.get("items") or data.get("nodes"))
+            caption = str(data.get("caption") or "").strip()
+        elif isinstance(data, list):
+            steps_pipe = _steps_to_pipe(data)
+        if not steps_pipe:
+            return ""  # unrecoverable -> drop rather than ship a bare brace
+        cap = f' caption="{_attr_safe(caption)}"' if caption else ""
+        return f'<ConsoleDiagram steps="{_attr_safe(steps_pipe)}"{cap} />'
+
+    return _CONSOLE_PAIRED.sub(_repl, body)
 
 
 def _quote(s: str) -> str:
@@ -42,7 +114,10 @@ def assemble_mdx(post: Dict[str, Any], date_str: str) -> Tuple[str, List[str]]:
         "tags": post.get("tags", []),
     }
     fm_lines = "\n".join(f"{k}: {_fm_value(v)}" for k, v in frontmatter.items())
-    mdx = f"---\n{fm_lines}\n---\n\n{post['body_mdx'].strip()}\n"
+    # Normalize the ConsoleDiagram raw-JSON-child form the LLM sometimes emits
+    # into valid self-closing MDX before the gate sees it (bare '{' crashes build).
+    body = normalize_console_diagram(post["body_mdx"].strip())
+    mdx = f"---\n{fm_lines}\n---\n\n{body}\n"
     return mdx, validate_post(mdx)
 
 

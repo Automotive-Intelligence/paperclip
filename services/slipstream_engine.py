@@ -64,10 +64,15 @@ def _load_cfg() -> dict:
 
 
 def _brand_cfg(brand_key: str) -> dict:
-    cfg = (_load_cfg().get("brands") or {}).get(brand_key)
+    full = _load_cfg()
+    cfg = (full.get("brands") or {}).get(brand_key)
     if not cfg:
         raise ValueError(f"unknown brand '{brand_key}' (not in config/slipstream_brands.yaml)")
-    return {**cfg, "brand_key": brand_key}
+    merged = {**cfg, "brand_key": brand_key}
+    # The Vercel team is a top-level default shared by every brand project; the
+    # per-brand vercel_project_id scopes the build-verification lookup.
+    merged.setdefault("vercel_team_id", full.get("vercel_team_id"))
+    return merged
 
 
 def _next_topic(cfg: dict, token: str) -> str:
@@ -201,7 +206,12 @@ def run_brand(
         return {**result, "published": False, "note": note}
 
     # Auto-publish, gated on the Vercel preview build. A red build HOLDS the PR.
-    m = merge_when_green(cfg["repo"], pr_url, token)
+    # Build verification hits the Vercel API scoped to this brand's project.
+    m = merge_when_green(
+        cfg["repo"], pr_url, token,
+        vercel_project_id=cfg.get("vercel_project_id"),
+        vercel_team_id=cfg.get("vercel_team_id"),
+    )
     result["published"] = m["merged"]
     if not m["merged"]:
         logger.warning("[slipstream] %s NOT merged: %s", brand_key, m.get("reason"))

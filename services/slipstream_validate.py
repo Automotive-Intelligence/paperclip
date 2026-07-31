@@ -51,6 +51,14 @@ def validate_post(mdx: str) -> List[str]:
     if re.search(r"<ConsoleDiagram[^>]*steps=\{\[", body):
         violations.append("ConsoleDiagram steps is an array literal (crashes the build); use a pipe string")
 
+    # 4a. ConsoleDiagram must be SELF-CLOSING with a pipe-delimited steps string.
+    #     A raw-JSON/brace child (<ConsoleDiagram>{...}</ConsoleDiagram>) is a bare
+    #     '{' MDX expression that crashes compilation (AvI/BAE build break). assemble
+    #     normalizes this away; this is the belt-and-suspenders gate for anything that
+    #     slips through. The (?<!/) guard skips the valid self-closing form.
+    if re.search(r"<ConsoleDiagram\b[^>]*(?<!/)>\s*[\{\[]", body):
+        violations.append("ConsoleDiagram has a raw-JSON/brace child (crashes the build); use self-closing <ConsoleDiagram steps=\"a | b | c\" />")
+
     # 4b. Paired components must be CLOSED. An opened-but-unclosed <AnswerFirst> etc.
     #     is a JSX parse error that crashes the Vercel build (caught 2026-07-19).
     for comp in ("AnswerFirst", "PullQuote", "Callout", "EntityDefinition"):
