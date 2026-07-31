@@ -9670,3 +9670,14 @@ async def concierge_chatwoot(payload: Optional[Dict[str, Any]] = Body(default=No
     except Exception as e:
         logging.exception("concierge webhook failed")
         return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/lead/capture")
+async def lead_capture_endpoint(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Fallback lead capture for brand sites when their CRM write fails (152)."""
+    from services.lead_capture import capture
+    try:
+        return capture(payload or {})
+    except Exception as e:
+        logging.exception("lead capture failed")
+        return {"ok": False, "error": str(e)[:200]}
