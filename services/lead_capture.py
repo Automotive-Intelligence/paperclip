@@ -14,6 +14,39 @@ import requests
 
 GH_TOKEN = os.getenv("SLIPSTREAM_GH_TOKEN", "")
 ALERT_REPO = os.getenv("LEAD_ALERT_REPO", "Automotive-Intelligence/paperclip")
+RESEND_API = "https://api.resend.com/emails"
+ALERT_FROM = os.getenv("LEAD_ALERT_FROM", "AVO Leads <cmo@mail.automotiveintelligence.io>")
+ALERT_TO = os.getenv("LEAD_ALERT_TO", "michael@worshipdigital.co")
+
+
+def _alert_email(brand: str, lead: dict) -> bool:
+    """Primary alert rail: email. A lead is worth waking someone for."""
+    key = (os.getenv("RESEND_API_KEY") or "").strip()
+    if not key:
+        return False
+    rows = "".join(
+        f"<tr><td style='padding:4px 12px 4px 0;color:#666'>{k}</td>"
+        f"<td style='padding:4px 0'><b>{v or '-'}</b></td></tr>"
+        for k, v in lead.items())
+    html = (f"<p>A lead came in that the CRM could not accept. <b>Work it by hand.</b></p>"
+            f"<table>{rows}</table>"
+            f"<p style='color:#666;font-size:12px'>brand: {brand}. This email is the lead "
+            f"record until it is entered manually.</p>")
+    try:
+        r = requests.post(RESEND_API, timeout=15,
+                          headers={"Authorization": f"Bearer {key}",
+                                   "Content-Type": "application/json"},
+                          json={"from": ALERT_FROM, "to": [ALERT_TO],
+                                "subject": f"[LEAD - {brand}] {lead.get('name') or 'unknown'} "
+                                           f"({lead.get('phone') or 'no phone'})",
+                                "html": html})
+        if r.status_code >= 300:
+            logging.error("[lead_capture] email failed %s: %s", r.status_code, r.text[:200])
+            return False
+        return True
+    except Exception:
+        logging.exception("[lead_capture] alert email raised")
+        return False
 
 
 def _alert_issue(brand: str, lead: dict) -> bool:
@@ -55,5 +88,8 @@ def capture(payload: dict) -> dict:
             ("name", "phone", "email", "trade", "message", "source")}
     # The receipt is the floor: even if GitHub is down, the lead exists in logs.
     logging.warning("[LEAD CAPTURED - FALLBACK] %s", json.dumps({"brand": brand, **lead}))
-    alerted = _alert_issue(brand, lead)
-    return {"ok": True, "captured": "receipt", "alerted": alerted}
+    emailed = _alert_email(brand, lead)
+    issued = False if emailed else _alert_issue(brand, lead)  # issue only as backup
+    return {"ok": True, "captured": "receipt",
+            "alerted": bool(emailed or issued),
+            "via": "email" if emailed else ("issue" if issued else "receipt-only")}
