@@ -405,6 +405,24 @@ def _queue_approval(*, business_key: str, confidence: float, risk_level: str,
     return artifact.status
 
 
+def _queue_best_effort(**kwargs) -> "str | None":
+    """The approval_queue record is an AUDIT / risk-gate artifact, NOT the
+    load-bearing CRM write -- and it needs Postgres (DATABASE_URL), present on
+    Railway but not in every runner. A queue failure must NEVER abort a
+    candidate or mask the real opportunity outcome (a live run once mislabeled
+    a clean dedup-skip as 'write-failed' when the local queue had no DB). So
+    it is best-effort: on failure, log and return None; any opportunity write
+    already performed this iteration still stands and is reported truthfully."""
+    import logging
+
+    try:
+        return _queue_approval(**kwargs)
+    except Exception as exc:  # noqa: BLE001 -- audit write is non-fatal
+        logging.getLogger("sdr-engine").warning(
+            "approval_queue write failed (non-fatal, opportunity outcome unaffected): %s", exc)
+        return None
+
+
 def _company_has_opportunity(*, runtime_key: str, company_id: str) -> bool:
     """True if the brand's Twenty already has an opportunity for this company.
     This is our dedup for a company-sourced desk: companies carry no `tags`
@@ -628,19 +646,21 @@ def run_sdr_engine(brand_key: str, source: str = "twenty_unverified", commit: bo
                         company_name=c.get("company_name"),
                         defect=res.get("defect"),
                     )
-                    _queue_approval(business_key=runtime_key, confidence=confidence,
-                                     risk_level="low", content=prospect,
-                                     metadata={"verdict": verdict, "reason": res["reason"],
-                                               "opportunity": result})
                     if result.startswith("created:"):
                         counts["written"] += 1
                         note = f"wrote opportunity ({result})"
                     else:
                         note = "opportunity already exists (dedup skip)"
+                    # Audit record is best-effort AFTER the load-bearing write,
+                    # so a queue failure never masks the real opportunity outcome.
+                    _queue_best_effort(business_key=runtime_key, confidence=confidence,
+                                       risk_level="low", content=prospect,
+                                       metadata={"verdict": verdict, "reason": res["reason"],
+                                                 "opportunity": result})
                 else:
-                    _queue_approval(business_key=runtime_key, confidence=confidence,
-                                     risk_level="medium", content=prospect,
-                                     metadata={"verdict": verdict, "reason": res["reason"]})
+                    _queue_best_effort(business_key=runtime_key, confidence=confidence,
+                                       risk_level="medium", content=prospect,
+                                       metadata={"verdict": verdict, "reason": res["reason"]})
                     note = "queued pending"
             else:
                 note = "would write opportunity" if (auto_eligible and crm_ready(runtime_key)) else "would hold pending"

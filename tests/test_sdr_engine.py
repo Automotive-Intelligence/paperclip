@@ -259,6 +259,37 @@ def test_commit_dedup_skips_when_opportunity_exists(monkeypatch):
     assert "dedup skip" in out["digest"]
 
 
+def test_queue_failure_does_not_mask_or_abort_the_opportunity_write(monkeypatch):
+    """Regression (live run 2026-07-31): the approval_queue write needs
+    Postgres (DATABASE_URL); when it raised, it aborted the candidate and
+    mislabeled a real opportunity write as 'write-failed'. The queue is now
+    best-effort AFTER the load-bearing write, so a queue failure must not
+    abort the candidate, must not stop the opportunity from counting, and must
+    not corrupt the note."""
+    _candidates(monkeypatch, [{"twenty_id": "c1", "company_name": "Acme", "domain_on_file": "acme.com", "tags": []}])
+    monkeypatch.setattr(
+        "services.sdr_engine._gate_run",
+        lambda **k: {"verdict": "PASS", "queue_status": "auto_approved", "crm": None,
+                      "reason": "ok", "confidence": 0.85},
+    )
+    monkeypatch.setattr("services.sdr_engine.crm_ready", lambda rk: True)
+    monkeypatch.setattr("services.sdr_engine._write_opportunity", lambda **k: "created:opp_c1")
+    monkeypatch.setattr("services.sdr_engine._commit_receipt", lambda path, body: None)
+
+    def broken_queue(**k):
+        raise RuntimeError("database.execute_query failed: DATABASE_URL is not configured.")
+
+    monkeypatch.setattr("services.sdr_engine._queue_approval", broken_queue)
+
+    out = run_sdr_engine("wd", commit=True)
+
+    # The opportunity write stands and is counted; the queue failure is swallowed.
+    assert out["written"] == 1
+    assert out["errors"] == 0
+    assert "wrote opportunity (created:opp_c1)" in out["digest"]
+    assert "write-failed" not in out["digest"]
+
+
 def test_commit_write_failure_for_one_candidate_does_not_abort_the_batch(monkeypatch):
     """A transient failure in ONE candidate's write (here, _write_opportunity
     raising for candidate 2) must not abort the batch -- candidates before and
