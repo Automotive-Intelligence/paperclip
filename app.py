@@ -9681,3 +9681,19 @@ async def lead_capture_endpoint(payload: Optional[Dict[str, Any]] = Body(default
     except Exception as e:
         logging.exception("lead capture failed")
         return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/lead/ingest")
+async def lead_ingest_endpoint(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """The lead SYSTEM OF RECORD (funnel standard items 5, 6). A brand site POSTs
+    EVERY lead here (not just on CRM failure): the lead is durably stored FIRST,
+    idempotently, then pushed to GHL with retry, then a human is ALWAYS alerted.
+    Returns ok=False (fail closed) unless the lead was stored AND a human was told,
+    so the caller degrades its success message / returns 502 accordingly. Body:
+    {brand, name, phone, email, trade, message, source, synthetic?, idempotency_key?}."""
+    from services.lead_store import ingest_lead
+    try:
+        return await asyncio.to_thread(ingest_lead, payload or {})
+    except Exception as e:
+        logging.exception("lead ingest failed")
+        return {"ok": False, "stored": False, "error": str(e)[:200]}
