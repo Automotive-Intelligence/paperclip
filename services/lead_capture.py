@@ -16,7 +16,11 @@ GH_TOKEN = os.getenv("SLIPSTREAM_GH_TOKEN", "")
 ALERT_REPO = os.getenv("LEAD_ALERT_REPO", "Automotive-Intelligence/paperclip")
 RESEND_API = "https://api.resend.com/emails"
 ALERT_FROM = os.getenv("LEAD_ALERT_FROM", "AVO Leads <cmo@mail.automotiveintelligence.io>")
-ALERT_TO = os.getenv("LEAD_ALERT_TO", "michael@worshipdigital.co")
+# Default MUST be a live, monitored inbox. The old default (michael@worshipdigital.co)
+# is a hole: mail.worshipdigital.co is `failed` in Resend and an audit found zero mail
+# delivered there in 180 days (deliverable 155). michael@automotiveintelligence.io is
+# the owner's real inbox and mail.automotiveintelligence.io is Resend-verified.
+ALERT_TO = os.getenv("LEAD_ALERT_TO", "michael@automotiveintelligence.io")
 
 
 def _alert_email(brand: str, lead: dict) -> bool:
@@ -90,6 +94,11 @@ def capture(payload: dict) -> dict:
     logging.warning("[LEAD CAPTURED - FALLBACK] %s", json.dumps({"brand": brand, **lead}))
     emailed = _alert_email(brand, lead)
     issued = False if emailed else _alert_issue(brand, lead)  # issue only as backup
-    return {"ok": True, "captured": "receipt",
-            "alerted": bool(emailed or issued),
+    alerted = bool(emailed or issued)
+    # FAIL CLOSED (funnel-standard item 5, deliverable 156): a log-line receipt is a
+    # durability floor, NOT "a human was told". ok is True ONLY when a human was
+    # actually alerted (email or issue). The caller must degrade its success message
+    # / return 502 when ok is False, never report success on a receipt-only capture.
+    return {"ok": alerted, "captured": "receipt",
+            "alerted": alerted,
             "via": "email" if emailed else ("issue" if issued else "receipt-only")}
