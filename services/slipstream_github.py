@@ -76,8 +76,22 @@ def publish_post(
     repo_api = f"{_API}/{repo}"
 
     base_sha = http("GET", f"{repo_api}/git/ref/heads/{base}", token)["object"]["sha"]
-    http("POST", f"{repo_api}/git/refs", token,
-         {"ref": f"refs/heads/{branch}", "sha": base_sha})
+    try:
+        http("POST", f"{repo_api}/git/refs", token,
+             {"ref": f"refs/heads/{branch}", "sha": base_sha})
+    except PublishError as e:
+        # A leftover branch of the SAME name must never wedge the engine. The
+        # 2026-07-31 BAE miss was exactly this: a stale slipstream/<slug>-<date>
+        # branch (from a hand-closed duplicate PR) made every re-run's branch
+        # create 422 "Reference already exists", so run_brand raised, opened NO
+        # PR, and the brand produced NOTHING on no rail. On a 422 we reset the
+        # existing ref to a fresh base and reuse it -- idempotent, since we are
+        # about to (re)commit this run's files onto it anyway.
+        if "-> 422" not in str(e) and " 422:" not in str(e):
+            raise
+        logger.warning("[slipstream] branch %s already exists; resetting to %s and reusing", branch, base)
+        http("PATCH", f"{repo_api}/git/refs/heads/{branch}", token,
+             {"sha": base_sha, "force": True})
 
     for path, content in files.items():
         body: Dict[str, Any] = {

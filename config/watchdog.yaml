@@ -18,7 +18,9 @@ brands:
     severity: warn
   worship_digital:
     sitemap_url: https://worshipdigital.co/sitemap.xml
-    blog_max_age_hours: 0       # blog HELD (branch drift + rename); Studio owns cadence
+    blog_max_age_hours: 192     # RE-ENABLED 2026-08-01: WD now publishes via Slipstream
+                                # (human-merged, ~weekly). 192h (8 days) clears a weekly
+                                # cadence and fires only on a genuine miss.
     severity: warn
   paper_and_purpose:
     sitemap_url: https://paperandpurpose.co/sitemap.xml
@@ -56,6 +58,18 @@ monitors:
   tp_daily_max_age_hours: 30       # ENABLED at cutover 2026-07-20 (both proven green
   growth_monitor_max_age_hours: 30 # in the cloud; laptop plists retired). 30h clears a
                                    # daily cadence, fires on a genuine missed cron run.
+# slipstream_queues: the Railway Slipstream blog engine takes the next unchecked
+# '- [ ]' topic from each brand's queue file (locations are the SoT in
+# config/slipstream_brands.yaml). A queue with no unchecked topics left makes the
+# brand HOLD SILENTLY -- produce nothing every run -- which is exactly the
+# 2026-07-31 BAE miss (that queue was NOT exhausted; a stale branch wedged it, but
+# an exhausted queue fails the same silent way). This check reads each enabled
+# brand's queue via the GitHub Contents API and alerts when the unchecked count
+# drops to/below min_unchecked, so a draining queue is a VISIBLE anomaly on the
+# rail with refill runway. min_unchecked: 0 disables the check.
+slipstream_queues:
+  min_unchecked: 3     # alert at <= 3 unchecked topics left (a few runs of runway)
+  severity: warn
 emails_sent:
   window_days: 7
   min_prospects_for_alert: 25

@@ -14,6 +14,10 @@ Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
   3. Blog freshness: per brand, is the newest LIVE blog post within its cadence, and
      does it serve 200? Catches "engine exited 0 but shipped nothing / a 404" -- the
      silent failure a receipt-only check misses (verified 2026-07-18).
+  3b. Slipstream queue depth: per brand, how many unchecked '- [ ]' topics remain
+     in the queue file? A drained queue makes the engine HOLD SILENTLY (produce
+     nothing) -- the 2026-07-31 BAE miss. Reads the queue directly (locations from
+     config/slipstream_brands.yaml); config-gated (slipstream_queues.min_unchecked).
   4. Weekly-social freshness: is the newest committed Studio weekly SOCIAL batch
      (marketing_deliverables/*studio_weekly_<date>*) within cadence? The batch has
      no live URL, so the committed folder is the truth signal. Disabled until the
@@ -242,6 +246,98 @@ def _check_blog_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
                 f"blog-404-{brand}",
                 f"{brand} newest post URL failed to load ({type(e).__name__}): {url}",
                 "critical"))
+    return out
+
+
+# The Slipstream blog engine reads the next unchecked '- [ ]' topic from each
+# brand's queue file (locations are the SoT in config/slipstream_brands.yaml). A
+# drained queue makes the brand HOLD SILENTLY -- produce nothing every run -- so
+# this check reads queue DEPTH on the same GitHub-Contents-API rail the telemetry
+# check uses, and alerts BEFORE the queue empties. Config-gated in watchdog.yaml
+# (slipstream_queues.min_unchecked; 0 disables).
+_SLIPSTREAM_BRANDS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "config", "slipstream_brands.yaml")
+
+
+def _slipstream_brand_queues() -> List[Tuple[str, str, str]]:
+    """(brand_key, queue_repo, queue_path) for every ENABLED Slipstream brand, read
+    from config/slipstream_brands.yaml (the single source of truth for queue
+    locations -- no duplicated paths in watchdog.yaml). Empty list if unreadable."""
+    import yaml
+    try:
+        with open(_SLIPSTREAM_BRANDS_PATH, "r", encoding="utf-8") as fh:
+            full = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as e:  # pragma: no cover - config always present
+        logger.warning("[watchdog] cannot read slipstream_brands.yaml: %s", e)
+        return []
+    out: List[Tuple[str, str, str]] = []
+    for key, b in (full.get("brands") or {}).items():
+        if not b.get("enabled"):
+            continue
+        repo = b.get("queue_repo") or b.get("repo")
+        path = b.get("queue_path")
+        if repo and path:
+            out.append((key, repo, path))
+    return out
+
+
+def _fetch_queue_unchecked_count(repo: str, path: str) -> Optional[int]:
+    """Count '- [ ]' unchecked topics in repo/path via the GitHub Contents API,
+    the same rail as _check_telemetry_freshness. None if the file cannot be read
+    (network / auth / 404): an unreadable queue is logged + skipped, never a false
+    alarm. The regex mirrors the engine's _next_topic so the count is exactly what
+    the engine would see."""
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(f"https://api.github.com/repos/{repo}/contents/{path}",
+                         headers=headers, timeout=15)
+    except requests.RequestException as e:
+        logger.warning("[watchdog] slipstream queue fetch failed for %s/%s: %s", repo, path, e)
+        return None
+    if not r.ok:
+        logger.warning("[watchdog] slipstream queue HTTP %s for %s/%s", r.status_code, repo, path)
+        return None
+    try:
+        text = base64.b64decode(r.json().get("content", "")).decode("utf-8")
+    except (ValueError, KeyError):
+        return None
+    return len(re.findall(r"^- \[ \]", text, re.M))
+
+
+def _check_slipstream_queues(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Alert when a Slipstream brand's topic queue is drained (or nearly). An
+    exhausted queue is the SILENT hold behind the 2026-07-31 BAE miss: the engine
+    had no unchecked topic, produced nothing, and no rail saw it. This is the
+    OUTSIDE check -- it reads the queue file directly, independent of the engine's
+    own run receipt -- matching the blog-freshness philosophy. Config-gated:
+    slipstream_queues.min_unchecked (0 disables); alerts at <= that many left."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    sq = cfg.get("slipstream_queues") or {}
+    min_unchecked = int(sq.get("min_unchecked") or 0)
+    if min_unchecked <= 0:
+        return []  # disabled
+    sev = sq.get("severity", "warn")
+    out: List[Anomaly] = []
+    for brand, repo, path in _slipstream_brand_queues():
+        count = _fetch_queue_unchecked_count(repo, path)
+        if count is None:
+            continue  # unreadable -> logged + skipped, never a false alarm
+        if count == 0:
+            out.append(Anomaly(
+                f"slipstream-queue-exhausted-{brand}",
+                f"{brand} Slipstream topic queue is EXHAUSTED (0 unchecked topics in "
+                f"{repo}/{path}) -- the blog engine will produce NOTHING for this brand "
+                f"until it is refilled.", sev))
+        elif count <= min_unchecked:
+            out.append(Anomaly(
+                f"slipstream-queue-low-{brand}",
+                f"{brand} Slipstream topic queue is running low ({count} unchecked "
+                f"topic(s) left in {repo}/{path}, <= {min_unchecked}); refill soon.", sev))
     return out
 
 
@@ -478,6 +574,7 @@ _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
     _check_blog_freshness,
+    _check_slipstream_queues,
     _check_weekly_social_freshness,
     _check_monitor_freshness,
     _check_media_worker_health,

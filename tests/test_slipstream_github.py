@@ -147,6 +147,61 @@ def test_mdx_create_path_carries_no_sha_regression():
     assert all("sha" not in body for _, body in puts)
 
 
+def test_publish_reuses_leftover_branch_on_422():
+    """A leftover branch of the same name (e.g. from a hand-closed duplicate PR)
+    must NOT wedge the engine: the 2026-07-31 BAE miss was a 422 'Reference already
+    exists' on branch-create that made run_brand raise and open NO PR. On 422 the
+    branch ref is reset to base (PATCH ... force) and reused, and the PR still
+    opens."""
+
+    class Leftover(FakeHTTP):
+        def __call__(self, method, url, token, json_body=None):
+            if method == "POST" and url.endswith("/git/refs"):
+                self.calls.append((method, url, json_body))
+                raise sg.PublishError(f"POST {url} -> 422: {{\"message\":\"Reference already exists\"}}")
+            if method == "PATCH" and "/git/refs/heads/" in url:
+                self.calls.append((method, url, json_body))
+                return {"ref": f"refs/heads/{url.split('/git/refs/heads/')[1]}"}
+            return super().__call__(method, url, token, json_body)
+
+    http = Leftover()  # files new (create path)
+    url = sg.publish_post(
+        repo="salesdroid/buildagentempire",
+        branch="slipstream/one-tap-microphone-web-app-2026-07-31",
+        files={"src/content/blog/one-tap-microphone-web-app.mdx": "---\ntitle: x\n---\nbody"},
+        pr_title="content: one tap",
+        pr_body="body",
+        token="github_pat_x",
+        http=http,
+    )
+    assert url.endswith("/pull/42")  # PR still opened despite the stale branch
+    # the ref was force-reset to base and reused, not left wedged
+    patches = [(u, j) for m, u, j in http.calls
+               if m == "PATCH" and u.endswith("/git/refs/heads/slipstream/one-tap-microphone-web-app-2026-07-31")]
+    assert len(patches) == 1
+    assert patches[0][1] == {"sha": "base123", "force": True}
+
+
+def test_publish_raises_on_non_422_ref_error():
+    """A non-422 error on branch-create (e.g. auth/500) is a real fault and must
+    surface, never be treated as a reusable leftover branch."""
+
+    class Boom(FakeHTTP):
+        def __call__(self, method, url, token, json_body=None):
+            if method == "POST" and url.endswith("/git/refs"):
+                self.calls.append((method, url, json_body))
+                raise sg.PublishError(f"POST {url} -> 403: forbidden")
+            return super().__call__(method, url, token, json_body)
+
+    with pytest.raises(sg.PublishError):
+        sg.publish_post(
+            repo="salesdroid/buildagentempire",
+            branch="slipstream/x-2026-07-31",
+            files={"src/content/blog/x.mdx": "---\ntitle: x\n---\nbody"},
+            pr_title="t", pr_body="b", token="github_pat_x", http=Boom(),
+        )
+
+
 def test_publish_raises_on_non_404_probe_error():
     """A non-404 error on the existence probe (e.g. auth/500) must NOT be
     swallowed as 'create' -- it surfaces as a PublishError."""
