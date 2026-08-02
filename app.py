@@ -3080,13 +3080,33 @@ def _avo_sched_axiom():
 
 # ── Register Scheduler Jobs ──────────────────────────────────────────────────
 
-# CMO Daily — 7:00 AM CT. Reads ~/avo-telemetry/cmo_daily_state.json via the
-# auth'd GitHub Contents path and sends Michael the once-a-day marketing-gate
-# brief via Resend. Per CMO autonomy spec file 58 (B&T handoff step 1).
+# CMO Daily — 7:00 AM CT. Reads LIVE engine output (blog posts merged to each
+# brand repo `main` + social_registry) via services/cmo_shipped and sends Michael
+# the once-a-day marketing-gate brief via Resend; cmo_daily_state.json is now only
+# an optional editorial overlay (ignored when stale). Per CMO autonomy spec file
+# 58 (B&T handoff step 1).
 from services.cmo_daily_email import run_daily as _cmo_daily_email
 scheduler.add_job(_cmo_daily_email, CronTrigger(hour=7, minute=0, timezone=CST),
     id="cmo_daily_email_700", name="CMO Daily Email — 7:00 AM CT",
     replace_existing=True, misfire_grace_time=3600)
+
+# CMO override reply-handler — sweeps the CMO override inbox (Reply-To of the
+# CMO Daily, default the connected `avi` Gmail) every 15min and files any reply
+# from Michael as a `🏁 CMO OVERRIDE` flag in cmo_state.md (the CMO reads its own
+# owned file at session start). Fail-closed: an unreachable / needs-reauth inbox
+# writes nothing. See services/cmo_override.
+def _run_cmo_override_poll():
+    try:
+        from services.cmo_override import run as _cmo_override_run
+        summary = _cmo_override_run()
+        if summary.get("filed") or summary.get("status") not in ("ok", None):
+            logging.info(f"[Paperclip] CMO override poll: {summary}")
+    except Exception as e:
+        logging.error(f"[Paperclip] CMO override poll failed: {e}")
+
+scheduler.add_job(_run_cmo_override_poll, IntervalTrigger(minutes=15, timezone=CST),
+    id="cmo_override_poll_15m", name="CMO Override Reply Poll — Every 15min",
+    replace_existing=True, misfire_grace_time=600)
 
 # CRO Daily Audit — 7:45 (runs before all other agents). Renamed from
 # coo_command_daily 2026-06-28 (RS #17). `replace_existing=True` swaps the
@@ -5594,6 +5614,21 @@ async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     validate_key(authorization)
     from services.cmo_daily_email import run_daily
     result = await asyncio.to_thread(run_daily)
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/cmo-override-poll-now")
+async def cmo_override_poll_now(
+    dry_run: bool = False,
+    authorization: Optional[str] = Header(None),
+):
+    """Sweep the CMO override inbox now and file any reply to the CMO Daily as a
+    CMO OVERRIDE flag in cmo_state.md. Mirrors the 15-min scheduler job. Pass
+    ?dry_run=true to detect-only (no flag, no label). Fail-closed: an
+    unreachable / needs-reauth inbox returns status 'inbox_unavailable'."""
+    validate_key(authorization)
+    from services.cmo_override import run as _cmo_override_run
+    result = await asyncio.to_thread(_cmo_override_run, dry_run)
     return JSONResponse(content=result)
 
 
