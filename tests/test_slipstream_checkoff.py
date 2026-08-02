@@ -38,3 +38,22 @@ def test_checkoff_noop_when_topic_not_in_queue():
                                 "https://x/blog/y", "tok")
     assert ok is False
     put.assert_not_called()
+
+
+def test_checkoff_idempotent_when_already_checked():
+    """A topic already marked '- [x]' is a no-op: the '- [ ]' pattern no longer
+    matches, so a second successful publish/check-off never double-marks the line
+    or re-commits the queue (the 'idempotently' requirement). This is what keeps a
+    re-run of an already-shipped topic from corrupting the queue."""
+    already = ("# queue\n\n"
+               "- [x] What signs tell a dealer an AI tool works? → https://x/blog/x\n"
+               "- [ ] Another topic\n")
+    resp = mock.Mock(); resp.ok = True
+    resp.json.return_value = {"sha": "sha1",
+                             "content": base64.b64encode(already.encode()).decode()}
+    with mock.patch.object(se.requests, "get", return_value=resp), \
+         mock.patch.object(se.requests, "put") as put:
+        ok = se._checkoff_topic(_CFG, "What signs tell a dealer an AI tool works?",
+                                "https://x/blog/x", "tok")
+    assert ok is False
+    put.assert_not_called()

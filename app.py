@@ -3162,9 +3162,20 @@ def _run_slipstream_mwf():
             continue
         try:
             result = run_brand(brand_key)
-            logging.info("[slipstream] %s: %s", brand_key, result.get("note") or result.get("live_url") or result)
+            # A held/failed run returns a receipt (never raises), so surface it at
+            # the RIGHT level: an exhausted queue or a produce/publish miss must
+            # stand out in the Railway logs, not hide among the INFO successes.
+            if result.get("reason") == "queue_exhausted":
+                logging.error("[slipstream] %s HELD: queue exhausted -- refill the topic "
+                              "queue or the brand keeps producing nothing", brand_key)
+            elif result.get("error") or (result.get("held") and not result.get("ok")):
+                logging.warning("[slipstream] %s did NOT publish: %s", brand_key,
+                                result.get("error") or result.get("note") or result.get("violations"))
+            else:
+                logging.info("[slipstream] %s: %s", brand_key,
+                             result.get("live_url") or result.get("note") or "ok")
         except Exception as e:
-            logging.error("[slipstream] %s run failed: %s", brand_key, e)
+            logging.error("[slipstream] %s run crashed: %s", brand_key, e)
 
 scheduler.add_job(_run_slipstream_mwf, CronTrigger(day_of_week="mon,wed,fri", hour=14, minute=15, timezone=CST),
     id="slipstream_engine_mwf", name="Slipstream Blog Engine — MWF (Railway)",

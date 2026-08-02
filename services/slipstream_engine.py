@@ -25,10 +25,40 @@ from services.slipstream_generate import generate_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
 
+logger = logging.getLogger(__name__)
+
+
+class QueueExhausted(Exception):
+    """A brand's topic queue has no unchecked '- [ ]' item left.
+
+    A DISTINCT type (not a bare ValueError) so run_brand can surface an exhausted
+    queue as a VISIBLE signal -- a loud log + a distinct receipt reason -- instead
+    of a silent generic HOLD. An exhausted queue makes the brand produce NOTHING
+    every run until it is refilled, and until this type existed that miss reached
+    no rail (the 2026-07-31 BAE-class silent hold)."""
+
+
+def _social_distribution_enabled() -> bool:
+    """Kill-switch for social auto-distribution. Social auto-fires on every
+    auto-published post and only became live when auto-merge was fixed (PR #226),
+    so it is deliberately behind a documented flag: default ON (the desired
+    behavior), but SLIPSTREAM_SOCIAL_DISTRIBUTE=0/false/no/off pauses it WITHOUT a
+    redeploy if a Zernio issue ever needs it stopped fast."""
+    return os.getenv("SLIPSTREAM_SOCIAL_DISTRIBUTE", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
 
 def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
-    """Best-effort: schedule the social pack via the ONE loader. NEVER fails the
-    post (Zernio limits / not-connected are non-fatal)."""
+    """Best-effort: schedule the social pack via the ONE loader (Zernio for
+    own-brands; the same tools/social_load loader every other rail uses -- no new
+    posting path). NEVER fails the post (Zernio limits / not-connected are
+    non-fatal), but the outcome is LOGGED loudly either way so a swallowed Zernio
+    failure never hides (the #228 lesson)."""
+    brand = cfg.get("business_key", cfg.get("brand_key", "?"))
+    if not _social_distribution_enabled():
+        logger.info("[slipstream] social distribution DISABLED via SLIPSTREAM_SOCIAL_DISTRIBUTE "
+                    "for %s (%s); blog is live but no social was scheduled", brand, slug)
+        return {"ok": False, "disabled": True, "note": "SLIPSTREAM_SOCIAL_DISTRIBUTE off"}
     try:
         from services.social_load_service import run_social_load
         social = post.get("social") or {}
@@ -46,13 +76,20 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
                 "media_urls": [f"{live_url.rsplit('/blog/', 1)[0]}/blog/{slug}-hero.png"],
             })
         if not jobs:
+            logger.warning("[slipstream] no social drafts to distribute for %s (%s)", brand, slug)
             return {"ok": False, "note": "no social drafts"}
-        return run_social_load(jobs, commit=True)
+        result = run_social_load(jobs, commit=True)
+        if result.get("ok"):
+            logger.info("[slipstream] social scheduled for %s (%s): counts=%s",
+                        brand, slug, result.get("counts"))
+        else:
+            logger.warning("[slipstream] social distribution INCOMPLETE for %s (%s): %s",
+                           brand, slug, result.get("error") or result.get("counts"))
+        return result
     except Exception as e:
-        logger.warning("[slipstream] social distribution failed (non-fatal): %s", e)
+        logger.warning("[slipstream] social distribution failed (non-fatal) for %s (%s): %s",
+                       brand, slug, e)
         return {"ok": False, "error": str(e)}
-
-logger = logging.getLogger(__name__)
 
 _CFG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "slipstream_brands.yaml")
 
@@ -86,7 +123,10 @@ def _next_topic(cfg: dict, token: str) -> str:
     text = base64.b64decode(r.json()["content"]).decode("utf-8")
     m = re.search(r"^- \[ \]\s*(.+)$", text, re.M)
     if not m:
-        raise ValueError(f"no unchecked topic in {cfg['queue_path']}")
+        # DISTINCT signal (not a generic ValueError): an exhausted queue is a
+        # refill problem, not a code fault, and must reach the rail as such.
+        raise QueueExhausted(
+            f"queue exhausted: no unchecked '- [ ]' topic in {qrepo}/{cfg['queue_path']}")
     return m.group(1).strip()
 
 
@@ -163,6 +203,14 @@ def run_brand(
             payload, violations = assemble_ts_posts(post, date_str, cfg, token)
         else:
             payload, violations = assemble_mdx(post, date_str)
+    except QueueExhausted as e:
+        # VISIBLE, not silent: an exhausted queue stops the brand producing every
+        # run. Log LOUDLY (error) and return a distinct reason so the scheduler and
+        # the watchdog (which reads queue depth on its own rail) both surface it.
+        logger.error("[slipstream] %s QUEUE EXHAUSTED -- brand will produce NOTHING "
+                     "until the queue is refilled: %s", brand_key, e)
+        return {"ok": False, "held": True, "reason": "queue_exhausted",
+                "violations": [str(e)], "error": "queue exhausted"}
     except Exception as e:
         logger.exception("[slipstream] %s produce failed", brand_key)
         return {"ok": False, "held": True, "violations": [f"{type(e).__name__}: {e}"],
