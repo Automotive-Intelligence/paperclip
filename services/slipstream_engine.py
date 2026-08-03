@@ -121,7 +121,11 @@ def _brand_cfg(brand_key: str) -> dict:
 
 def _next_topic(cfg: dict, token: str) -> str:
     """Read the brand's queue via GitHub REST and return the first unchecked topic."""
-    qrepo = cfg.get("queue_repo", cfg["repo"])
+    # NOT cfg.get("queue_repo", cfg["repo"]): a .get default is evaluated
+    # EAGERLY, so that form raises KeyError on a storefront brand (P&P)
+    # which has no repo at all. Storefront brands still keep their queue
+    # on GitHub, so queue_repo is the only source that must resolve.
+    qrepo = cfg.get("queue_repo") or cfg.get("repo")
     url = f"https://api.github.com/repos/{qrepo}/contents/{cfg['queue_path']}"
     r = requests.get(url, headers={"Authorization": f"Bearer {token}",
                                    "Accept": "application/vnd.github+json"}, timeout=30)
@@ -142,7 +146,11 @@ def _checkoff_topic(cfg: dict, topic: str, live_url: str, token: str) -> bool:
     scheduled run never republishes the same topic. Best-effort (returns False
     if the topic is not a queue line, e.g. an on-demand explicit topic)."""
     try:
-        qrepo = cfg.get("queue_repo", cfg["repo"])
+        # NOT cfg.get("queue_repo", cfg["repo"]): a .get default is evaluated
+        # EAGERLY, so that form raises KeyError on a storefront brand (P&P)
+        # which has no repo at all. Storefront brands still keep their queue
+        # on GitHub, so queue_repo is the only source that must resolve.
+        qrepo = cfg.get("queue_repo") or cfg.get("repo")
         url = f"https://api.github.com/repos/{qrepo}/contents/{cfg['queue_path']}"
         h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
         r = requests.get(url, headers=h, timeout=30)

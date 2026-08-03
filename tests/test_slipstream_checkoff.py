@@ -57,3 +57,48 @@ def test_checkoff_idempotent_when_already_checked():
                                 "https://x/blog/x", "tok")
     assert ok is False
     put.assert_not_called()
+
+
+# --- storefront brands (no `repo` key at all) -------------------------------
+# P&P publishes to Shopify, so its config deliberately has NO `repo`. Its topic
+# queue still lives on GitHub via `queue_repo`. The engine used to resolve that
+# with cfg.get("queue_repo", cfg["repo"]), whose default is evaluated EAGERLY,
+# so every P&P run died with KeyError: 'repo' before reaching the Shopify path.
+
+_STOREFRONT_CFG = {
+    "queue_repo": "salesdroid/avo-telemetry",
+    "queue_path": "scripts/blog_queues/pp_topics.md",
+}
+
+
+def test_next_topic_works_without_a_repo_key():
+    with mock.patch.object(se.requests, "get", return_value=_get_resp()):
+        assert se._next_topic(_STOREFRONT_CFG, "tok") == (
+            "What signs tell a dealer an AI tool works?")
+
+
+def test_next_topic_reads_from_queue_repo_not_repo():
+    """queue_repo must win even when both keys are present."""
+    seen = {}
+
+    def _get(url, headers=None, timeout=None):
+        seen["url"] = url
+        return _get_resp()
+
+    cfg = dict(_STOREFRONT_CFG, repo="some/other-repo")
+    with mock.patch.object(se.requests, "get", _get):
+        se._next_topic(cfg, "tok")
+    assert "salesdroid/avo-telemetry" in seen["url"]
+    assert "some/other-repo" not in seen["url"]
+
+
+def test_checkoff_works_without_a_repo_key():
+    def _put(url, headers=None, json=None, timeout=None):
+        r = mock.Mock(); r.ok = True
+        return r
+
+    with mock.patch.object(se.requests, "get", return_value=_get_resp()), \
+         mock.patch.object(se.requests, "put", _put):
+        assert se._checkoff_topic(
+            _STOREFRONT_CFG, "What signs tell a dealer an AI tool works?",
+            "https://paperandpurpose.co/blogs/news/x", "tok") is True
