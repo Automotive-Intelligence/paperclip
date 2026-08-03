@@ -5512,13 +5512,20 @@ async def run_slipstream_endpoint(
     full-Slipstream post + images and open a PR, or HOLD on a gate. Fully
     observable in railway logs (this is the reliability win over cloud routines).
     Body optional: {"topic": "..."} to force a topic; otherwise the next unchecked
-    queue topic is used. Runs synchronously (1-3 min); the caller gets the receipt."""
+    queue topic is used. Runs synchronously (1-3 min); the caller gets the receipt.
+
+    {"dry_run": true} applies to the shopify_article format (P&P) only: it resolves
+    the store, credential and blog and returns the exact article it WOULD create
+    without calling the write API, so a client run can be rehearsed. The repo
+    formats ignore it."""
     validate_key(authorization)
     from services.slipstream_engine import run_brand
     payload = payload or {}
     topic = payload.get("topic")
     auto_merge = payload.get("auto_merge", True)
-    result = await asyncio.to_thread(run_brand, brand_key, topic=topic, auto_merge=auto_merge)
+    dry_run = bool(payload.get("dry_run", False))
+    result = await asyncio.to_thread(run_brand, brand_key, topic=topic,
+                                     auto_merge=auto_merge, dry_run=dry_run)
     return JSONResponse(content=result)
 
 

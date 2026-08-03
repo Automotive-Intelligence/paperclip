@@ -1,9 +1,15 @@
 """services/slipstream_engine.py -- the Railway Slipstream engine orchestrator.
 
-run_brand() produces ONE full-Slipstream post for a brand and opens a PR, or
+run_brand() produces ONE full-Slipstream post for a brand and publishes it, or
 HOLDS on any gate violation. Every stage is an importable module function so it
 is testable in isolation and observable in railway logs. Fire it on demand via
 POST /admin/run-slipstream/{brand}; schedule it MWF once proven.
+
+"Publish" depends on where the brand lives. Repo brands (mdx, ts_posts_array) get
+a PR that is merged on a green Vercel build. Storefront brands (shopify_article,
+i.e. Paper & Purpose) have no repo at all: they get an UNPUBLISHED Shopify article
+draft via services/slipstream_shopify, and a human sets it Visible. That path
+never opens a PR, never auto-merges and never fires social.
 """
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ from services.slipstream_assemble import assemble_mdx, assemble_ts_posts
 from services.slipstream_generate import generate_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
+from services.slipstream_shopify import assemble_shopify_article, create_article_draft
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +179,47 @@ def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx") -> str:
             "Vercel preview builds this PR = the build-gate. Review + merge to publish.")
 
 
+def _publish_shopify_draft(cfg: Dict[str, Any], draft: Dict[str, Any], slug: str,
+                           topic: str, token: str, dry_run: bool) -> Dict[str, Any]:
+    """Terminal step for the shopify_article format: create the article as a DRAFT.
+
+    This path deliberately does NOT do the three things the repo path does after a
+    successful write. There is no PR (no repo), no auto-merge (a Shopify draft is
+    the ceiling; a human sets it Visible), and no social distribution (nothing is
+    live to link to, and a client's social is not this engine's to fire).
+
+    The queue topic IS checked off against the admin URL. A re-run that regenerates
+    the same topic would otherwise drip near-duplicate drafts into a CLIENT's store;
+    the check-off is reversible by a human unchecking the line.
+    """
+    brand_key = cfg.get("brand_key", "?")
+    try:
+        res = create_article_draft(cfg, draft, dry_run=dry_run)
+    except Exception as e:
+        logger.exception("[slipstream] %s shopify draft failed", brand_key)
+        return {"ok": False, "held": False, "violations": [], "slug": slug,
+                "error": f"shopify draft failed: {type(e).__name__}: {e}"}
+
+    if not res.get("ok"):
+        logger.warning("[slipstream] %s shopify draft NOT created: %s", brand_key, res.get("error"))
+        return {"ok": False, "held": True, "violations": [res.get("error", "shopify refused")],
+                "slug": slug, **res}
+
+    if res.get("dry_run"):
+        logger.info("[slipstream] %s DRY RUN ok: would create draft '%s' on blog %s (%s)",
+                    brand_key, draft.get("title"), res.get("blog_id"), res.get("store"))
+        return {"ok": True, "published": False, "slug": slug, "violations": [], **res}
+
+    logger.info("[slipstream] %s DRAFT created (NOT live, Miriam-gated): %s",
+                brand_key, res.get("admin_url"))
+    checked = _checkoff_topic(cfg, topic, f"draft: {res.get('admin_url')}", token)
+    return {"ok": True, "published": False, "slug": slug, "violations": [],
+            "topic_checked_off": checked,
+            "note": "Shopify DRAFT created. Not publicly visible. A human must review and "
+                    "set it Visible in the Shopify admin.",
+            **res}
+
+
 def run_brand(
     brand_key: str,
     *,
@@ -179,6 +227,7 @@ def run_brand(
     token: Optional[str] = None,
     date_str: Optional[str] = None,
     auto_merge: bool = True,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Produce a post, open a PR, then (if auto_merge) merge it once the Vercel
     build is green and distribute social. HOLDS on any gate violation or a red
@@ -198,8 +247,11 @@ def run_brand(
         post = generate_post(cfg, topic)
         images = generate_images(post["image_prompts"], cfg["business_key"])
         # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
-        # every other brand keeps the MDX file. `payload` is the file body either way.
-        if fmt == "ts_posts_array":
+        # P&P (shopify_article) has no repo at all and builds a Shopify article draft;
+        # every other brand keeps the MDX file. `payload` is what gets published either way.
+        if fmt == "shopify_article":
+            payload, violations = assemble_shopify_article(post, date_str, cfg, images)
+        elif fmt == "ts_posts_array":
             payload, violations = assemble_ts_posts(post, date_str, cfg, token)
         else:
             payload, violations = assemble_mdx(post, date_str)
@@ -221,6 +273,13 @@ def run_brand(
         return {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
 
     slug = post["slug"]
+
+    # Shopify brands (P&P) have no repo: publish means "create a DRAFT article via
+    # the Admin API". Returns here, BEFORE any GitHub write path, so no branch, no
+    # PR and no merge is ever attempted for a storefront brand.
+    if fmt == "shopify_article":
+        return _publish_shopify_draft(cfg, payload, slug, topic, token, dry_run)
+
     # WD writes the whole posts.ts array file (+images) INSTEAD of the mdx/social.md
     # pair. The social pack still flows to _distribute_social via post["social"].
     if fmt == "ts_posts_array":

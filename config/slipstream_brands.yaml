@@ -82,3 +82,26 @@ brands:
     money_pages: ["/pricing", "/blog"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bookd_topics.md
+  paperandpurpose:
+    # NO `repo` key on purpose: P&P is a Shopify STOREFRONT, not a git repo, which
+    # is the whole reason it sat off the engine. `shopify_article` publishes through
+    # the Admin API (services/slipstream_shopify.py) instead of opening a PR.
+    domain: paperandpurpose.co
+    enabled: true    # NOTE: `enabled` is what the MWF cron iterates (app.py _run_slipstream_mwf),
+                     # so this brand produces a DRAFT every Mon/Wed/Fri. Drafts only, never live.
+                     # Set false to keep P&P on-demand only via POST /admin/run-slipstream.
+    format: shopify_article
+    auto_merge: false                         # never read on this path (no PR exists); stated so a
+                                              # future refactor cannot infer consent to auto-publish
+    # DRAFT ONLY, ALWAYS. CLIENT work, Miriam-gated: the adapter creates every article
+    # with published=false and reads it back to prove it. Nothing here goes publicly
+    # live without Miriam setting it Visible in the Shopify admin.
+    shopify_secret_suffix: PAPERANDPURPOSE     # -> SHOPIFY_SHOP_/ADMIN_TOKEN_/CLIENT_ID_/CLIENT_SECRET_ in Doppler paperclip/prd
+    blog_handle: news                          # the store's only blog (id 93783949400), discovered via blogs.json
+    author: Miriam Rubio                       # byline is MIRIAM, never Michael
+    business_key: paperandpurpose
+    voice: "faith-informed guided journal and planner for women, by Paper & Purpose. Warm, encouraging, peer-not-teacher, NEVER preachy. The author and the only person ever referenced as the founder is MIRIAM (Miriam Rubio); never write as Michael, never mention Michael, never invent Miriam's personal, family or biographical details. Write the WHOLE post to ONE of the two ICP lanes and NEVER mix them: Lane A is the Returning Woman, 28-45, often a working mom, message 'you are not behind, you are becoming'; Lane B is the Christian Girly, 18-27, aesthetic-driven, friend-not-sermon. Default to Lane A unless the topic names Lane B. The first print run ships October 2026, always stated as 'October 2026', never another month, always preorder or reserve framing and never crowdfunding words like backer or campaign. Primary call to action is /pages/the-journal. NO fabricated or unsourced statistics, ever: cite a real published source or stay qualitative. NO em-dashes anywhere. NEVER name a competitor. Never name DataMoon. Imagery is restrained sage, cream and gold botanicals with NO people and NO faces."
+    components: ["answer","definition","callout","quote","stat","sources","image","links","table"]
+    money_pages: ["/pages/the-journal", "/pages/our-story"]
+    queue_repo: salesdroid/avo-telemetry
+    queue_path: scripts/blog_queues/pp_topics.md

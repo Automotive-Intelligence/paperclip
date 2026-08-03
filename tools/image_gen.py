@@ -72,6 +72,15 @@ BRAND_PROMPT_STYLES = {
         "Orange accent tones (#F2994A). Friendly, conversion-focused. "
         "Phone and communication imagery. "
     ),
+    # Paper & Purpose (client, Miriam-gated). The palette and the no-people rule
+    # are brand law, not taste: P&P imagery is restrained botanicals only, and the
+    # on-camera face is Miriam's own photography, never a generated one.
+    "paperandpurpose": (
+        "Warm, restrained editorial stationery aesthetic. Bone Cream (#F2EDE4) ground "
+        "with Dusty Sage (#9CA88E), Forest Olive (#4A5340) and Heritage Gold (#B89968) "
+        "accents. Soft natural light, quiet composition, delicate botanical detail. "
+        "NO people, NO faces, NO hands, no text, no lettering, no logos. "
+    ),
 }
 
 
