@@ -196,7 +196,7 @@ def quinn_run() -> str:
             "Pull current user state, detect adoption friction, segment by stage "
             "(new / onboarding / activated / at-risk / churned), and draft the right CS "
             "motion per segment in operator-to-operator voice, queued for Ryan where "
-            "customer-facing. Surface Ryan-gated proof-narrative candidates to Sutton and "
+            "customer-facing. Surface proof-narrative candidates to Sutton and "
             "retention risk to Marshall. Never invent a customer interaction. Report only "
             "what the data actually shows. No pricing, no income claims, no em-dashes. "
             "If user data is missing or stale, say so. Output >=200 chars."
@@ -204,7 +204,7 @@ def quinn_run() -> str:
         expected_output=(
             "Daily CS digest: user-state breakdown by stage, adoption friction detected, "
             "at-risk saves drafted (queued for Ryan), proof-narrative candidates flagged "
-            "HELD for Ryan, and anything held for human review (>=200 chars)."
+            "and anything held for claims review (>=200 chars)."
         ),
     )
 
