@@ -59,3 +59,22 @@ brands:
     money_pages: ["/quote","/intent","/services","/pricing","/contact"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/wd_topics.md
+  bookd:
+    repo: Kingvelazquez013/bookdcx-website   # Ryan's repo; Michael is co-founder, no permission gate
+    domain: bookd.cx                          # Cloudflare Pages auto-deploys from main
+    enabled: false   # see format note below — do NOT flip without an assembler
+    auto_merge: false                         # PRs land for review; not our org, keep human merge
+    # BLOCKED, deliberately: the engine supports `mdx` and `ts_posts_array` only.
+    # Book'd stores each post as a TSX MODULE (src/content/posts/<slug>.tsx) that is
+    # imported into a registry (src/lib/blog.ts) — i.e. generated output must COMPILE,
+    # not just parse as markup. An LLM emitting slightly-off JSX would break the
+    # bookd.cx build, so this stays disabled until one of the two paths in the flag
+    # below is taken. Book'd's 3 launch posts are already live and hand-authored.
+    format: tsx_module_per_post
+    posts_file: src/lib/blog.ts
+    posts_dir: src/content/posts
+    business_key: bookd
+    voice: "compliance-first CRM for independent life insurance agents; plain, direct, agent-to-agent; Michael or Ryan may front; every statistic cited to a primary source (state codes, NAIC, FINRA, NIPR); NEVER pricing, NEVER income/earnings/outcome/guarantee claims (insurance compliance); no em-dashes"
+    components: ["answer","definition","callout","quote","stat","sources","image","links","table"]
+    money_pages: ["/pricing", "/blog"]
+    queue_repo: salesdroid/avo-telemetry
