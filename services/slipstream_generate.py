@@ -26,6 +26,10 @@ _MAX_TOKENS = 8000
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
 # ts_posts_array (Worship Digital): a structured block array instead of an MDX string.
 _REQUIRED_FIELDS_TS = ("title", "description", "slug", "body", "image_prompts", "social")
+# Formats whose body is a STRUCTURED BLOCK ARRAY rather than an MDX string. Blocks
+# are renderer-agnostic: WD serializes them to TS, P&P renders them to Shopify
+# article HTML. Same generation contract, same validate_blocks gate.
+_BLOCK_FORMATS = ("ts_posts_array", "shopify_article")
 
 
 logger = logging.getLogger(__name__)
@@ -144,8 +148,9 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
 
 
 def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
-    """The WD (ts_posts_array) output contract: a STRUCTURED block array using WD's
-    Block type names, not an MDX string. Same AEO + brand rules as the MDX path."""
+    """The block-format output contract (ts_posts_array, shopify_article): a
+    STRUCTURED block array using WD's Block type names, not an MDX string. Same AEO
+    + brand rules as the MDX path. Per-brand rules ride in via brand_cfg['voice']."""
     money = ", ".join(brand_cfg.get("money_pages") or [])
     return (
         "You write ONE agency-standard, AEO-maximized blog post for a brand, and return "
@@ -192,8 +197,8 @@ def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
 
 
 def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
-    """Generate one WD post as a structured block array. Raises GenerationError on
-    a malformed result. The Post is assembled + gated (validate_blocks) downstream."""
+    """Generate one post as a structured block array. Raises GenerationError on a
+    malformed result. The Post is assembled + gated (validate_blocks) downstream."""
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
     post = _llm_json(_system_prompt_ts(brand_cfg), user)
 
@@ -218,7 +223,7 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     malformed result. Dispatches on the brand's output format: the default MDX path
     returns body_mdx; the ts_posts_array path (WD) returns a structured block array.
     Assembled + gated downstream."""
-    if brand_cfg.get("format") == "ts_posts_array":
+    if brand_cfg.get("format") in _BLOCK_FORMATS:
         return _generate_post_ts(brand_cfg, topic)
 
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
