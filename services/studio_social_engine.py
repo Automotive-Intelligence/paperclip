@@ -14,7 +14,8 @@ Non-negotiables preserved verbatim from the laptop engine:
   * IDEMPOTENCY: refuses to double-publish a week already staged.
   * POST-RUN VERIFICATION: a run that did not land a folder + batch + 3 gate stamps
     + receipt returns ok=False (loud), never a quiet success. Silence is not success.
-  * Book'd is never auto-published (the loader's NoRail hold enforces it in code).
+  * Book'd publishes on the same rail as every other brand. Michael is a Book'd
+    co-founder and decides its operating matters himself; there is no Ryan gate.
   * No em-dashes; no fabricated stats; independent gates (checker != producer).
 
 Fire on demand: POST /admin/run-social (dry-run default). Schedule weekly once proven.
@@ -253,7 +254,7 @@ def _receipt_md(week_monday: str, per_brand: Dict[str, Any], commit: bool) -> st
                          f"{n} post-slots; skips: {len(b.get('skips', []))}")
         for d in b.get("dropped", []):
             lines.append(f"    - dropped {d['key']}: {d['reason']}")
-    lines.append("\nBook'd: always held for Ryan (loader NoRail). AE: unconnected, blocked.")
+    lines.append("\nAE: unconnected, blocked.")
     return "\n".join(lines)
 
 

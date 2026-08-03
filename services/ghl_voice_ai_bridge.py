@@ -13,7 +13,7 @@ Why this exists separately from the existing crm_router push:
     a different shape: per-call inbound capture, not bulk prospect push, with
     GHL as the originating system.
   - Book'd routes to Ryan's setup + bookd.twenty.com; surfaced as a brand here
-    but the actual write needs Ryan's sign-off (per file 77). For now we log
+    but the Twenty route for this brand is not wired yet. For now we log
     + tag + return ack; surface in Build & Tech for Ryan handoff.
 
 Auth model:
@@ -97,7 +97,7 @@ def _route_to_twenty(brand: str, prospect: Dict[str, Any]) -> Dict[str, Any]:
     if not business_key:
         return {
             "status": "skipped",
-            "reason": f"brand {brand!r} not routed to Twenty (held for Ryan sign-off on Book'd)",
+            "reason": f"brand {brand!r} not routed to Twenty (route not wired)",
         }
 
     # tools/twenty.push_prospects_to_twenty expects a list of prospect dicts.
