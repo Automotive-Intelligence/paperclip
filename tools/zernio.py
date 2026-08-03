@@ -7,6 +7,7 @@ Reddit, Bluesky, Threads, Google Business, Telegram, Snapchat, WhatsApp.
 
 import os
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import requests
@@ -87,6 +88,22 @@ def use_api_key(key: Optional[str]) -> None:
     sufficient for the request layer to pick up the switch."""
     global ZERNIO_API_KEY
     ZERNIO_API_KEY = (key or os.getenv("ZERNIO_API_KEY", "")).strip()
+
+
+_TCO_LEN = 23  # X replaces every URL with a t.co link of this fixed length
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _effective_length(content: str, platform: str) -> int:
+    """Characters as the PLATFORM counts them, not as Python does.
+
+    X substitutes every URL with a fixed-length t.co link, so a raw len() both
+    over-counts long links (rejecting valid posts) and is the reason a naive
+    check kept disagreeing with the platform's own error message.
+    """
+    if platform != "twitter":
+        return len(content)
+    return len(_URL_RE.sub("x" * _TCO_LEN, content))
 
 
 def _zernio_request(
@@ -410,14 +427,21 @@ def publish_to_zernio(
             raise ValueError(f"Unsupported platform: {p}")
         normalized_platforms.append(ZERNIO_PLATFORMS[p_lower])
 
-    # Validate content length per platform
+    # Validate content length per platform. This FAILS CLOSED: a warning here
+    # used to let an over-length post schedule anyway, which then died at
+    # publish time on X days later (2026-07-16 incident). The docstring always
+    # promised ValueError; now it delivers it, so the caller learns at schedule
+    # time when it is still cheap to fix.
     for platform in normalized_platforms:
         caps = PLATFORM_CAPABILITIES.get(platform, {})
         max_len = caps.get("max_length")
-        if max_len and len(content) > max_len:
-            logging.warning(
-                f"[Zernio] Content length ({len(content)}) exceeds "
-                f"{platform} limit ({max_len})"
+        if not max_len:
+            continue
+        effective = _effective_length(content, platform)
+        if effective > max_len:
+            raise ValueError(
+                f"content is {effective} chars for {platform} (limit {max_len}). "
+                f"Shorten it; on X every URL counts as {_TCO_LEN} regardless of length."
             )
 
     # Build platform config
