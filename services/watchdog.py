@@ -28,6 +28,12 @@ Checks (config-driven via config/watchdog.yaml; registered in _CHECKS):
      media_worker.health_url.
   6. emails_sent stuck at 0 while the pipeline fills = the agent send rail is dead.
   7. env-truth: the live service should call itself 'production' in production.
+  8. Postal auth-state: per inbox account (avi, wd, aipg, agentempire, bookd,
+     salesdroid), is the Google OAuth token still 'active'? A revoked token
+     (status != 'active') takes that inbox DARK -- no inbound sweep, no CMO
+     override reply -- silently. Nothing watched this when all 6 went dark for a
+     MONTH (tokens revoked 2026-07-01); reads the same state /postal/status
+     exposes. Config-gated (postal_auth.enabled).
 
 Anomaly deduplication:
   Fingerprint-based in watchdog_state. current_state_json() reads this table for
@@ -569,6 +575,49 @@ def _check_env_truth() -> List[Anomaly]:
     return []
 
 
+def _postal_auth_accounts() -> List[dict]:
+    """The Postal auth state, read from the SAME internal function the
+    /postal/status endpoint uses -- a direct in-process call, never an HTTP hop
+    to our own service. Isolated as a seam so tests can mock the status source
+    (mirrors _revenue_summary / _current_environment)."""
+    from services.postal_oauth import list_connected_accounts
+    return list_connected_accounts()
+
+
+def _check_postal_auth(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Any Postal inbox account whose OAuth status != 'active' (e.g. needs_reauth)
+    means inbound Gmail/Postal sweep AND the CMO override reply path are DARK for
+    that account. This is the check that was MISSING when all 6 inboxes (avi, wd,
+    aipg, agentempire, bookd, salesdroid) silently went dark for a MONTH -- tokens
+    revoked 2026-07-01, undetected -- because nothing watched auth-state. Reads the
+    same source /postal/status exposes (services.postal_oauth.list_connected_accounts)
+    directly in-process. FAIL-SAFE: if that source raises/unreachable, return []
+    (a true service-down is covered by paperclip_uptime.yml); never emit a false
+    "needs re-auth." Config-gated: postal_auth.enabled (false no-ops the check)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    pa = cfg.get("postal_auth") or {}
+    if not pa.get("enabled", False):
+        return []  # disabled
+    sev = pa.get("severity", "warn")
+    try:
+        accounts = _postal_auth_accounts()
+    except Exception as e:  # unreachable DB / import / query failure
+        logger.warning("[watchdog] postal auth state unreachable, skipping: %s", e)
+        return []  # fail-safe: a real outage is covered by uptime, never a false re-auth
+    out: List[Anomaly] = []
+    for acct in (accounts or []):
+        if (acct.get("status") or "").strip() == "active":
+            continue
+        label = acct.get("account_label") or "?"
+        email = acct.get("email") or "?"
+        out.append(Anomaly(
+            f"postal-inbox-reauth-{label}",
+            f"Postal inbox {label} ({email}) needs re-auth -- inbound mail + CMO "
+            f"override dark for that account", sev))
+    return out
+
+
 # Registry of every check the watchdog runs. Extend here as coverage grows.
 _CHECKS = (
     _check_brand_sites,
@@ -580,6 +629,7 @@ _CHECKS = (
     _check_media_worker_health,
     _check_emails_sent,
     _check_env_truth,
+    _check_postal_auth,
 )
 
 

@@ -84,3 +84,14 @@ media_worker:
 telemetry:
   repo: salesdroid/avo-telemetry
   max_stale_hours: 48
+# postal_auth: the inbound Postal/Gmail rail (6 accounts: avi, wd, aipg,
+# agentempire, bookd, salesdroid). Each account holds a per-account Google OAuth
+# token; when one is revoked/expired its postal_tokens.status flips to
+# 'needs_reauth' and that inbox goes DARK -- no inbound sweep, no CMO override
+# reply -- SILENTLY. That is exactly what happened 2026-07-01: all 6 tokens
+# revoked, undetected for a MONTH, because nothing watched auth-state. This check
+# reads the same auth state the /postal/status endpoint exposes and flags any
+# account whose status != 'active' on day 1. enabled: false no-ops the check.
+postal_auth:
+  enabled: true
+  severity: warn
