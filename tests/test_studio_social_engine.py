@@ -123,6 +123,33 @@ def test_hero_image_passes_brand_references_straight_through():
     assert captured["refs"] == ["u1", "u2", "u3", "u4"]
 
 
+def test_hero_image_uses_flash_tier_to_cut_cost():
+    # The "flash trim": social heroes render on Flash (pro=False, ~$0.04) not Pro
+    # (~$0.15) to offset the #244 daily-cadence cost bump. The Slipstream BLOG hero
+    # is a SEPARATE path (services/slipstream_images.py) and stays Pro. If this
+    # flips back to True, the daily-social image bill quietly ~4x's again.
+    import services.blog_image as BI
+    import tools.fal_assets as FA
+    captured = {}
+
+    def fake_blog_image(prompt, *, business_key="", aspect_ratio="", pro=False,
+                        reference_image_urls=None):
+        captured["pro"] = pro
+        return {"ok": True, "urls": ["https://img/x.png"]}
+
+    class _R:
+        content = b"PNG"
+
+        def raise_for_status(self):
+            return None
+
+    with mock.patch.object(FA, "references_for", lambda bk: []), \
+         mock.patch.object(BI, "blog_image", fake_blog_image), \
+         mock.patch.object(E.requests, "get", lambda url, timeout=0: _R()):
+        E._hero_image("a scene", "worshipdigital")
+    assert captured["pro"] is False   # Flash, not Pro
+
+
 def test_upcoming_monday_is_a_future_monday():
     # 2026-07-20 is a Monday; the upcoming Monday from it is 2026-07-27 (never today).
     got = E.upcoming_monday(datetime(2026, 7, 20, 12, tzinfo=timezone.utc))

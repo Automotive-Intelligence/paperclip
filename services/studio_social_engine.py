@@ -140,12 +140,19 @@ def _hero_image(image_prompt: str, business_key: str) -> Optional[bytes]:
     (the WD-yield-0 root cause). references_for returns a list of URL STRINGS;
     pass it STRAIGHT THROUGH -- a dict-shaped extraction silently yields 0 refs
     (the URL-strings trap, per the Studio flag). blog_image forwards
-    reference_image_urls into generate_nano_banana_image."""
+    reference_image_urls into generate_nano_banana_image.
+
+    TIER: Flash (pro=False, ~$0.04/img) not Pro (~$0.15/img). Social heroes are
+    in-feed thumbnails, not the OG/share hero -- Flash quality is sufficient and
+    the trim offsets the daily-cadence cost bump from #244 (posts_per_run 3->7).
+    The Slipstream BLOG hero stays Pro (services/slipstream_images.py), where the
+    render doubles as the share/OG image. The Iris gate + regen retries are
+    unchanged, so a weak Flash render is still caught and re-rolled."""
     from services.blog_image import blog_image
     from tools.fal_assets import references_for
     refs = references_for(business_key)  # List[str]; empty if the brand has no collection
     res = blog_image(image_prompt, business_key=business_key, aspect_ratio="16:9",
-                     pro=True, reference_image_urls=refs or None)
+                     pro=False, reference_image_urls=refs or None)
     if not res.get("ok") or not res.get("urls"):
         return None
     r = requests.get(res["urls"][0], timeout=120)
