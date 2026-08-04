@@ -32,6 +32,22 @@ def test_hero_failure_raises():
         assert "hero" in str(e).lower()
 
 
+def test_blog_hero_renders_on_pro_tier():
+    # Guardrail: the Slipstream BLOG hero doubles as the OG/share image, so it
+    # stays on Pro (pro=True). This is the counterpart to the studio-social
+    # "flash trim" (social heroes moved to Flash); the two image paths MUST NOT
+    # share a tier. If this fetch ever passes pro=False, blog share-images silently
+    # downgrade.
+    seen = []
+
+    def _fake_fetch(prompt, business_key, aspect_ratio="", pro=False):
+        seen.append(pro)
+        return {"ok": True, "urls": [f"https://fal/{prompt[:3]}.png"]}
+
+    si.generate_images(PROMPTS, "autointelligence", fetch=_fake_fetch, download=lambda u: b"D")
+    assert seen and all(p is True for p in seen)   # every blog image (hero incl.) is Pro
+
+
 def test_nonhero_failure_is_skipped_not_fatal():
     def _fetch(prompt, business_key, aspect_ratio="", pro=False):
         if "gap" in prompt or prompt == "a gap":
