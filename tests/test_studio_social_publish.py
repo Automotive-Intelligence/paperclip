@@ -1,4 +1,6 @@
 """Publish path: X 280-char guard (t.co-aware), cross-brand account safety, stagger."""
+from datetime import date, timedelta
+
 from services import studio_social_publish as P
 
 STAGGER = {
@@ -42,6 +44,41 @@ def test_resolve_accounts_empty_when_profile_absent():
 
 def test_week_day_offsets_three_posts_are_tue_thu_sat():
     assert P.week_day_offsets(3) == [1, 3, 5]
+
+
+def test_week_day_offsets_seven_posts_cover_every_day_mon_to_sun():
+    # DAILY coverage mandate: the standard posts_per_run=7 fills every day Mon-Sun
+    # exactly once (offsets 0..6), so no Fri/weekend is left empty.
+    assert P.week_day_offsets(7) == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_week_day_offsets_never_exceeds_one_slot_per_day():
+    # Even an over-count (e.g. LLM returns 8) stays one-per-day (7 distinct offsets);
+    # any extra is left for the file-121 queue guard to drop as a same-day conflict.
+    for n in range(1, 9):
+        offs = P.week_day_offsets(n)
+        assert offs == sorted(offs)
+        assert len(offs) == len(set(offs))          # no duplicate day
+        assert all(0 <= o <= 6 for o in offs)
+        assert len(offs) == min(n, 7)
+
+
+def test_build_jobs_seven_posts_land_one_per_day_no_empty_day():
+    # A full 7-post batch schedules each platform exactly once per day across the
+    # whole Mon-Sun week: no empty Fri/weekend, and never two posts on one day.
+    posts = [{"key": f"p{i+1}", "theme": "t",
+              "platforms": {"linkedin": "hi", "x": "hi", "facebook": "hey", "instagram": "yo"},
+              "image_prompt": "x"} for i in range(7)]
+    accounts = {"twitter": "acc_x", "linkedin": "acc_li",
+                "facebook": "acc_fb", "instagram": "acc_ig"}
+    jobs, skips = P.build_jobs(CFG, posts, "2026-07-27", accounts, {}, STAGGER, "cid")
+    assert skips == []
+    # Every platform must be present on all 7 dates of the week.
+    week = {(date(2026, 7, 27) + timedelta(days=o)).isoformat() for o in range(7)}
+    for plat in ("linkedin", "twitter", "facebook", "instagram"):
+        days = sorted(j["scheduled_for"].split("T")[0] for j in jobs if j["platform"] == plat)
+        assert set(days) == week                    # every day covered, none missing
+        assert len(days) == len(set(days))          # exactly one post per day per platform
 
 
 def test_build_jobs_skips_platform_without_account_and_stamps_stagger():

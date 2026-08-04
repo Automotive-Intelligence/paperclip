@@ -60,11 +60,21 @@ def resolve_accounts(profiles: List[Dict[str, Any]], accts: List[Dict[str, Any]]
 
 
 def week_day_offsets(count: int) -> List[int]:
-    """Spread `count` posts across the week's posting days (offsets from Monday).
-    3 posts -> Tue/Thu/Sat, matching the file-103 cadence the laptop engine used.
-    The loader's queue guard drops any that collide with an already-filled slot,
-    so this only needs to be a sensible spread, not a precise per-brand grid."""
-    pool = [1, 3, 5, 2, 4, 6]           # Tue, Thu, Sat, Wed, Fri, Sun
+    """Day offsets from Monday (Mon=0 .. Sun=6) for `count` posts across the week.
+
+    The mandate is DAILY coverage: never miss a day on any channel. At the standard
+    posts_per_run of 7 this returns every day Mon-Sun exactly once, so a brand lands
+    one post per platform per day at its native-peak window -- no empty Fri/weekend.
+    The file-121 queue guard dedupes at brand+platform+local-day, so one-per-day is
+    exactly its ceiling: full 7-day coverage never self-collides.
+
+    A short batch (fewer posts survived the Iris gate) still spreads across the week
+    from a pool that leads Tue/Thu/Sat rather than clustering at the front. The
+    loader's queue guard drops any that collide with an already-filled slot, so this
+    only needs to be a sensible spread, not a precise per-brand grid."""
+    if count >= 7:
+        return list(range(7))                  # Mon..Sun, every day filled
+    pool = [1, 3, 5, 0, 2, 4, 6]               # Tue, Thu, Sat, then Mon, Wed, Fri, Sun
     return sorted(pool[:max(1, count)])
 
 
