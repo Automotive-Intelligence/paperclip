@@ -4,6 +4,13 @@
 # them (Iris visual / Scrutineer copy / Conversion), and schedules the gap-fill
 # via tools/social_load into each platform's file-103 native-peak window.
 #
+# CADENCE: posts_per_run is 7 = DAILY coverage (one post per brand per platform per
+# day, Mon-Sun) at each platform's native peak. The mandate is never miss a day on
+# any channel; the old value of 3 landed only Tue/Thu/Sat and left Fri + the weekend
+# empty. The file-121 queue guard dedupes at brand+platform+local-day, so one post
+# per day is exactly its ceiling and never self-collides. Do NOT push this above 7:
+# a second same-day post per platform would be dropped as a queue conflict anyway.
+#
 # enabled: false keeps a brand OUT of an engine run entirely (not connected /
 # held). Connectivity is ALSO re-checked live against Zernio at run time (the
 # live check overrides this file, same as the laptop engine's STEP 2); a brand
@@ -27,7 +34,7 @@ brands:
     business_key: autointelligence
     zernio_profile: "Automotive Intelligence"
     enabled: true
-    posts_per_run: 3
+    posts_per_run: 7   # daily Mon-Sun
     platforms: ["linkedin", "x", "facebook", "instagram"]
     voice: "restrained, diagnostic, anti-hype, operator-grounded; speaks to dealership GMs and dealers"
     # No Agent-Empire jargon (22 agents / 5 rivers / 3 live CRMs) -- translate to dealer value.
@@ -40,7 +47,7 @@ brands:
     business_key: aiphoneguy
     zernio_profile: "AI Phone Guy"
     enabled: true
-    posts_per_run: 3
+    posts_per_run: 7   # daily Mon-Sun
     platforms: ["facebook", "instagram"]   # only FB+IG connected (live check confirms)
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners (HVAC, plumbing, electrical)"
     themes_note: "never-miss-a-call, after-hours booking, one-truck shops. Show the buyer's world (vans/ladders/phones), not a desk. No brand badges on vehicles."
@@ -52,7 +59,7 @@ brands:
     business_key: worshipdigital
     zernio_profile: "Calling Digital"   # WD routes through the legacy Calling Digital profile
     enabled: true
-    posts_per_run: 3
+    posts_per_run: 7   # daily Mon-Sun
     platforms: ["facebook", "linkedin", "instagram", "x"]
     voice: "full-service SMB marketing agency for the 380 corridor; practical, results-first; NOT faith-centered"
     themes_note: "SMB marketing: reporting clarity, stop-boosting-random-posts, local lead gen. Not churchy."
@@ -66,7 +73,7 @@ brands:
     business_key: agentempire
     zernio_profile: "Agent Empire"
     enabled: true          # OAuth landed 2026-07-20 (FB + IG + YouTube connected); was zero-account
-    posts_per_run: 3
+    posts_per_run: 7   # daily Mon-Sun
     platforms: ["facebook", "instagram"]   # connected text platforms; LinkedIn/X not connected, YouTube is not a text post
     voice: "builder field-notes, honest, plain; B2C for people building agent businesses; ledger-only numbers"
     # COMPLIANCE: no income/earnings/outcome claims (same discipline as Book'd); no "22 agents / 5 rivers / 3 CRMs" jargon in outward copy -- translate to builder value.
