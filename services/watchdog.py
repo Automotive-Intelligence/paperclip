@@ -66,14 +66,41 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+_sleep = __import__("time").sleep  # seam: patched in tests so retries don't wait
+
+
+def _get_with_retries(url: str, attempts: int = 3, delays: Tuple[int, ...] = (2, 8),
+                      timeout: int = 15) -> "requests.Response":
+    """GET with retries before declaring failure. A single-probe check turns every
+    transient (network blip, CDN 429 throttle) into an alert email -- the P&P 429
+    on 2026-08-05 cost two emails for a condition that cleared itself. Success =
+    2xx/3xx returns immediately; otherwise the FINAL attempt's response is
+    returned (or its exception raised) so callers see the persisted state."""
+    resp: Optional["requests.Response"] = None
+    last_exc: Optional[requests.RequestException] = None
+    for i in range(attempts):
+        resp, last_exc = None, None
+        try:
+            resp = requests.get(url, timeout=timeout, allow_redirects=True)
+            if 200 <= resp.status_code < 400:
+                return resp
+        except requests.RequestException as e:
+            last_exc = e
+        if i < attempts - 1:
+            _sleep(delays[min(i, len(delays) - 1)])
+    if last_exc is not None:
+        raise last_exc
+    return resp
+
+
 def _fetch_text(url: str, timeout: int = 15) -> str:
-    r = requests.get(url, timeout=timeout, allow_redirects=True)
+    r = _get_with_retries(url, timeout=timeout)
     r.raise_for_status()
     return r.text
 
 
 def _http_status(url: str, timeout: int = 15) -> int:
-    return requests.get(url, timeout=timeout, allow_redirects=True).status_code
+    return _get_with_retries(url, timeout=timeout).status_code
 
 
 BRAND_URLS: List[str] = [
@@ -122,7 +149,7 @@ def _check_brand_sites() -> List[Anomaly]:
     urls = (load_watchdog_config().get("site_urls") or BRAND_URLS)
     for url in urls:
         try:
-            r = requests.get(url, timeout=15, allow_redirects=True)
+            r = _get_with_retries(url)
             code = r.status_code
         except requests.RequestException as e:
             out.append(Anomaly(
@@ -626,6 +653,20 @@ def _check_postal_auth(cfg: Optional[dict] = None) -> List[Anomaly]:
             f"postal-inbox-reauth-{label}",
             f"Postal inbox {label} ({email}) needs re-auth -- inbound mail + CMO "
             f"override dark for that account", sev))
+    # FAIL CLOSED on absence: iterating only what the source RETURNS means a wiped
+    # token table (or a silently dropped account) reads as healthy -- the exact
+    # silent-dark failure this check exists to catch. Any expected account missing
+    # from the list entirely is an anomaly, not a pass. Config-gated:
+    # postal_auth.expected_accounts (empty list keeps legacy behavior).
+    expected = [str(x).strip() for x in (pa.get("expected_accounts") or []) if str(x).strip()]
+    present = {(a.get("account_label") or "").strip() for a in (accounts or [])}
+    for label in expected:
+        if label not in present:
+            out.append(Anomaly(
+                f"postal-inbox-missing-{label}",
+                f"Postal inbox {label} is NOT CONNECTED at all (no account row) -- "
+                f"inbound mail + CMO override dark for that account, and nothing "
+                f"else would have noticed.", sev))
     return out
 
 
@@ -845,6 +886,9 @@ _RUNBOOKS: Tuple[Tuple[str, str], ...] = (
      "APP_ENV=production on paperclip, then redeploy."),
     ("postal-inbox-reauth-", "Re-run the Google OAuth connect flow for that account "
      "(/postal connect). Inbound mail + CMO override stay dark for it until then."),
+    ("postal-inbox-missing-", "The account has no token row at all -- check the "
+     "postal_tokens table and re-run the full connect flow for it. If SEVERAL "
+     "accounts vanished at once, suspect a DB migration or table wipe."),
 )
 
 

@@ -303,9 +303,17 @@ def dispatch_findings(result: WdDmarcAuditResult) -> Dict[str, str]:
 
 
 def run_weekly() -> Dict[str, object]:
-    """APScheduler entry — audit + dispatch. Always returns a summary dict."""
+    """APScheduler entry — audit + dispatch. Always returns a summary dict.
+
+    Records a watchdog heartbeat per completed audit: a weekly job that dies or
+    raises every run stays quiet for weeks otherwise (it only speaks on findings)."""
     result = audit()
     dispatch = dispatch_findings(result)
+    try:
+        from services.watchdog import record_heartbeat
+        record_heartbeat("wd_dmarc")
+    except Exception:
+        logger.warning("[dmarc] heartbeat write failed (audit itself succeeded)")
     return {
         "as_of": result.as_of,
         "primary_p": result.primary.p,

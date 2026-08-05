@@ -95,6 +95,11 @@ telemetry:
 postal_auth:
   enabled: true
   severity: warn
+  # FAIL CLOSED: any of these accounts absent from the connected-accounts list
+  # entirely (wiped table, dropped row) is an anomaly -- iterating only what the
+  # source returns would read a wiped table as healthy. Empty list = legacy
+  # (present-accounts-only) behavior.
+  expected_accounts: [avi, wd, aipg, agentempire, bookd, salesdroid]
 # heartbeats: services with no committed output record a monitor_heartbeats row per
 # completed run (services.watchdog.record_heartbeat); this ages those rows. Catches
 # a cron that dies or errors every run while producing nothing -- sonar's cheap
@@ -103,6 +108,8 @@ postal_auth:
 # 0 disables a service.
 heartbeats:
   sonar_inbox_max_age_hours: 3
+  wd_dmarc_max_age_hours: 200   # weekly Sun 08:00 CT; 200h clears the 168h cadence,
+                                # fires ~32h after a genuinely missed audit
 # alert_rail: the watchdog-of-watchdogs leg pointing at DELIVERY. These GitHub
 # Actions workflows are the only path from "anomaly recorded" to "Michael knows";
 # GitHub can auto-disable schedules (60-day inactivity) or throttle them silently.
