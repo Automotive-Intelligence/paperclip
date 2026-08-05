@@ -151,7 +151,22 @@ def _escalate_email(items: List[dict]) -> bool:
 
 def run_sweep(*, commit: bool = True) -> Dict[str, Any]:
     """One cost-scaled sweep. Pull -> (exit if none) -> classify each -> act -> mark
-    handled -> escalate leftovers to Michael. Returns a receipt for sonar_state logging."""
+    handled -> escalate leftovers to Michael. Returns a receipt for sonar_state logging.
+
+    Every successful sweep (including the cheap no-new-items exit, which writes
+    nothing else) records a heartbeat the AVO Watchdog ages -- the only signal that
+    distinguishes "quiet inbox" from "this cron died / raises every run"."""
+    receipt = _run_sweep(commit=commit)
+    if receipt.get("ok"):
+        try:
+            from services.watchdog import record_heartbeat
+            record_heartbeat("sonar_inbox")
+        except Exception:
+            logger.warning("[sonar] heartbeat write failed (sweep itself succeeded)")
+    return receipt
+
+
+def _run_sweep(*, commit: bool = True) -> Dict[str, Any]:
     handled = handled_ids()
     new_items = pull_new(handled)
     if not new_items:

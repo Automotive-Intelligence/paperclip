@@ -47,7 +47,8 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -430,11 +431,21 @@ def _check_weekly_social_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
 # The two Railway-ported laptop monitors write a dated block into an avo-telemetry
 # state file each run; the newest block's date is the freshness signal. Disabled
 # (max_age_hours 0) until each job's cloud cutover, then ~30h catches a missed daily.
+#
+# Each entry carries the cron's (hour, minute) in America/Chicago. The block header
+# stamps only a DATE; ageing it from midnight UTC made a HEALTHY daily cadence cross
+# the 30h threshold every day (stale ~06:00 UTC, "recovered" when the next block
+# landed) -- 3 flap emails/day on issue #5, 2026-07-30..08-05. Anchoring the date at
+# the cadence time it was actually written makes max healthy age 24h, so 30h fires
+# only on a genuinely missed run.
+_CT = ZoneInfo("America/Chicago")
 _MONITOR_BLOCKS = {
     "tp_daily": ("team_principal_state.md",
-                 re.compile(r"##\s*🏁\s*TP daily\s*[-—]+\s*(\d{4}-\d{2}-\d{2})")),
+                 re.compile(r"##\s*🏁\s*TP daily\s*[-—]+\s*(\d{4}-\d{2}-\d{2})"),
+                 (7, 15)),
     "growth_monitor": ("growth_analytics_state.md",
-                       re.compile(r"##\s*📈\s*Outbound monitor\s*[-—]+\s*(\d{4}-\d{2}-\d{2})")),
+                       re.compile(r"##\s*📈\s*Outbound monitor\s*[-—]+\s*(\d{4}-\d{2}-\d{2})"),
+                       (18, 0)),
 }
 
 
@@ -471,7 +482,7 @@ def _check_monitor_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
         cfg = load_watchdog_config()
     mon = cfg.get("monitors") or {}
     out: List[Anomaly] = []
-    for key, (path, pattern) in _MONITOR_BLOCKS.items():
+    for key, (path, pattern, (run_h, run_m)) in _MONITOR_BLOCKS.items():
         max_h = int(mon.get(f"{key}_max_age_hours") or 0)
         if max_h <= 0:
             continue  # disabled until this monitor's cloud cutover
@@ -481,7 +492,7 @@ def _check_monitor_freshness(cfg: Optional[dict] = None) -> List[Anomaly]:
                                f"No dated {key} block found in {path}; cannot verify it ran.", "warn"))
             continue
         try:
-            dt = datetime.fromisoformat(newest).replace(tzinfo=timezone.utc)
+            dt = datetime.fromisoformat(newest).replace(hour=run_h, minute=run_m, tzinfo=_CT)
         except ValueError:
             out.append(Anomaly(f"monitor-freshness-unknown-{key}",
                                f"Unparseable {key} date {newest!r}.", "warn"))
@@ -618,6 +629,249 @@ def _check_postal_auth(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Meta-monitoring: the watchdog-of-watchdogs layer
+# ---------------------------------------------------------------------------
+#
+# Every check above watches an ENGINE's output. Nothing watched the WATCHERS:
+# a dead APScheduler serves stale watchdog_state with a fresh checked_at, a
+# GitHub-disabled alert workflow stops delivering, and an hourly job that raises
+# every run (sonar) is swallowed by the scheduler's error handler. In all three
+# cases silence reads as health. The pieces below close that loop:
+#
+#   - monitor_heartbeats: jobs with no committed output record a row per
+#     completed sweep; _check_service_heartbeats ages those rows. run_once()
+#     records its own 'watchdog_sweep' heartbeat, which /health/watchdog exposes
+#     as swept_at so the ALERT RAIL can detect a dead sweeper (the rail-side
+#     synthetic anomaly) -- the GitHub leg watches the Railway leg.
+#   - _check_alert_rail: the Railway leg watches the GitHub leg (has each rail
+#     workflow SUCCEEDED recently?). A dead rail cannot deliver its own
+#     obituary, so run_hourly() sends that one anomaly by direct Resend email.
+
+
+_HEARTBEAT_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS monitor_heartbeats (
+    name     TEXT PRIMARY KEY,
+    last_run TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+
+def record_heartbeat(name: str) -> None:
+    """Upsert `name`'s last-completed-run timestamp. Callers wrap in try/except:
+    a heartbeat write must never sink the job it certifies."""
+    from services.database import execute_query
+    execute_query(_HEARTBEAT_TABLE_SQL)
+    execute_query(
+        "INSERT INTO monitor_heartbeats (name, last_run) VALUES (%s, NOW()) "
+        "ON CONFLICT (name) DO UPDATE SET last_run = NOW()",
+        (name,),
+    )
+
+
+def _heartbeat_ts(name: str) -> Optional[datetime]:
+    from services.database import fetch_all
+    rows = fetch_all("SELECT last_run FROM monitor_heartbeats WHERE name = %s", (name,))
+    return rows[0][0] if rows else None
+
+
+def _check_service_heartbeats(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Age the heartbeat of every service configured under heartbeats.<name>_max_age_hours.
+    Catches the failure output checks cannot see: a scheduled job that dies or raises
+    every run while producing nothing (sonar's cheap no-new-items exit writes nothing,
+    so only its heartbeat proves it swept). 0/absent disables a service."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    hb = cfg.get("heartbeats") or {}
+    out: List[Anomaly] = []
+    for key, raw in hb.items():
+        if not key.endswith("_max_age_hours"):
+            continue
+        name = key[: -len("_max_age_hours")]
+        max_h = int(raw or 0)
+        if max_h <= 0:
+            continue
+        try:
+            ts = _heartbeat_ts(name)
+        except Exception as e:  # DB down is covered by the uptime rail; never false-alarm
+            logger.warning("[watchdog] heartbeat read failed for %s, skipping: %s", name, e)
+            continue
+        if ts is None:
+            out.append(Anomaly(
+                f"service-heartbeat-missing-{name}",
+                f"{name} has never recorded a completed run -- its scheduled job may "
+                f"never have started.", "warn"))
+            continue
+        age_h = (_now_utc() - ts).total_seconds() / 3600
+        if age_h > max_h:
+            out.append(Anomaly(
+                f"service-heartbeat-stale-{name}",
+                f"{name} last completed a run {int(age_h)}h ago (> {max_h}h) -- its "
+                f"scheduled job may be dead or erroring every run.", "warn"))
+    return out
+
+
+def _check_alert_rail(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Has each GitHub Actions rail workflow (the only path from 'anomaly recorded'
+    to 'Michael knows') SUCCEEDED recently? GitHub auto-disables schedules after 60
+    days of repo inactivity and throttles them under load; either way silence looks
+    like health. Threshold must clear observed scheduling drift (the 20-min cron
+    really fires every ~2.5h under throttle). API unreachable -> log + skip, never
+    a false alarm."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    ar = cfg.get("alert_rail") or {}
+    workflows = ar.get("workflows") or []
+    max_h = int(ar.get("max_age_hours") or 0)
+    if not workflows or max_h <= 0:
+        return []
+    repo = ar.get("repo") or TELEMETRY_REPO
+    sev = ar.get("severity", "critical")
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    out: List[Anomaly] = []
+    for wf in workflows:
+        try:
+            r = requests.get(
+                f"https://api.github.com/repos/{repo}/actions/workflows/{wf}/runs",
+                params={"status": "success", "per_page": 1}, headers=headers, timeout=15)
+        except requests.RequestException as e:
+            logger.warning("[watchdog] alert-rail fetch failed for %s: %s", wf, e)
+            continue
+        if not r.ok:
+            logger.warning("[watchdog] alert-rail HTTP %s for %s", r.status_code, wf)
+            continue
+        runs = (r.json() or {}).get("workflow_runs") or []
+        if not runs:
+            out.append(Anomaly(
+                f"alert-rail-stale-{wf}",
+                f"Alert rail workflow {wf} in {repo} has NO successful runs on record "
+                f"-- anomaly delivery may be down.", sev))
+            continue
+        ts_str = runs[0].get("created_at") or ""
+        try:
+            run_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            logger.warning("[watchdog] unparseable rail run ts for %s: %r", wf, ts_str)
+            continue
+        age_h = (_now_utc() - run_ts).total_seconds() / 3600
+        if age_h > max_h:
+            out.append(Anomaly(
+                f"alert-rail-stale-{wf}",
+                f"Alert rail workflow {wf} last succeeded {int(age_h)}h ago (> {max_h}h) "
+                f"-- anomaly delivery is likely DOWN (disabled/broken workflow or dead "
+                f"schedule). This notice was sent by direct email because the rail "
+                f"cannot deliver its own obituary.", sev))
+    return out
+
+
+def _email_alert_direct(anomalies: List[Anomaly]) -> bool:
+    """Direct Resend email for anomalies the GitHub rail cannot deliver (because the
+    anomaly IS the rail being down). Same proven Resend path as sonar escalations.
+    Called only for NEW rail anomalies, so one incident = one email."""
+    key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    if not key or not anomalies:
+        return False
+    cfg = load_watchdog_config()
+    to = ((cfg.get("alert_rail") or {}).get("notify_email")
+          or "michael@automotiveintelligence.io")
+    rows = "".join(
+        f"<li><code>{a.fingerprint}</code>: {a.human}<br><b>Fix:</b> {_runbook(a.fingerprint)}</li>"
+        for a in anomalies)
+    try:
+        r = requests.post(
+            "https://api.resend.com/emails", timeout=15,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"from": os.environ.get("LEAD_ALERT_FROM",
+                                         "AVO Watchdog <cmo@mail.automotiveintelligence.io>"),
+                  "to": [to],
+                  "subject": "[Watchdog] the alert rail itself is DOWN",
+                  "html": ("<p>The GitHub-issue alert rail is not delivering, so this "
+                           "came direct from the Railway watchdog:</p>"
+                           f"<ul>{rows}</ul>")})
+        return r.ok
+    except requests.RequestException:
+        logger.exception("[watchdog] direct rail-down email failed")
+        return False
+
+
+# Solutions attached to every alert: fingerprint-prefix -> concrete remediation.
+# First match wins (order matters for overlapping prefixes). The point is that an
+# alert lands as problem + proposed fix, not a raw symptom Michael has to triage.
+_RUNBOOKS: Tuple[Tuple[str, str], ...] = (
+    ("alert-rail-stale", "Open the Actions tab in salesdroid/avo-telemetry: re-enable "
+     "the workflow if GitHub auto-disabled it (60-day inactivity rule), else read the "
+     "failed run log. Until it is green, anomaly delivery is down."),
+    ("service-heartbeat-", "That scheduled job stopped completing runs. For "
+     "sonar_inbox: check ZERNIO_API_KEY and Railway logs, then POST "
+     "/admin/run-sonar-inbox to reproduce. If MANY heartbeats/monitors are stale at "
+     "once, the paperclip APScheduler is dead: restart the paperclip service."),
+    ("site-network-", "Probe the URL manually. If the host is down, check its "
+     "platform (Vercel: AvI/BAE, GHL: crm.worshipdigital.co, Shopify: P&P). DNS "
+     "changes are manual-only. A transient blip self-clears next sweep."),
+    ("site-http-", "5xx: redeploy or roll back on the hosting platform. 4xx: the "
+     "latest deploy broke a route. 429 is usually transient throttling and "
+     "self-clears."),
+    ("telemetry-stale", "The daily writers (tp-daily 07:15 CT, growth-monitor 18:00 "
+     "CT) stopped committing. Check paperclip logs; backfill with POST "
+     "/admin/run-tp-daily and /admin/run-growth-monitor {\"commit\":true}."),
+    ("blog-404-", "The sitemap advertises a post that does not serve 200 -- usually "
+     "a bad deploy or deleted post. Redeploy the site or fix the sitemap."),
+    ("blog-freshness-unknown-", "Sitemap unreadable or carries no /blog/ entries. "
+     "Check the site deploy and sitemap generation."),
+    ("blog-stale-", "Slipstream MWF engine (14:15 CT). Check Railway logs and "
+     "OPENROUTER_API_KEY/fal keys -- a stage-fail HOLDs silently. Reproduce with "
+     "POST /admin/run-slipstream (dry). WD ships by human merge-to-main only."),
+    ("slipstream-queue-", "Refill the brand's topic queue: add '- [ ]' topics to the "
+     "queue file (path in config/slipstream_brands.yaml). An exhausted queue makes "
+     "the engine hold silently."),
+    ("weekly-social-", "Studio social engine (Sun 16:50 CT). Check Railway logs; "
+     "reproduce with POST /admin/run-studio-social (dry)."),
+    ("monitor-stale-", "tp-daily (07:15 CT) / growth-monitor (18:00 CT) missed a "
+     "run. Check paperclip logs; re-run POST /admin/run-tp-daily or "
+     "/admin/run-growth-monitor {\"commit\":true}."),
+    ("monitor-freshness-unknown-", "The state file has no dated block or an "
+     "unparseable date -- check the file in avo-telemetry and the engine's writer."),
+    ("media-worker-", "Restart the media-worker service on Railway and check its "
+     "deploy logs. Off-laptop video rendering is down until then."),
+    ("emails-sent-zero", "If the SDR desk is LIVE, the send rail is dead: check the "
+     "Instantly API key and campaign status. While the desk is in shadow mode this "
+     "is expected -- acknowledge it in config/watchdog.yaml (acknowledged:) instead "
+     "of muting the rail."),
+    ("env-mislabelled", "Set the service env: railway variables --set "
+     "APP_ENV=production on paperclip, then redeploy."),
+    ("postal-inbox-reauth-", "Re-run the Google OAuth connect flow for that account "
+     "(/postal connect). Inbound mail + CMO override stay dark for it until then."),
+)
+
+
+def _runbook(fingerprint: str) -> str:
+    for prefix, text in _RUNBOOKS:
+        if fingerprint.startswith(prefix):
+            return text
+    return ""
+
+
+def _ack_map(cfg: Optional[dict] = None) -> Dict[str, Dict[str, str]]:
+    """Still-valid acknowledgements from config: fingerprint -> {until, reason}.
+    An ack is an executive decision on record -- 'known condition, no action until
+    <date>' -- that keeps the anomaly OFF the email rail without deleting the
+    check. Past its until date it resurfaces by itself."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    today = _now_utc().date().isoformat()
+    out: Dict[str, Dict[str, str]] = {}
+    for entry in (cfg.get("acknowledged") or []):
+        fp = str(entry.get("fingerprint") or "").strip()
+        until = str(entry.get("until") or "").strip()
+        if fp and until >= today:
+            out[fp] = {"until": until, "reason": str(entry.get("reason") or "").strip()}
+    return out
+
+
 # Registry of every check the watchdog runs. Extend here as coverage grows.
 _CHECKS = (
     _check_brand_sites,
@@ -630,6 +884,8 @@ _CHECKS = (
     _check_emails_sent,
     _check_env_truth,
     _check_postal_auth,
+    _check_service_heartbeats,
+    _check_alert_rail,
 )
 
 
@@ -718,16 +974,46 @@ def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
         _record_active(anomalies)
     except Exception as e:
         logger.warning("[watchdog] state persist failed: %s", e)
+    try:
+        # The sweep's own heartbeat: /health/watchdog serves it as swept_at so the
+        # alert rail can tell a live sweeper from a dead scheduler serving stale
+        # state (checked_at alone is stamped at READ time and proves nothing).
+        record_heartbeat("watchdog_sweep")
+    except Exception as e:
+        logger.warning("[watchdog] sweep heartbeat write failed: %s", e)
     return anomalies, new
 
 
 def run_hourly() -> None:
     """Scheduler entry point."""
     anomalies, new = run_once()
+    # A dead alert rail cannot deliver its own obituary -- that one class of NEW
+    # anomaly goes out by direct email. Everything else stays on the rail.
+    rail_down = [a for a in new if a.fingerprint.startswith("alert-rail-stale")]
+    if rail_down:
+        _email_alert_direct(rail_down)
     logger.info(
         "[watchdog] cycle done: %d active, %d new anomalies",
         len(anomalies), len(new),
     )
+
+
+def _split_acked(rows: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """Partition anomaly dicts into (active, acknowledged) per config acks, and
+    attach each anomaly's runbook so alerts always carry a proposed fix."""
+    acks = _ack_map()
+    active: List[dict] = []
+    acked: List[dict] = []
+    for a in rows:
+        a = dict(a)
+        a["runbook"] = _runbook(a.get("fingerprint") or "")
+        ack = acks.get(a.get("fingerprint") or "")
+        if ack:
+            a.update(ack)
+            acked.append(a)
+        else:
+            active.append(a)
+    return active, acked
 
 
 def current_state_json() -> dict:
@@ -746,25 +1032,34 @@ def current_state_json() -> dict:
         # watcher (/health/ready); here we fail soft so the poller can tell
         # "no anomalies" from "watchdog broken".
         return {"ok": False, "error": str(e), "active_anomalies": []}
+    swept_at: Optional[str] = None
+    try:
+        ts = _heartbeat_ts("watchdog_sweep")
+        swept_at = ts.isoformat() if ts else None
+    except Exception as e:
+        logger.warning("[watchdog] swept_at read failed: %s", e)
+    active, acked = _split_acked(
+        [{"fingerprint": r[0], "human": r[1], "severity": r[2]} for r in rows])
     return {
         "ok": True,
         "checked_at": _now_utc().isoformat(),
-        "active_anomalies": [
-            {"fingerprint": r[0], "human": r[1], "severity": r[2]} for r in rows
-        ],
+        "swept_at": swept_at,
+        "active_anomalies": active,
+        "acknowledged": acked,
     }
 
 
 def run_now_json() -> dict:
     """Manual-trigger admin endpoint response."""
     anomalies, new = run_once()
+    active, acked = _split_acked(
+        [{"fingerprint": a.fingerprint, "human": a.human, "severity": a.severity}
+         for a in anomalies])
     return {
         "ok": True,
         "checked_at": datetime.now(timezone.utc).isoformat(),
-        "active_anomalies": [
-            {"fingerprint": a.fingerprint, "human": a.human, "severity": a.severity}
-            for a in anomalies
-        ],
+        "active_anomalies": active,
+        "acknowledged": acked,
         "new_this_cycle": [
             {"fingerprint": a.fingerprint, "human": a.human, "severity": a.severity}
             for a in new
@@ -777,4 +1072,5 @@ def run_now_json() -> dict:
     }
 
 
-__all__ = ["Anomaly", "run_once", "run_hourly", "run_now_json", "current_state_json"]
+__all__ = ["Anomaly", "record_heartbeat", "run_once", "run_hourly", "run_now_json",
+           "current_state_json"]
