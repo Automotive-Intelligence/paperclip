@@ -95,3 +95,37 @@ telemetry:
 postal_auth:
   enabled: true
   severity: warn
+# heartbeats: services with no committed output record a monitor_heartbeats row per
+# completed run (services.watchdog.record_heartbeat); this ages those rows. Catches
+# a cron that dies or errors every run while producing nothing -- sonar's cheap
+# no-new-items exit writes nothing, so only its heartbeat proves it swept. Hourly
+# cadence + 3h threshold = fires after ~3 consecutive missed/failed sweeps.
+# 0 disables a service.
+heartbeats:
+  sonar_inbox_max_age_hours: 3
+# alert_rail: the watchdog-of-watchdogs leg pointing at DELIVERY. These GitHub
+# Actions workflows are the only path from "anomaly recorded" to "Michael knows";
+# GitHub can auto-disable schedules (60-day inactivity) or throttle them silently.
+# Ages each workflow's newest SUCCESSFUL run. 6h clears observed scheduler drift
+# (the 20-min cron really fires every ~2.5h under throttle) and fires only when the
+# rail is genuinely dead. A rail-down anomaly is delivered by direct Resend email
+# (the rail cannot deliver its own obituary). max_age_hours 0 disables.
+alert_rail:
+  repo: salesdroid/avo-telemetry
+  workflows:
+    - watchdog.yml
+    - paperclip_uptime.yml
+  max_age_hours: 6
+  severity: critical
+  notify_email: michael@automotiveintelligence.io
+# acknowledged: executive acks on record. A listed fingerprint stays OFF the email
+# rail (shown in a quiet "acknowledged" section of the issue instead) until its
+# `until` date passes, then it resurfaces by itself. Ack a KNOWN condition with a
+# reason; never mute the rail to silence a symptom.
+acknowledged:
+  - fingerprint: emails-sent-zero
+    until: '2026-09-30'
+    reason: >-
+      SDR desk is in shadow mode by design (sends stay Michael-gated), so the
+      agent send rail showing 0 emails while prospects fill is EXPECTED. Resurfaces
+      2026-10-01; remove this ack at SDR go-live so the check guards the live rail.
