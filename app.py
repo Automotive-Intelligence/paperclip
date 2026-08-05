@@ -3252,6 +3252,22 @@ scheduler.add_job(_run_growth_monitor, CronTrigger(hour=18, minute=0, timezone=C
     id="growth_monitor_railway", name="Growth Outbound Monitor (Railway)",
     replace_existing=True, misfire_grace_time=3600)
 
+
+def _run_sonar_inbox():
+    """Sonar engagement-inbox monitor: hourly, cost-scaled. A cheap Zernio poll for
+    NEW comments/mentions/ad-post-comments across owned accounts; only NEW items invoke
+    Sonar's classifier. No human prompt. DMs are out of scope (Zernio can't see IG/FB)."""
+    from services.sonar_inbox import run_sweep
+    try:
+        logging.info("[sonar] %s", run_sweep(commit=True))
+    except Exception as e:
+        logging.error("[sonar] sweep failed: %s", e)
+
+
+scheduler.add_job(_run_sonar_inbox, CronTrigger(minute=7, timezone=CST),
+    id="sonar_inbox_hourly", name="Sonar Engagement Inbox Monitor (Railway)",
+    replace_existing=True, misfire_grace_time=1800)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -5580,6 +5596,22 @@ async def run_sdr_endpoint(
         payload.get("brand") or "wd",
         commit=bool(payload.get("commit")),
     )
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-sonar-inbox")
+async def run_sonar_inbox_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the Sonar engagement-inbox monitor on demand (the hourly cron's manual
+    twin). Cheap Zernio poll for new comments/mentions/ad-post-comments across owned
+    accounts, dedup, classify, escalate. DRY-RUN by default (pulls + classifies but does
+    NOT mark handled or email); pass {"commit": true} to act. DMs are out of scope."""
+    validate_key(authorization)
+    from services.sonar_inbox import run_sweep
+    payload = payload or {}
+    result = await asyncio.to_thread(run_sweep, commit=bool(payload.get("commit")))
     return JSONResponse(content=result)
 
 
