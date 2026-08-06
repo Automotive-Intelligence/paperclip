@@ -85,3 +85,42 @@ def test_first_run_seeds_backlog_without_escalating_or_llm():
 def test_excludes_ryan_and_velazquez():
     assert SI._excluded("Ryan Velazquez") and SI._excluded("bookdcx")
     assert not SI._excluded("theaiphoneguy") and not SI._excluded("Michael Rodriguez")
+
+
+def test_pull_new_carries_account_id_for_reply_path():
+    # account_id (Zernio accountId) is the id the auto-send path needs; pull_new must
+    # pass it through from the raw record.
+    raw = [{"id": "c1", "accountUsername": "theaiphoneguy", "accountId": "acct_9",
+            "platform": "instagram", "content": "hi", "permalink": "http://x/c1"}]
+    with mock.patch.object(SI, "_pull", side_effect=lambda ep, p: raw if "comments" in ep and "metaads" not in str(p) else []):
+        new = SI.pull_new(handled=set())
+    assert new and new[0]["account_id"] == "acct_9"
+
+
+def test_escalate_email_surfaces_classifier_draft():
+    captured = {}
+    class _Resp:
+        ok = True
+    def _fake_post(url, **kw):
+        captured["html"] = kw["json"]["html"]
+        return _Resp()
+    with mock.patch.dict("os.environ", {"RESEND_API_KEY": "x"}), \
+         mock.patch.object(SI.requests, "post", side_effect=_fake_post):
+        ok = SI._escalate_email([{"kind": "comment", "account": "aipg", "platform": "instagram",
+                                  "text": "love it", "url": "http://x/1",
+                                  "draft": "Thanks so much, glad it helped!"}])
+    assert ok is True
+    assert "suggested reply" in captured["html"]
+    assert "Thanks so much, glad it helped!" in captured["html"]
+
+
+def test_zernio_reply_helpers_are_guarded_until_verified():
+    from tools import zernio
+    # Unverified (default) -> must refuse to fire, so no unverified public reply posts.
+    for fn in (lambda: zernio.reply_to_comment("a", "c", "hi"),
+               lambda: zernio.reply_to_mention("a", "m", "hi")):
+        try:
+            fn()
+            assert False, "reply helper fired without ZERNIO_REPLY_VERIFIED=1"
+        except NotImplementedError:
+            pass
