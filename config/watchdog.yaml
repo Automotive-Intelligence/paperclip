@@ -125,6 +125,26 @@ alert_rail:
   max_age_hours: 6
   severity: critical
   notify_email: michael@automotiveintelligence.io
+# vercel: newest PRODUCTION deployment per project in ERROR/BLOCKED/CANCELED =
+# ship pipeline stuck while the live site serves the previous build (the
+# 2026-08-05 bookd-clarity BLOCKED incident, found only via a forwarded email).
+# One team-wide call; needs VERCEL_API_TOKEN on Railway. Empty team_id disables.
+# A 401 token is an ANOMALY (coverage dark), never a silent skip.
+vercel:
+  team_id: team_1RhVPmDufqg6ESm15xfkXWQL   # michael-avo-projects
+  scan_limit: 50
+  severity: warn
+# github_workflows: conclusion of the LATEST completed run per listed workflow.
+# Complements alert_rail (success-recency of the delivery legs): this catches a
+# scheduled data rail that runs and FAILS red every time. No completed runs ->
+# skip. Empty repos map disables.
+github_workflows:
+  severity: warn
+  repos:
+    salesdroid/avo-telemetry:
+      - analytics.yml
+      - backlinks.yml
+      - don_heartbeat.yml
 # acknowledged: executive acks on record. A listed fingerprint stays OFF the email
 # rail (shown in a quiet "acknowledged" section of the issue instead) until its
 # `until` date passes, then it resurfaces by itself. Ack a KNOWN condition with a

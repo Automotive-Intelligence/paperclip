@@ -889,6 +889,26 @@ _RUNBOOKS: Tuple[Tuple[str, str], ...] = (
     ("postal-inbox-missing-", "The account has no token row at all -- check the "
      "postal_tokens table and re-run the full connect flow for it. If SEVERAL "
      "accounts vanished at once, suspect a DB migration or table wipe."),
+    ("vercel-deploy-blocked-", "The commit author is not a Vercel team member "
+     "(the 2026-08-05 bookd-clarity case). Fix now: push an empty OWNER-authored "
+     "commit to the repo's main -- same content deploys under owner authorship. "
+     "Fix forever: create a Deploy Hook (project Settings -> Git) and trigger it "
+     "from a GitHub Action. Approving the dashboard access request = a paid seat "
+     "with all-projects visibility; decide deliberately."),
+    ("vercel-deploy-error-", "The build broke. Open the deployment's build log "
+     "on vercel.com; the culprit is usually the newest commit. Roll back = "
+     "Redeploy the last READY deployment from the dashboard, then fix forward."),
+    ("vercel-deploy-canceled-", "Newest production deploy was canceled. If that "
+     "was not deliberate, hit Redeploy on it in the Vercel dashboard."),
+    ("vercel-watch-auth-dead", "Create a fresh token at vercel.com -> Account "
+     "Settings -> Tokens (team scope), then on paperclip: railway variables "
+     "--set VERCEL_API_TOKEN=<token>."),
+    ("gh-workflow-failing-", "Open the linked run log and fix the failing step "
+     "or its secret. A red scheduled rail means its data stopped flowing "
+     "silently -- treat the newest failure, not the symptom downstream."),
+    ("gh-watch-auth-dead", "The workflow-coverage token lacks actions:read or "
+     "expired. Mint a token with repo + actions read scopes, then on paperclip: "
+     "railway variables --set GH_ACTIONS_TOKEN=<token>."),
 )
 
 
@@ -916,6 +936,124 @@ def _ack_map(cfg: Optional[dict] = None) -> Dict[str, Dict[str, str]]:
     return out
 
 
+def _check_vercel_deployments(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Newest PRODUCTION deployment per Vercel project in a bad terminal state
+    (ERROR / BLOCKED / CANCELED) = that project's ship pipeline is stuck: the
+    live site keeps serving the previous build while new work silently fails to
+    deploy. That is exactly the 2026-08-05 bookd-clarity BLOCKED incident --
+    discovered only because a human forwarded Vercel's email to the committer.
+    One team-wide API call (newest-first), newest production deployment per
+    project wins, so an old failure superseded by a READY deploy never alerts.
+    Config-gated on vercel.team_id + VERCEL_API_TOKEN. A 401 is an anomaly, not
+    a skip: a dead token means this coverage is DARK (fail closed on absence)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    vc = cfg.get("vercel") or {}
+    team = (vc.get("team_id") or "").strip()
+    token = (os.environ.get("VERCEL_API_TOKEN") or "").strip()
+    if not team or not token:
+        return []  # not configured
+    sev = vc.get("severity", "warn")
+    try:
+        r = requests.get(
+            "https://api.vercel.com/v6/deployments",
+            params={"teamId": team, "limit": int(vc.get("scan_limit") or 50)},
+            headers={"Authorization": f"Bearer {token}"}, timeout=20)
+    except requests.RequestException as e:
+        logger.warning("[watchdog] vercel deployments fetch failed: %s", e)
+        return []
+    if r.status_code == 401:
+        return [Anomaly(
+            "vercel-watch-auth-dead",
+            "Watchdog's Vercel token is invalid (401) -- Vercel deployment "
+            "coverage is DARK until VERCEL_API_TOKEN on Railway is rotated.",
+            "warn")]
+    if not r.ok:
+        logger.warning("[watchdog] vercel deployments HTTP %s", r.status_code)
+        return []
+    newest_prod: Dict[str, dict] = {}
+    for d in (r.json() or {}).get("deployments") or []:
+        if d.get("target") != "production":
+            continue  # preview churn is normal dev noise, never an anomaly
+        name = d.get("name") or "?"
+        if name not in newest_prod:  # API returns newest-first
+            newest_prod[name] = d
+    out: List[Anomaly] = []
+    for name, d in sorted(newest_prod.items()):
+        state = (d.get("state") or "").upper()
+        if state in ("ERROR", "BLOCKED", "CANCELED"):
+            out.append(Anomaly(
+                f"vercel-deploy-{state.lower()}-{name}",
+                f"Vercel project {name}: newest production deployment is {state} "
+                f"({d.get('url')}) -- the live site still serves the previous "
+                f"build; new work is NOT shipping.", sev))
+    return out
+
+
+def _check_github_workflows(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Latest COMPLETED run of each configured workflow concluded failure =
+    that rail is broken while still nominally 'running'. Complements
+    _check_alert_rail (which ages SUCCESS recency of the delivery workflows):
+    this one is conclusion-based, for scheduled data rails (analytics,
+    backlinks, persona heartbeats) where one red run means the data stopped.
+    In-progress or cancelled-by-hand runs never false-alarm; a workflow with no
+    completed runs yet is skipped. 401 = coverage dark = one anomaly."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    gw = cfg.get("github_workflows") or {}
+    repos: Dict[str, list] = gw.get("repos") or {}
+    if not repos:
+        return []
+    sev = gw.get("severity", "warn")
+    # Dedicated token first: the Actions API needs actions:read, which the
+    # contents-scoped SLIPSTREAM_GH_TOKEN lacks (proven 403 on first live run).
+    token = (os.environ.get("GH_ACTIONS_TOKEN") or os.environ.get("GITHUB_TOKEN")
+             or os.environ.get("GH_TOKEN") or os.environ.get("SLIPSTREAM_GH_TOKEN")
+             or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    out: List[Anomaly] = []
+    auth_dead = False
+    for repo, wfs in sorted(repos.items()):
+        for wf in (wfs or []):
+            try:
+                r = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/workflows/{wf}/runs",
+                    params={"status": "completed", "per_page": 1},
+                    headers=headers, timeout=15)
+            except requests.RequestException as e:
+                logger.warning("[watchdog] gh workflow fetch failed for %s/%s: %s", repo, wf, e)
+                continue
+            if r.status_code in (401, 403):
+                # 403 from an exhausted rate limit is transient -> skip; any other
+                # 401/403 means the token cannot see Actions = coverage DARK.
+                if r.status_code == 403 and r.headers.get("x-ratelimit-remaining") == "0":
+                    logger.warning("[watchdog] gh rate-limited for %s/%s", repo, wf)
+                    continue
+                auth_dead = True
+                continue
+            if not r.ok:
+                logger.warning("[watchdog] gh workflow HTTP %s for %s/%s", r.status_code, repo, wf)
+                continue
+            runs = (r.json() or {}).get("workflow_runs") or []
+            if not runs:
+                continue  # never run yet -> nothing to conclude
+            conclusion = (runs[0].get("conclusion") or "").lower()
+            if conclusion in ("failure", "timed_out", "startup_failure"):
+                out.append(Anomaly(
+                    f"gh-workflow-failing-{repo}-{wf}",
+                    f"GitHub workflow {wf} in {repo}: latest completed run "
+                    f"concluded {conclusion} ({runs[0].get('html_url')}) -- that "
+                    f"rail is broken until the run goes green.", sev))
+    if auth_dead:
+        out.append(Anomaly(
+            "gh-watch-auth-dead",
+            "Watchdog's GitHub token is invalid (401) -- workflow coverage is "
+            "DARK until SLIPSTREAM_GH_TOKEN on Railway is rotated.", "warn"))
+    return out
+
+
 # Registry of every check the watchdog runs. Extend here as coverage grows.
 _CHECKS = (
     _check_brand_sites,
@@ -930,6 +1068,8 @@ _CHECKS = (
     _check_postal_auth,
     _check_service_heartbeats,
     _check_alert_rail,
+    _check_vercel_deployments,
+    _check_github_workflows,
 )
 
 
