@@ -24,7 +24,7 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -70,19 +70,22 @@ def _idempotency_key(payload: Dict[str, Any]) -> str:
     return hashlib.sha256(basis.encode()).hexdigest()[:48]
 
 
-def _ghl_write(lead: Dict[str, Any]) -> bool:
-    """Write the contact to GHL. 5xx is retried, 4xx (bad payload / dup) is not."""
+def _ghl_write(lead: Dict[str, Any]) -> Optional[str]:
+    """Write the contact to GHL. 5xx is retried, 4xx (bad payload / dup) is not.
+    Returns the GHL contact id on success (the AIPG site needs it for the instant
+    speed-to-lead SMS), or None on failure -> caller dead-letters + alerts a human."""
     key = (os.getenv("GHL_API_KEY") or "").strip()
     loc = (os.getenv("GHL_LOCATION_ID") or "").strip()
     if not key or not loc:
         logger.error("[lead_store] GHL creds missing; cannot write CRM")
-        return False
+        return None
     name = (lead.get("name") or "").strip()
     parts = name.split()
     first, last = (parts[0] if parts else ""), (" ".join(parts[1:]) if len(parts) > 1 else "")
     tags = ["website-lead"] + [t for t in (
         (f"src:{lead['source']}" if lead.get("source") else ""),
-        (f"trade:{lead['trade']}" if lead.get("trade") else "")) if t]
+        (f"trade:{lead['trade']}" if lead.get("trade") else ""),
+        ("sms-opt-in" if lead.get("sms_consent") else "")) if t]
     for attempt in range(_GHL_MAX_ATTEMPTS):
         try:
             r = requests.post(
@@ -94,21 +97,23 @@ def _ghl_write(lead: Dict[str, Any]) -> bool:
                       "companyName": lead.get("business") or None,
                       "source": lead.get("source") or "aipg-website", "tags": tags})
             if r.ok:
-                return True
+                body = r.json() if r.content else {}
+                return ((body or {}).get("contact") or {}).get("id") or "ok"
             if r.status_code < 500:
                 logger.error("[lead_store] GHL %s (non-retryable): %s", r.status_code, r.text[:160])
-                return False
+                return None
             logger.warning("[lead_store] GHL %s attempt %d/%d, retrying",
                            r.status_code, attempt + 1, _GHL_MAX_ATTEMPTS)
         except requests.RequestException as e:
             logger.warning("[lead_store] GHL exception attempt %d: %s", attempt + 1, e)
-    return False
+    return None
 
 
 def ingest_lead(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Durable-first, idempotent ingest with an always-fire alert. Fail-closed receipt."""
     brand = str(payload.get("brand") or "unknown")
     lead = {k: (str(payload.get(k) or "")[:400] or None) for k in _FIELDS}
+    lead["sms_consent"] = bool(payload.get("smsConsent") or payload.get("sms_consent"))
     synthetic = bool(payload.get("synthetic"))
     key = _idempotency_key(payload)
 
@@ -132,7 +137,8 @@ def ingest_lead(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "alerted": True, "via": prior[0][1], "key": key}
 
     # 2. GHL (retried). 3. ALWAYS alert a human (never gate on GHL), unless synthetic.
-    ghl_ok = False if synthetic else _ghl_write(lead)
+    ghl_id = None if synthetic else _ghl_write(lead)
+    ghl_ok = bool(ghl_id)
     if synthetic:
         alerted, via = True, "synthetic"      # canary verifies plumbing; no human paged
     else:
@@ -151,7 +157,7 @@ def ingest_lead(payload: Dict[str, Any]) -> Dict[str, Any]:
                      "(human alerted=%s)", brand, key, alerted)
 
     # FAIL CLOSED: True only if stored AND a human was told (or synthetic canary).
-    return {"ok": bool(alerted), "stored": True, "ghl_ok": ghl_ok,
+    return {"ok": bool(alerted), "stored": True, "ghl_ok": ghl_ok, "ghl_id": ghl_id,
             "alerted": alerted, "via": via, "status": status, "key": key}
 
 

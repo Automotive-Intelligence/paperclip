@@ -68,15 +68,22 @@ def test_idempotency_key_stable_and_explicit_wins():
 
 def test_ghl_write_retries_5xx_not_4xx():
     class _R:
-        def __init__(self, code): self.status_code, self.ok = code, code < 300
-        def text(self): return "err"
+        def __init__(self, code, body=None):
+            self.status_code, self.ok = code, code < 300
+            self._body = body or {}
+            self.content = b"{}"
         text = property(lambda self: "err")
+        def json(self): return self._body
     with mock.patch.dict("os.environ", {"GHL_API_KEY": "k", "GHL_LOCATION_ID": "l"}):
-        # 500 then 200 -> retried to success
-        with mock.patch.object(LS.requests, "post", side_effect=[_R(500), _R(200)]):
-            assert LS._ghl_write({"name": "A B", "email": "a@b.co"}) is True
-        # 400 -> not retried, one call
+        # 500 then 200 -> retried; returns the GHL contact id (needed for the instant SMS)
+        with mock.patch.object(LS.requests, "post",
+                               side_effect=[_R(500), _R(200, {"contact": {"id": "c_42"}})]):
+            assert LS._ghl_write({"name": "A B", "email": "a@b.co"}) == "c_42"
+        # 200 with no id in body -> truthy sentinel, still a success
+        with mock.patch.object(LS.requests, "post", return_value=_R(200)):
+            assert LS._ghl_write({"name": "A B"}) == "ok"
+        # 400 -> not retried, one call, None (failure)
         post = mock.Mock(return_value=_R(400))
         with mock.patch.object(LS.requests, "post", post):
-            assert LS._ghl_write({"name": "A"}) is False
+            assert LS._ghl_write({"name": "A"}) is None
             assert post.call_count == 1

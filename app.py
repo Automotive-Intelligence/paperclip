@@ -3268,6 +3268,39 @@ scheduler.add_job(_run_sonar_inbox, CronTrigger(minute=7, timezone=CST),
     id="sonar_inbox_hourly", name="Sonar Engagement Inbox Monitor (Railway)",
     replace_existing=True, misfire_grace_time=1800)
 
+
+def _run_lead_canary():
+    """Funnel standard #8: hourly synthetic lead through AIPG's real path. Verifies the
+    lead landed in the system of record + the alert rail fired; pages loudly if not.
+    Feeds #17 absence alerting and the 48h-green spend gate. Synthetic = never pages a
+    human on success, never writes GHL."""
+    from services.lead_canary import run_canary
+    try:
+        logging.info("[canary] %s", run_canary(commit=True))
+    except Exception as e:
+        logging.error("[canary] run failed: %s", e)
+
+
+scheduler.add_job(_run_lead_canary, CronTrigger(minute=23, timezone=CST),
+    id="lead_canary_hourly", name="AIPG Funnel Canary (#8, Railway)",
+    replace_existing=True, misfire_grace_time=1800)
+
+
+def _run_lead_reconcile():
+    """Funnel standard #7: daily reconciliation. Pull GHL's own count of website-lead
+    contacts and diff against lead_store (system of record); alert on any delta or an
+    unreadable CRM. The only control that catches a silently dropped webhook."""
+    from services.lead_reconcile import reconcile
+    try:
+        logging.info("[reconcile] %s", reconcile("aipg", 24, commit=True))
+    except Exception as e:
+        logging.error("[reconcile] run failed: %s", e)
+
+
+scheduler.add_job(_run_lead_reconcile, CronTrigger(hour=6, minute=40, timezone=CST),
+    id="lead_reconcile_daily", name="AIPG Lead Reconciliation (#7, Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -5630,6 +5663,51 @@ async def run_sonar_inbox_endpoint(
     from services.sonar_inbox import run_sweep
     payload = payload or {}
     result = await asyncio.to_thread(run_sweep, commit=bool(payload.get("commit")))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-lead-canary")
+async def run_lead_canary_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Funnel standard #8: fire the AIPG synthetic lead canary on demand (the hourly
+    cron's manual twin). Pushes a synthetic lead through the real path, verifies the
+    durable row + alert rail, pages loudly if red. commit defaults True (records the run
+    + pages on fail); pass {"commit": false} for a no-write probe."""
+    validate_key(authorization)
+    from services.lead_canary import run_canary
+    payload = payload or {}
+    commit = payload.get("commit", True)
+    result = await asyncio.to_thread(run_canary, commit=bool(commit))
+    return JSONResponse(content=result)
+
+
+@app.get("/admin/lead-canary-status")
+async def lead_canary_status_endpoint(
+    hours: int = 48, authorization: Optional[str] = Header(None),
+):
+    """The 48h-green spend-gate proof: canary streak + latest run for AIPG."""
+    validate_key(authorization)
+    from services.lead_canary import green_streak, latest_canary
+    streak = await asyncio.to_thread(green_streak, "aipg", hours)
+    latest = await asyncio.to_thread(latest_canary, "aipg")
+    return JSONResponse(content={"streak": streak, "latest": latest})
+
+
+@app.post("/admin/run-lead-reconcile")
+async def run_lead_reconcile_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Funnel standard #7: run reconciliation on demand. Diffs lead_store (system of
+    record) against GHL for the window and alerts on any delta. commit defaults True."""
+    validate_key(authorization)
+    from services.lead_reconcile import reconcile
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        reconcile, str(payload.get("brand") or "aipg"),
+        int(payload.get("hours") or 24), commit=bool(payload.get("commit", True)))
     return JSONResponse(content=result)
 
 
