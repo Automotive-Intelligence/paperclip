@@ -9,6 +9,41 @@
 # vercel_project_id below scopes the deployment lookup to the right project.
 vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
 
+# Zernio account ids per brand+platform, used by slipstream_engine._distribute_social.
+# THESE ARE LOAD-BEARING FOR SAFETY, not a convenience. publish_to_zernio treats a
+# missing account id as "post to EVERY connected account on this platform", so a
+# brand with no entry here would cross-post its blog onto every other brand's feed
+# (including Book'd, which is Ryan's, and Michael's personal founder profile).
+# The loader now REFUSES a job with no account_id (tools/social_load.load_jobs),
+# and the engine skips a platform it cannot resolve. A brand missing a platform
+# below simply does not get that platform: that is correct and intended, not a gap
+# to paper over by omitting the id.
+# Verified 2026-08-06 against avo-telemetry social_registry.jsonl.
+zernio_accounts:
+  autointelligence:
+    linkedin: "69c8af5c6cb7b8cf4cabb057"
+    x: "69c8b0356cb7b8cf4cabb272"
+    facebook: "69c8aef66cb7b8cf4cabaf67"
+    instagram: "69c8af386cb7b8cf4cabb001"
+  aiphoneguy:
+    # no LinkedIn or X account exists for AIPG (standing OAuth flag). Facebook and
+    # Instagram only, so the engine's linkedin/x pack is skipped for this brand.
+    facebook: "6a43fd0a9d9472faae32a6e6"
+    instagram: "6a43fca79d9472faae32a2a0"
+  agentempire:
+    # BAE has only Facebook connected (standing OAuth flag: no LI/X/IG profile).
+    facebook: "6a5eef4a3d50078def1705d4"
+  worshipdigital:
+    # WD is additionally hard-blocked at the loader until the handle rename (file 120).
+    linkedin: "69c8acb66cb7b8cf4caba886"
+    x: "69c8ace46cb7b8cf4caba8d9"
+    facebook: "69c8ac0a6cb7b8cf4caba586"
+    instagram: "69c8ac356cb7b8cf4caba743"
+  bookd:
+    linkedin: "6a67e90711e357f89d7e48d0"
+    facebook: "6a67e85911e357f89d7e4155"
+    instagram: "6a67e8e011e357f89d7e4722"
+
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence
@@ -50,7 +85,12 @@ brands:
     vercel_project_id: prj_6IuzlVBshSxrAeIny3Q6CiJJxSm5   # unused while auto_merge:false, wired for when it flips
     domain: worshipdigital.co
     enabled: true
-    auto_merge: false                         # first runs are human-merged; see engine ceiling
+    auto_merge: true                          # flipped 2026-08-06: the rebuild landed and WD PR #20
+                                              # merged cleanly through the safe path. While this was
+                                              # false the engine returned BEFORE _checkoff_topic, so
+                                              # the queue line was never marked and the same topic was
+                                              # produced three times (PRs #17/#18/#19). auto_merge is
+                                              # what arms the write-back, not just the merge.
     format: ts_posts_array
     posts_file: src/content/posts.ts
     business_key: worshipdigital

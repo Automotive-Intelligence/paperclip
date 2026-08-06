@@ -126,3 +126,56 @@ def test_social_distribution_killswitch(monkeypatch):
     assert out["published"] is True
     assert out["social"]["disabled"] is True
     rsl.assert_not_called()
+
+
+# --- social account routing (2026-08-06) -------------------------------------
+# The engine used to build social jobs with no account_id. tools/zernio treats a
+# missing account id as "post to EVERY connected account on this platform", so
+# every auto-published blog cross-posted onto every other brand's feed, including
+# Book'd (Ryan's) and Michael's personal founder profile. Same defect class as the
+# 2026-07-19 incident, but automated.
+
+def _social_cfg(accounts):
+    return {**_CFG, "zernio_accounts": accounts}
+
+
+def test_social_jobs_carry_an_explicit_account_id():
+    cfg = _social_cfg({"linkedin": "acct_li", "x": "acct_x"})
+    with mock.patch("services.social_load_service.run_social_load",
+                    return_value={"ok": True, "counts": {"scheduled": 2}}) as rsl:
+        se._distribute_social(cfg, _POST, "my-post", "https://d/blog/my-post")
+    jobs = rsl.call_args[0][0]
+    assert [j["account_id"] for j in jobs] == ["acct_li", "acct_x"]
+    assert all(j["account_id"] for j in jobs)
+
+
+def test_platform_without_an_account_is_skipped_not_fanned_out():
+    """AIPG and BAE genuinely have no LinkedIn or X account. Skipping is correct;
+    passing None through is what cross-posts them onto other brands."""
+    cfg = _social_cfg({"linkedin": "acct_li"})   # no x
+    with mock.patch("services.social_load_service.run_social_load",
+                    return_value={"ok": True, "counts": {"scheduled": 1}}) as rsl:
+        se._distribute_social(cfg, _POST, "my-post", "https://d/blog/my-post")
+    jobs = rsl.call_args[0][0]
+    assert [j["platform"] for j in jobs] == ["linkedin"]
+
+
+def test_no_accounts_at_all_schedules_nothing():
+    cfg = _social_cfg({})
+    with mock.patch("services.social_load_service.run_social_load") as rsl:
+        out = se._distribute_social(cfg, _POST, "my-post", "https://d/blog/my-post")
+    rsl.assert_not_called()
+    assert out["ok"] is False
+
+
+def test_wd_config_has_accounts_and_automerge_on():
+    """Regression guard for the real config: WD's auto_merge:false was what kept
+    _checkoff_topic from ever running, so the queue never marked and the engine
+    reproduced the same topic three times (PRs #17/#18/#19)."""
+    full = se._load_cfg()
+    assert full["brands"]["worshipdigital"]["auto_merge"] is True
+    accounts = full["zernio_accounts"]
+    assert accounts["autointelligence"]["linkedin"]
+    for brand, acc in accounts.items():
+        for platform, aid in acc.items():
+            assert aid and isinstance(aid, str), (brand, platform)

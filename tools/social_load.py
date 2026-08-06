@@ -288,9 +288,21 @@ def _real_rails() -> Dict[str, Any]:
 
 def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = False,
               rails: Optional[Dict[str, Any]] = None,
-              cfg: Optional[dict] = None) -> List[dict]:
+              cfg: Optional[dict] = None,
+              allow_all_accounts: bool = False) -> List[dict]:
     """cfg overrides config/social_load.json — tests MUST pass it so they never
-    depend on the live WD-rename flag (that dependency broke a test once)."""
+    depend on the live WD-rename flag (that dependency broke a test once).
+
+    allow_all_accounts: when False (the default, and what every automated caller
+    must use) a zernio job with account_id=None is REFUSED instead of scheduled.
+    Passing None down to publish_to_zernio makes it fan the post out to EVERY
+    connected account on that platform, which cross-posts one brand's content to
+    every other brand. That happened on 2026-07-19 (12 cross-brand posts, caught
+    by hand before any published) and the loader was supposed to fail closed
+    right after. It never did, and the Slipstream engine then started calling
+    this path automatically with account_id=None on every auto-published blog.
+    Fail closed here, because this is the one loader every rail goes through
+    (file 121)."""
     r = rails or _real_rails()
     results: List[dict] = []
     zernio_queue: Optional[List[dict]] = None      # fetched once per call
@@ -312,6 +324,22 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
         day = job.scheduled_for.split("T")[0]
 
         if rail == "zernio":
+            # FAIL CLOSED on an unresolved account. publish_to_zernio treats
+            # account_ids=None as "every connected account on this platform", so
+            # one missing id silently cross-posts this brand onto all the others.
+            # Refusing is always recoverable (fix the id, re-run); a cross-brand
+            # post that already published is not.
+            if not job.account_id and not allow_all_accounts:
+                logger.error(
+                    "[social_load] REFUSED %s/%s content_id=%s: no account_id. "
+                    "Scheduling this would fan out to EVERY connected %s account. "
+                    "Resolve the brand's account_id (or pass --all-accounts "
+                    "deliberately).", brand, job.platform, job.content_id, job.platform)
+                results.append({"job": job, "action": "error",
+                                "detail": {"reason": "missing_account_id",
+                                           "content_id": job.content_id,
+                                           "platform": job.platform, "brand": brand}})
+                continue
             if zernio_queue is None:
                 zernio_queue = r["zernio_list"]()
             hits = find_conflicts(zernio_queue, job.platform, day, job.account_id)
@@ -405,12 +433,17 @@ def main() -> int:
     ap.add_argument("jobs", help="JSON file: list of PostJob dicts")
     ap.add_argument("--commit", action="store_true")
     ap.add_argument("--allow-stack", action="store_true")
+    ap.add_argument("--all-accounts", action="store_true",
+                    help="deliberately allow jobs with no account_id, which post to "
+                         "EVERY connected account on the platform. Cross-posts brands. "
+                         "Never use this from an automated caller.")
     args = ap.parse_args()
     raw = json.load(open(args.jobs, encoding="utf-8"))
     jobs = [PostJob(**{k: v for k, v in j.items() if k in PostJob.__dataclass_fields__})
             for j in raw]
     rails = _fake_rails_for_cli() if os.getenv("SOCIAL_LOAD_FAKE_RAILS") == "1" else None
-    results = load_jobs(jobs, commit=args.commit, allow_stack=args.allow_stack, rails=rails)
+    results = load_jobs(jobs, commit=args.commit, allow_stack=args.allow_stack, rails=rails,
+                        allow_all_accounts=args.all_accounts)
     bad = 0
     for res in results:
         j = res["job"]

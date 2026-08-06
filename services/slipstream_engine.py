@@ -70,16 +70,29 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
         from services.social_load_service import run_social_load
         social = post.get("social") or {}
         base = datetime.now(timezone.utc) + timedelta(days=1)
+        accounts = cfg.get("zernio_accounts") or {}
         jobs = []
         for i, (platform, text) in enumerate((("linkedin", social.get("linkedin")),
                                                ("x", social.get("x")))):
             if not text:
+                continue
+            # An unresolved account id MUST NOT be passed through as None: the
+            # Zernio client reads that as "every connected account on this
+            # platform" and cross-posts this brand onto all the others. Skip the
+            # platform loudly instead. AIPG and BAE legitimately have no LinkedIn
+            # or X account, so skipping is the correct outcome for them, not a bug.
+            account_id = accounts.get(platform)
+            if not account_id:
+                logger.warning(
+                    "[slipstream] no zernio account for %s/%s; SKIPPING that platform "
+                    "rather than posting to every connected account", brand, platform)
                 continue
             when = (base + timedelta(days=i, hours=i * 4)).strftime("%Y-%m-%dT%H:%M:%S")
             jobs.append({
                 "brand": cfg["business_key"], "platform": platform,
                 "content": f"{text}\n\n{live_url}", "scheduled_for": when,
                 "content_id": slug, "entry_point": "blog_engine",
+                "account_id": account_id,
                 "media_urls": [f"{live_url.rsplit('/blog/', 1)[0]}/blog/{slug}-hero.png"],
             })
         if not jobs:
@@ -116,6 +129,10 @@ def _brand_cfg(brand_key: str) -> dict:
     # The Vercel team is a top-level default shared by every brand project; the
     # per-brand vercel_project_id scopes the build-verification lookup.
     merged.setdefault("vercel_team_id", full.get("vercel_team_id"))
+    # Zernio account ids live at the top level keyed by brand_key, so a brand's
+    # social routing is declared in one table rather than scattered per brand.
+    merged.setdefault("zernio_accounts",
+                      (full.get("zernio_accounts") or {}).get(brand_key) or {})
     return merged
 
 
