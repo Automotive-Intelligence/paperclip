@@ -716,6 +716,45 @@ def _heartbeat_ts(name: str) -> Optional[datetime]:
     return rows[0][0] if rows else None
 
 
+def _check_lead_funnel_absence(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Funnel standard #17: absence alerting. A funnel that goes quiet produces NO error
+    -- zero organic leads looks identical to a broken pipe, so a threshold-on-zero never
+    fires. The synthetic canary (#8) manufactures a steady hourly heartbeat, which turns
+    the invisible failure into a detectable ABSENCE: if the canary goes silent, or its
+    last run was RED, the AIPG lead path is (or may be) dropping real leads right now.
+    Config: monitors.lead_canary_max_age_hours (default 3; 0 disables)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mon = cfg.get("monitors") or {}
+    raw = mon.get("lead_canary_max_age_hours")
+    max_h = int(raw) if raw is not None else 3
+    if max_h <= 0:
+        return []
+    try:
+        from services.lead_canary import latest_canary
+        latest = latest_canary("aipg")
+    except Exception as e:  # DB down is covered by the uptime rail; never false-alarm
+        logger.warning("[watchdog] lead canary read failed, skipping: %s", e)
+        return []
+    if latest is None:
+        return [Anomaly("lead-canary-never-ran",
+                        "AIPG funnel canary has never run -- the lead path is unverified.",
+                        "warn")]
+    out: List[Anomaly] = []
+    age_h = float(latest.get("age_seconds") or 0) / 3600
+    if age_h > max_h:
+        out.append(Anomaly(
+            "lead-canary-silent",
+            f"AIPG funnel canary last ran {int(age_h)}h ago (> {max_h}h) -- the lead-path "
+            f"verifier went quiet, so a broken funnel would now be invisible.", "critical"))
+    if not latest.get("responded"):
+        out.append(Anomaly(
+            "lead-canary-red",
+            "AIPG funnel canary is RED -- a real lead submitted now would likely be lost. "
+            "Paid spend stays gated until green.", "critical"))
+    return out
+
+
 def _check_service_heartbeats(cfg: Optional[dict] = None) -> List[Anomaly]:
     """Age the heartbeat of every service configured under heartbeats.<name>_max_age_hours.
     Catches the failure output checks cannot see: a scheduled job that dies or raises
@@ -1067,6 +1106,7 @@ _CHECKS = (
     _check_env_truth,
     _check_postal_auth,
     _check_service_heartbeats,
+    _check_lead_funnel_absence,
     _check_alert_rail,
     _check_vercel_deployments,
     _check_github_workflows,
