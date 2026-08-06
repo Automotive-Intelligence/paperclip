@@ -733,3 +733,48 @@ def publish_content_piece_to_zernio(
         media_urls=media_urls if media_urls else None,
         publish_now=publish_now and not schedule_time,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Inbox REPLY helpers (Sonar auto-send path) -- SCAFFOLD, ENDPOINT UNVERIFIED
+# --------------------------------------------------------------------------- #
+# The Sonar classifier's public auto-reply path needs these. The inbox payload was
+# verified live (2026-08-05): records expose `accountId` + a composite `id` and NO
+# separate post_id/media_id, so a reply is addressed by (account_id, item_id).
+#
+# The REST reply ENDPOINT ITSELF IS NOT VERIFIED. Verifying it means POSTING a real
+# public reply on a brand account, which is a deliberate go-live action, not a probe.
+# So these are guarded: they raise unless ZERNIO_REPLY_VERIFIED=1 is explicitly set,
+# AND the classifier's own _AUTO_SEND_WIRED switch must be flipped by Sonar. Confirm
+# the path + payload against Zernio docs (or one manual test reply) before enabling.
+_REPLY_VERIFIED = os.getenv("ZERNIO_REPLY_VERIFIED", "").strip() == "1"
+
+
+def _reply_guard(op: str) -> None:
+    if not _REPLY_VERIFIED:
+        raise NotImplementedError(
+            f"{op}: Zernio inbox reply endpoint is UNVERIFIED. Confirm the REST path + "
+            "payload against Zernio docs (or one manual test post), then set "
+            "ZERNIO_REPLY_VERIFIED=1. Guard exists so no unverified public reply fires."
+        )
+
+
+def reply_to_comment(account_id: str, comment_id: str, message: str) -> Dict[str, Any]:
+    """Post a public reply to an inbox comment/ad-comment (INFERRED endpoint).
+
+    account_id: Zernio `accountId` from the inbox record. comment_id: the record `id`
+    (already encodes the post; the payload carries no separate post_id). Guarded until
+    the endpoint is verified -- see the module note above."""
+    _reply_guard("reply_to_comment")
+    return _zernio_request(
+        "POST", f"/inbox/comments/{comment_id}/reply",
+        {"accountId": account_id, "message": message})
+
+
+def reply_to_mention(account_id: str, mention_id: str, message: str) -> Dict[str, Any]:
+    """Post a public reply to an inbox mention (INFERRED endpoint). Guarded until the
+    endpoint is verified -- see the module note above."""
+    _reply_guard("reply_to_mention")
+    return _zernio_request(
+        "POST", f"/inbox/mentions/{mention_id}/reply",
+        {"accountId": account_id, "message": message})

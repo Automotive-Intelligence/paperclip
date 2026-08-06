@@ -106,6 +106,11 @@ def pull_new(handled: Set[str]) -> List[Dict[str, Any]]:
                 continue
             seen.add(iid)
             out.append({"id": iid, "kind": kind, "account": it.get("accountUsername"),
+                        # account_id is the ONLY reply id the Zernio inbox payload
+                        # actually carries (verified live 2026-08-05: records expose
+                        # accountId + a composite `id`, no separate post_id/media_id).
+                        # It's the missing piece the classifier's auto-send path needs.
+                        "account_id": it.get("accountId"),
                         "platform": it.get("platform"),
                         "text": (it.get("content") or it.get("text") or "")[:1000],
                         "url": it.get("permalink") or it.get("url") or "",
@@ -131,10 +136,16 @@ def _escalate_email(items: List[dict]) -> bool:
     key = (os.getenv("RESEND_API_KEY") or "").strip()
     if not key or not items:
         return False
-    rows = "".join(
-        f"<li><b>{i['kind']}</b> @{i.get('account')} ({i.get('platform')}): "
-        f"{(i.get('text') or '')[:220]} &mdash; <a href='{i.get('url')}'>open</a></li>"
-        for i in items)
+    def _row(i: dict) -> str:
+        # Surface the classifier's gate-passed suggested wording when present, so an
+        # auto-worthy item that escalates only because auto-send isn't wired arrives
+        # copy-paste-ready (Sonar v2 flag). No draft -> just the item + link.
+        draft = (i.get("draft") or "").strip()
+        suggested = (f"<br><i>suggested reply:</i> {draft[:280]}" if draft else "")
+        return (f"<li><b>{i.get('kind')}</b> @{i.get('account')} ({i.get('platform')}): "
+                f"{(i.get('text') or '')[:220]} &mdash; <a href='{i.get('url')}'>open</a>"
+                f"{suggested}</li>")
+    rows = "".join(_row(i) for i in items)
     try:
         r = requests.post(
             "https://api.resend.com/emails", timeout=15,
