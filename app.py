@@ -4497,6 +4497,7 @@ if pitwall_assets_mount.exists():
 #   "/pitwall-static/..." same bundle under its alternate mount
 #   "/api/pitwall/..."  all dashboard data reads + clear-alerts (POST)
 #   "/api/changelogs"   dashboard changelog viewer feed
+#   "/api/cockpit"      AVO business-cockpit stats feed (money/pipeline/health)
 #   "/logs/..."         dashboard agent-log history reads
 #
 # LEFT OPEN (machine surfaces — do NOT protect): /health, /health/ready
@@ -4510,7 +4511,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/api/changelogs"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -5460,6 +5461,23 @@ async def health_watchdog():
     Michael, so the alert path lives on a rail, not Slack."""
     from services.watchdog import current_state_json
     return JSONResponse(content=await asyncio.to_thread(current_state_json))
+
+
+@app.get("/api/cockpit")
+async def api_cockpit():
+    """Business-stats JSON for the AVO business cockpit (separate from the agent
+    Pit Wall). FAST + REAL + FAIL-SAFE:
+      - money.interested_humans / needs_review / outbound[] come from the LAST
+        STORED TP-daily heartbeat (team_principal_state.md) -- NOT a live Instantly
+        pull, so the hot path never blocks on the 4-brand lead pagination.
+      - pipeline.* + money.pipeline_open_* read open Twenty opportunities across
+        the per-brand workspaces (short timeout; degrades to null on any outage).
+      - health.watchdog is the cheap watchdog DB snapshot.
+    Never fabricates; a dead source nulls its own fields and adds a health.notes
+    string. Behind the SAME dashboard Basic Auth as the Pit Wall (see
+    _DASH_AUTH_EXACT); the cockpit front-end calls it server-side with those creds."""
+    from services.cockpit_stats import build_cockpit
+    return JSONResponse(content=await asyncio.to_thread(build_cockpit))
 
 
 @app.post("/admin/run-watchdog")
