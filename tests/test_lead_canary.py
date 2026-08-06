@@ -55,6 +55,7 @@ def test_submit_targets_real_form_when_configured():
     assert out["target"] == "form"
     assert posted["url"].endswith("/api/lead")
     assert posted["hdr"]["x-canary-secret"] == "s3cr3t"      # secret gates synthetic injection
+    assert posted["hdr"]["x-canary-key"] == "canary-x"       # explicit key -> verifiable row
     assert posted["body"]["synthetic"] is True
 
 

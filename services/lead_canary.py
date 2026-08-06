@@ -77,9 +77,14 @@ def _submit(payload: Dict[str, Any]) -> Dict[str, Any]:
     secret = (os.getenv("LEAD_CANARY_SECRET") or "").strip()
     if form_url and secret:
         try:
+            # The real form only forwards synthetic + our explicit idempotency_key when
+            # the secret matches, and it reads the key from the x-canary-key HEADER (never
+            # the body, so a visitor can't inject one). Send both so _verify_durable can
+            # find the exact row this run created.
             r = requests.post(form_url, timeout=20,
                               headers={"Content-Type": "application/json",
-                                       "x-canary-secret": secret},
+                                       "x-canary-secret": secret,
+                                       "x-canary-key": str(payload.get("idempotency_key") or "")},
                               json=payload)
             ack = {"http": r.status_code, "ok": r.ok,
                    "body": (r.json() if r.content and r.ok else r.text[:200])}
