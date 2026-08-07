@@ -49,12 +49,10 @@ zernio_accounts:
     youtube: "6a5eef233d50078def1704cc"
   worshipdigital:
     # Handle rename is DONE (config/social_load.json wd_rename_done=true since
-    # 2026-07-13); the loader block is lifted. Two live hazards remain:
-    #   1. instagram 69c8ac35... reads status=error / needsReconnect ("Account
-    #      inactive") as of 2026-08-06 — reconnect in the Zernio UI before any
-    #      WD IG post is scheduled; the loader will otherwise schedule into a
-    #      dead account.
-    #   2. DUPLICATES: the same WD Facebook page + LinkedIn page are ALSO
+    # 2026-07-13); the loader block is lifted. Instagram was reconnected by
+    # Michael 2026-08-06 evening (same account id, verified healthy, token to
+    # 2026-10-06). One live hazard remains:
+    #   1. DUPLICATES: the same WD Facebook page + LinkedIn page are ALSO
     #      connected under profile 6a43c691... as accounts 6a716ea7 (fb) /
     #      6a716eb8 (li). Those are the SAME real pages connected twice —
     #      never add them here or WD double-posts every send.
