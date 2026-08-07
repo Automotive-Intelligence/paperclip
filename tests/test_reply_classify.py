@@ -122,3 +122,44 @@ def test_needs_review_is_deduped_per_email():
     interested, review = _classify({"dup@x.com": ["out of office", "still away"]})
     assert interested == 0
     assert review.count("dup@x.com") == 1
+
+
+# ---- 2026-08-07: the CarHop phantom + the unnamed-lead lesson --------------------
+
+_CARHOP_NDR = (
+    "This is an automated message from mail service of tknutson@carhop.com "
+    "Message not delivered. Failure reason: host carhop-com.mail.protection."
+    "outlook.com[52.101.50.13] said: 550 5.4.1 Recipient address rejected: "
+    "Access denied"
+)
+
+
+def test_ndr_bounce_text_is_never_positive():
+    # The exact text that wore Instantly's "Interested" label for weeks. Note it
+    # contains question-free imperative fragments and the word patterns that
+    # could brush POSITIVE; it must classify as bounce before anything else.
+    assert R.classify_text(_CARHOP_NDR) == "bounce"
+
+
+def test_bounce_only_replier_is_flagged_as_noise_not_counted():
+    interested, review = _classify({"tknutson@carhop.com": [_CARHOP_NDR, _CARHOP_NDR]})
+    assert interested == 0
+    assert "tknutson@carhop.com (bounce)" in review
+
+
+def test_can_i_help_you_is_positive_the_ricky_case():
+    # The REAL lead: a Finance Director's genuine human question. This is the
+    # reply that sat 24 days because the count was not named.
+    assert R.classify_text("Re: still waiting on a call back Can I help you?") == "positive"
+
+
+def test_classify_detailed_names_the_positive_repliers():
+    bodies = {
+        "rparrish@chuckhutton.com": "Can I help you?",
+        "ooo@x.com": "automatic reply: out of office",
+    }
+    repliers = [{"email": e} for e in bodies]
+    with mock.patch.object(R.requests, "get", _mock_get(bodies)):
+        positives, review = R.classify_detailed({"Authorization": "x"}, repliers)
+    assert positives == ["rparrish@chuckhutton.com"]
+    assert "ooo@x.com" in review

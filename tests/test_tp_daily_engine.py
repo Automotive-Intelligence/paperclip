@@ -48,9 +48,9 @@ def test_insert_transform_idempotent_when_today_present():
 
 
 def test_run_dry_run_returns_preview_no_commit():
-    # outbound_truth now returns (rows, blind, needs_review).
+    # outbound_truth now returns (rows, blind, needs_review, interested_emails).
     with mock.patch.object(T, "outbound_truth",
-                           return_value=([("AvI", "c", 1, 1, 0, 0)], [], [])):
+                           return_value=([("AvI", "c", 1, 1, 0, 0)], [], [], [])):
         r = T.run_tp_daily(commit=False, token="tok")
     assert r["committed"] is False
     assert "preview" in r and "TP daily" in r["preview"]
@@ -69,7 +69,15 @@ def test_build_block_renders_needs_eyes_line_and_does_not_inflate_interested():
 
 def test_run_dry_run_surfaces_needs_review_in_preview():
     with mock.patch.object(T, "outbound_truth",
-                           return_value=([("AvI", "c", 5, 5, 1, 0)], [], ["ooo@dealer.com"])):
+                           return_value=([("AvI", "c", 5, 5, 1, 0)], [], ["ooo@dealer.com"], [])):
         r = T.run_tp_daily(commit=False, token="tok")
     assert r["needs_review_count"] == 1
     assert "Needs eyes" in r["preview"] and "ooo@dealer.com" in r["preview"]
+
+
+def test_decision_line_names_the_interested_repliers():
+    # An unnamed "1 interested" made the real lead unhuntable for 24 days.
+    rows = [("AvI", "Dealer Outreach", 186, 186, 4, 1)]
+    b = T.build_block(rows, [], "2026-08-07", [], ["rparrish@chuckhutton.com"])
+    assert "rparrish@chuckhutton.com" in b
+    assert "WORK THE 1 INTERESTED REPLY(IES) TODAY: rparrish@chuckhutton.com" in b
