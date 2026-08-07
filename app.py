@@ -3287,6 +3287,25 @@ scheduler.add_job(_run_sdr_daily, CronTrigger(hour=6, minute=15, timezone=CST),
     replace_existing=True, misfire_grace_time=3600)
 
 
+def _run_reply_sync():
+    """Hourly: Instantly replies -> the brand's Twenty (idempotent per message
+    id via intent_inbound). Positives surface with a note + hot-reply SMS;
+    noise (bounce/OOO/no) never syncs. Michael works replies from Twenty, not
+    Instantly's paywalled Unibox (his ask, 2026-08-07)."""
+    from services.instantly_reply_sync import run_reply_sync
+    try:
+        out = run_reply_sync(commit=True)
+        logging.info("[reply-sync] %s", {k: out[k] for k in
+                     ("replies_seen", "synced", "deduped", "skipped_noise", "errors")})
+    except Exception as e:
+        logging.error("[reply-sync] run failed: %s", e)
+
+
+scheduler.add_job(_run_reply_sync, CronTrigger(minute=50, timezone=CST),
+    id="reply_sync_hourly", name="Instantly Reply Sync -> Twenty (hourly)",
+    replace_existing=True, misfire_grace_time=1800)
+
+
 def _run_growth_monitor():
     """Railway port of the laptop outbound monitor (com.avo.growth-monitor, 18:00 CT).
     Bounce/reply/warmup alarms via Instantly, appended to growth_analytics_state.md.
@@ -5728,6 +5747,24 @@ async def run_sdr_endpoint(
         payload.get("brand") or "wd",
         commit=bool(payload.get("commit")),
     )
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-reply-sync")
+async def run_reply_sync_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Pull Instantly replies into the brand's Twenty (person + signal + a
+    note carrying the reply text + fail-closed classification label) via the
+    existing intent_inbound pipeline -- idempotent per Instantly message id.
+    Dry-run by default; pass {"commit": true} to write. Noise (bounce /
+    autoreply / clear no) is never synced. avi + bookd only (wd cold dormant,
+    aipg on GHL, pp has no Twenty workspace). Never sends anything."""
+    validate_key(authorization)
+    from services.instantly_reply_sync import run_reply_sync
+    payload = payload or {}
+    result = await asyncio.to_thread(run_reply_sync, bool(payload.get("commit")))
     return JSONResponse(content=result)
 
 

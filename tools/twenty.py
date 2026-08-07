@@ -393,6 +393,55 @@ def _create_opportunity(
         return None
 
 
+def create_note_for_person(
+    business_key: str,
+    person_id: str,
+    title: str,
+    body: str,
+) -> Optional[str]:
+    """Create a Note and link it to a Person (instantly_reply_sync uses this to
+    make reply TEXT readable inside Twenty). Returns the note id, or None on
+    failure -- a note is visibility, never the load-bearing write, so this is
+    best-effort and raises nothing.
+
+    Twenty's note body field differs across versions ('bodyV2' rich-text vs
+    plain 'body'); try bodyV2 markdown first and fall back on a 400."""
+    try:
+        base_url, api_key = _workspace_config(business_key)
+        h = _headers(api_key)
+        note_id: Optional[str] = None
+        for payload in (
+            {"title": title, "bodyV2": {"markdown": body}},
+            {"title": title, "body": body},
+        ):
+            r = requests.post(f"{base_url}/rest/notes", headers=h,
+                              json=payload, timeout=_REQUEST_TIMEOUT)
+            if r.ok:
+                note_id = ((r.json().get("data") or {}).get("createNote") or {}).get("id")
+                break
+            if r.status_code != 400:
+                logger.warning("[Twenty] note create failed (%s): %s",
+                               r.status_code, _twenty_error_detail(r))
+                return None
+        if not note_id:
+            return None
+        # The person link is a MORPH_RELATION named targetPerson in current
+        # Twenty (verified against live metadata 2026-08-07); older versions
+        # used a plain personId. Try both.
+        for link in ({"noteId": note_id, "targetPersonId": person_id},
+                     {"noteId": note_id, "personId": person_id}):
+            rt = requests.post(f"{base_url}/rest/noteTargets", headers=h,
+                               json=link, timeout=_REQUEST_TIMEOUT)
+            if rt.ok:
+                return note_id
+        logger.warning("[Twenty] noteTarget link failed (%s): %s",
+                       rt.status_code, _twenty_error_detail(rt))
+        return note_id
+    except Exception as e:
+        logger.warning("[Twenty] note create raised: %s", e)
+        return None
+
+
 # ── Public entry ────────────────────────────────────────────────────────────
 
 
