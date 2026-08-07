@@ -87,6 +87,7 @@ logger = logging.getLogger(__name__)
 BRAND_IDENTITIES: dict[str, str] = {
     "wd": "michael@worshipdigital.co",
     "avi": "michael@automotiveintelligence.io",
+    "bookd": "michael@bookd.cx",
 }
 
 _AUTH_ENV = "SEND_AUTHORIZED_MAILBOXES"
@@ -192,13 +193,68 @@ class GmailSendTransport:
 def get_default_transport(from_identity: str) -> Optional[SendTransport]:
     """Return a live transport for this identity, or None if none is wired.
 
-    Returns None today for every identity: the gmail.send credential for the
-    worshipdigital.co tenant is an owner/infra prerequisite (see module
-    docstring) and is intentionally NOT fabricated or hardcoded here. When infra
-    wires the credential, this factory is where it plugs in. Returning None makes
-    the whole rail degrade to draft-and-log — it never crashes.
+    WIRED 2026-08-07 (Michael authorized the rail for the Twenty brands): the
+    credential comes from the Postal OAuth token store. Every postal mailbox
+    was re-consented 2026-08-02/03 WITH the gmail.send scope (added to
+    services/postal_oauth.SCOPES on 2026-07-11), so the stored refresh token
+    can mint a send-capable access token. This factory:
+
+      1. resolves from_identity -> the postal_tokens row by exact email match;
+      2. requires the stored grant to include gmail.send (re-checked per call,
+         never assumed);
+      3. decrypts the refresh token (postal_oauth Fernet, APP_SECRET-derived)
+         and builds google-auth Credentials with the Postal OAuth client.
+
+    Any miss (no DB, no row, missing scope, missing client env, bad decrypt)
+    returns None -- the rail degrades to draft-and-log, never crashes. This
+    factory grants NO authority by itself: the SEND_AUTHORIZED_MAILBOXES gate
+    is still checked by send_as_brand before any transport is used.
     """
-    return None
+    try:
+        from services.database import fetch_all
+        from services.postal_oauth import decrypt_token
+
+        client_id = os.environ.get("POSTAL_GOOGLE_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("POSTAL_GOOGLE_CLIENT_SECRET", "").strip()
+        if not (client_id and client_secret):
+            logger.info("[brand-send] no Postal OAuth client env; transport unavailable")
+            return None
+
+        rows = fetch_all(
+            "SELECT refresh_token, scopes, status FROM postal_tokens "
+            "WHERE lower(email) = lower(%s) LIMIT 1",
+            (from_identity,),
+        )
+        if not rows:
+            logger.info("[brand-send] no postal token for %s; transport unavailable",
+                        from_identity)
+            return None
+        row = rows[0]
+        scopes = (row.get("scopes") if isinstance(row, dict) else row[1]) or ""
+        status = (row.get("status") if isinstance(row, dict) else row[2]) or ""
+        enc = row.get("refresh_token") if isinstance(row, dict) else row[0]
+        if status != "active" or "gmail.send" not in scopes:
+            logger.info("[brand-send] token for %s lacks send authority "
+                        "(status=%s, send_scope=%s); transport unavailable",
+                        from_identity, status, "gmail.send" in scopes)
+            return None
+
+        refresh_token = decrypt_token(enc)
+        from google.oauth2.credentials import Credentials  # lazy prod dep
+
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes.split(),
+        )
+        return GmailSendTransport(creds)
+    except Exception as e:  # degrade, never crash the caller
+        logger.warning("[brand-send] transport build failed for %s: %s",
+                       from_identity, e)
+        return None
 
 
 # ---------------------------------------------------------------------------

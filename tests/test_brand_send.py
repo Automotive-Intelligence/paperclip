@@ -206,3 +206,66 @@ class BrandSendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGetDefaultTransport(unittest.TestCase):
+    """The transport factory (wired 2026-08-07 to the Postal OAuth token
+    store). Grants no authority itself -- SEND_AUTHORIZED_MAILBOXES still
+    gates every send. Any miss degrades to None, never raises."""
+
+    def setUp(self):
+        os.environ["POSTAL_GOOGLE_CLIENT_ID"] = "cid"
+        os.environ["POSTAL_GOOGLE_CLIENT_SECRET"] = "csec"
+
+    def tearDown(self):
+        os.environ.pop("POSTAL_GOOGLE_CLIENT_ID", None)
+        os.environ.pop("POSTAL_GOOGLE_CLIENT_SECRET", None)
+
+    def _patch_store(self, rows, decrypted="rt-plain"):
+        import services.database as db
+        import services.postal_oauth as po
+        p1 = unittest.mock.patch.object(db, "fetch_all", lambda *a, **k: rows)
+        p2 = unittest.mock.patch.object(po, "decrypt_token", lambda enc: decrypted)
+        return p1, p2
+
+    def test_no_oauth_client_env_returns_none(self):
+        os.environ.pop("POSTAL_GOOGLE_CLIENT_ID", None)
+        self.assertIsNone(brand_send.get_default_transport(WD))
+
+    def test_no_token_row_returns_none(self):
+        p1, p2 = self._patch_store([])
+        with p1, p2:
+            self.assertIsNone(brand_send.get_default_transport(WD))
+
+    def test_token_without_send_scope_returns_none(self):
+        rows = [{"refresh_token": b"enc", "status": "active",
+                 "scopes": "https://www.googleapis.com/auth/gmail.readonly"}]
+        p1, p2 = self._patch_store(rows)
+        with p1, p2:
+            self.assertIsNone(brand_send.get_default_transport(WD))
+
+    def test_inactive_token_returns_none(self):
+        rows = [{"refresh_token": b"enc", "status": "revoked",
+                 "scopes": "https://www.googleapis.com/auth/gmail.send"}]
+        p1, p2 = self._patch_store(rows)
+        with p1, p2:
+            self.assertIsNone(brand_send.get_default_transport(WD))
+
+    def test_active_send_scoped_token_builds_gmail_transport(self):
+        rows = [{"refresh_token": b"enc", "status": "active",
+                 "scopes": ("https://www.googleapis.com/auth/gmail.readonly "
+                            "https://www.googleapis.com/auth/gmail.send")}]
+        p1, p2 = self._patch_store(rows, decrypted="the-refresh-token")
+        with p1, p2:
+            t = brand_send.get_default_transport(WD)
+        self.assertIsInstance(t, brand_send.GmailSendTransport)
+        creds = t._credentials
+        self.assertEqual(creds.refresh_token, "the-refresh-token")
+        self.assertEqual(creds.client_id, "cid")
+
+    def test_store_exception_degrades_to_none_never_raises(self):
+        import services.database as db
+        def boom(*a, **k):
+            raise RuntimeError("db down")
+        with unittest.mock.patch.object(db, "fetch_all", boom):
+            self.assertIsNone(brand_send.get_default_transport(WD))
