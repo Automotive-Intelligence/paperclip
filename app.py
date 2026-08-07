@@ -3269,6 +3269,22 @@ scheduler.add_job(_run_sonar_inbox, CronTrigger(minute=7, timezone=CST),
     replace_existing=True, misfire_grace_time=1800)
 
 
+def _run_inbox_janitor():
+    """Inbox janitor: archive machine-noise threads (CI spam, deploy-bot comments,
+    Google Ads promo drip) out of INBOX into a label, per config/inbox_janitor.yaml.
+    Archive-only; the lead-escalation rail is untouched and runs before this."""
+    from services.inbox_janitor import run_sweep
+    try:
+        logging.info("[janitor] %s", run_sweep(commit=True))
+    except Exception as e:
+        logging.error("[janitor] sweep failed: %s", e)
+
+
+scheduler.add_job(_run_inbox_janitor, IntervalTrigger(hours=6, timezone=CST),
+    id="inbox_janitor_6h", name="Inbox Janitor — Machine-Noise Sweep",
+    replace_existing=True, misfire_grace_time=3600)
+
+
 def _run_lead_canary():
     """Funnel standard #8: hourly synthetic lead through AIPG's real path. Verifies the
     lead landed in the system of record + the alert rail fired; pages loudly if not.
@@ -5647,6 +5663,20 @@ async def run_sdr_endpoint(
         payload.get("brand") or "wd",
         commit=bool(payload.get("commit")),
     )
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-inbox-janitor")
+async def run_inbox_janitor_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the inbox janitor on demand. DRY-RUN by default (reports what would
+    move); pass {"commit": true} to label + archive. Archive-only by design."""
+    validate_key(authorization)
+    from services.inbox_janitor import run_sweep
+    payload = payload or {}
+    result = await asyncio.to_thread(run_sweep, commit=bool(payload.get("commit")))
     return JSONResponse(content=result)
 
 

@@ -110,6 +110,7 @@ heartbeats:
   sonar_inbox_max_age_hours: 3
   wd_dmarc_max_age_hours: 200   # weekly Sun 08:00 CT; 200h clears the 168h cadence,
                                 # fires ~32h after a genuinely missed audit
+  inbox_janitor_max_age_hours: 26  # 6h cadence; fires after ~4 missed sweeps
 # alert_rail: the watchdog-of-watchdogs leg pointing at DELIVERY. These GitHub
 # Actions workflows are the only path from "anomaly recorded" to "Michael knows";
 # GitHub can auto-disable schedules (60-day inactivity) or throttle them silently.
