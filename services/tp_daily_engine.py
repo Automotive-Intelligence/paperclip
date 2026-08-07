@@ -32,6 +32,7 @@ from services.reply_classify import (  # noqa: F401  (re-export for back-compat)
     NEGATIVE,
     POSITIVE,
     classify,
+    classify_detailed,
     classify_text,
 )
 
@@ -51,14 +52,17 @@ BRANDS = {  # brand -> Instantly key env var
 }
 
 
-def outbound_truth() -> Tuple[list, list, list]:
+def outbound_truth() -> Tuple[list, list, list, list]:
     """Live send/reply counts per brand.
 
-    Returns (rows, blind, needs_review): rows are per-campaign tuples
-    (brand, campaign, leads, sent, replies, interested); blind is the
-    unverifiable brands; needs_review is the de-duped list of replier emails we
-    could NOT confidently classify (surfaced so a human confirms none is a lead)."""
-    rows, blind, needs_review = [], [], []
+    Returns (rows, blind, needs_review, interested_emails): rows are
+    per-campaign tuples (brand, campaign, leads, sent, replies, interested);
+    blind is the unverifiable brands; needs_review is the de-duped list of
+    replier emails we could NOT confidently classify (surfaced so a human
+    confirms none is a lead); interested_emails NAMES every POSITIVE replier --
+    an unnamed count made the one real lead unhuntable for 24 days while a
+    phantom bounce wore Instantly's Interested label (2026-08-07 correction)."""
+    rows, blind, needs_review, interested_emails = [], [], [], []
     for brand, env in BRANDS.items():
         key = os.getenv(env, "").strip()
         if not key:
@@ -87,15 +91,19 @@ def outbound_truth() -> Tuple[list, list, list]:
                     break
             sent = sum(1 for l in leads if l.get("timestamp_last_contact"))
             repliers = [l for l in leads if (l.get("email_reply_count") or 0) > 0]
-            interested, review = classify(H, repliers)
+            positives, review = classify_detailed(H, repliers)
             for em in review:
                 if em not in needs_review:
                     needs_review.append(em)
-            rows.append((brand, c["name"][:40], len(leads), sent, len(repliers), interested))
-    return rows, blind, needs_review
+            for em in positives:
+                if em not in interested_emails:
+                    interested_emails.append(em)
+            rows.append((brand, c["name"][:40], len(leads), sent, len(repliers), len(positives)))
+    return rows, blind, needs_review, interested_emails
 
 
-def build_block(rows: list, blind: list, today: str, needs_review: Optional[list] = None) -> str:
+def build_block(rows: list, blind: list, today: str, needs_review: Optional[list] = None,
+                interested_emails: Optional[list] = None) -> str:
     """The fixed Foundation-Bible heartbeat format.
 
     `needs_review` is the fail-closed safety net: replies we could not classify are
@@ -129,8 +137,9 @@ def build_block(rows: list, blind: list, today: str, needs_review: Optional[list
             f"{', '.join(needs_review)}.\n")
     rejections = total_replies - total_interested
     if total_interested > 0:
-        decision = (f"WORK THE {total_interested} INTERESTED REPLY(IES) TODAY. That is the "
-                    f"closest thing to money in this company. Everything else waits.")
+        who = ", ".join(interested_emails or []) or "(names unavailable -- fix the pipe)"
+        decision = (f"WORK THE {total_interested} INTERESTED REPLY(IES) TODAY: {who}. "
+                    f"That is the closest thing to money in this company. Everything else waits.")
         default = "If Michael says nothing: CRO drafts responses and surfaces them for send."
     elif total_sent == 0:
         decision = ("Get something sending. No live campaign means no possible revenue, "
@@ -170,8 +179,8 @@ def run_tp_daily(*, token: Optional[str] = None, commit: bool = True,
     team_principal_state.md (idempotent). Returns a receipt."""
     token = token or os.getenv("SLIPSTREAM_GH_TOKEN", "").strip()
     today = (now or datetime.now(_CT)).strftime("%Y-%m-%d")
-    rows, blind, needs_review = outbound_truth()
-    block = build_block(rows, blind, today, needs_review)
+    rows, blind, needs_review, interested_emails = outbound_truth()
+    block = build_block(rows, blind, today, needs_review, interested_emails)
     total_interested = sum(r[5] for r in rows)
     total_sent = sum(r[3] for r in rows)
     receipt = {"ok": True, "date": today, "brands_read": len(rows), "blind": blind,

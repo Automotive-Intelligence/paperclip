@@ -36,6 +36,21 @@ NEGATIVE = re.compile(
     r"\bdo not (contact|email)\b|\bno longer (being )?used\b|\bpiss off\b|\bspam\b",
     re.I)
 
+# A delivery failure -- the mailbox is DEAD, no human ever saw the send. Checked
+# FIRST (before AUTOREPLY) because NDR wording varies wildly and one leaked all
+# the way into Instantly's UI as an "Interested" thread (tknutson@carhop.com,
+# 2026-08: 6 hard bounces surfaced as the campaign's hot lead while the real
+# POSITIVE replier sat unworked 24 days). A bounce is machine-certain non-human:
+# it is flagged into needs_review WITH a "(bounce)" tag so the daily line shows
+# it as noise, and it can never reach the POSITIVE test.
+BOUNCE = re.compile(
+    r"automated message from (the )?mail service|message not delivered|"
+    r"could not be delivered|not be delivered to|delivery to the following "
+    r"recipient failed|undeliver(able|ed)|recipient address rejected|"
+    r"mail delivery (failed|subsystem)|mailer-?daemon|delivery status "
+    r"notification|55[04] 5\.\d|permanent error|address rejected",
+    re.I)
+
 # A machine answered (or the mailbox is unattended). Not a lead, but it tells us
 # NOTHING about the human's intent -- so it is surfaced for review, not dropped.
 # Expanded with the soft out-of-office phrasings that leaked as "interested" before
@@ -85,10 +100,13 @@ def message_text(m: dict) -> str:
 
 def classify_text(text: str) -> str:
     """Label a single reply body. Returns one of:
-    'autoreply' | 'negative' | 'positive' | 'unknown'.
+    'bounce' | 'autoreply' | 'negative' | 'positive' | 'unknown'.
 
-    AUTOREPLY and NEGATIVE are checked FIRST (per the fail-closed contract): a
-    machine/rejection reply is never allowed to reach the POSITIVE test."""
+    BOUNCE, AUTOREPLY and NEGATIVE are checked FIRST (per the fail-closed
+    contract): a delivery failure or machine/rejection reply is never allowed
+    to reach the POSITIVE test."""
+    if BOUNCE.search(text):
+        return "bounce"
     if AUTOREPLY.search(text):
         return "autoreply"
     if NEGATIVE.search(text):
@@ -98,17 +116,22 @@ def classify_text(text: str) -> str:
     return "unknown"
 
 
-def classify(H, repliers) -> Tuple[int, List[str]]:
+def classify_detailed(H, repliers) -> Tuple[List[str], List[str]]:
     """A reply is not a lead. Read the words. FAIL CLOSED.
 
-    Returns (interested_count, needs_review_emails):
-      - interested_count: only repliers with a genuine POSITIVE buying signal.
+    Returns (positive_emails, needs_review_emails):
+      - positive_emails: the NAMED repliers with a genuine POSITIVE buying
+        signal. Naming them is the point -- an unnamed "1 interested" cost the
+        real replier (rparrish@chuckhutton.com, "Can I help you?", 2026-07-15)
+        24 unworked days while a phantom bounce wore the Interested label.
       - needs_review_emails: repliers we could NOT confidently classify as either a
         buying signal or a clear rejection (auto-replies, ambiguous wording, or a
         reply we failed to fetch/parse). These MUST be surfaced to a human -- an
         odd-worded real lead still gets eyes; nothing is dropped to /dev/null.
+        A replier whose only messages are delivery failures is tagged
+        "<email> (bounce)" so the human eye reads it as noise, not signal.
     """
-    interested = 0
+    positives: List[str] = []
     needs_review: List[str] = []
 
     def _flag(email: str) -> None:
@@ -127,7 +150,7 @@ def classify(H, repliers) -> Tuple[int, List[str]]:
             _flag(em)
             continue
 
-        saw_positive = saw_negative = saw_other = False
+        saw_positive = saw_negative = saw_other = saw_bounce = False
         for m in msgs:
             label = classify_text(message_text(m))
             if label == "positive":
@@ -135,14 +158,26 @@ def classify(H, repliers) -> Tuple[int, List[str]]:
                 break                # strongest signal; stop scanning this replier
             elif label == "negative":
                 saw_negative = True
+            elif label == "bounce":
+                saw_bounce = True
             else:                    # autoreply or unknown
                 saw_other = True
 
         if saw_positive:
-            interested += 1          # the only path that inflates the money number
+            if em and em not in positives:
+                positives.append(em)  # the only path that inflates the money number
         elif saw_negative:
             continue                 # a clear "no" -> drop, do not surface
+        elif saw_bounce and not saw_other:
+            _flag(f"{em} (bounce)")  # dead mailbox: surfaced as NOISE, never signal
         else:                        # autoreply / unknown / no message retrieved
             _flag(em)                # fail-closed: a human must confirm it is not a lead
 
-    return interested, needs_review
+    return positives, needs_review
+
+
+def classify(H, repliers) -> Tuple[int, List[str]]:
+    """Back-compat wrapper over classify_detailed(): (interested_count,
+    needs_review_emails). growth_monitor_engine still consumes this shape."""
+    positives, needs_review = classify_detailed(H, repliers)
+    return len(positives), needs_review
