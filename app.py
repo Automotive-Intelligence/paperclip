@@ -3259,6 +3259,34 @@ scheduler.add_job(_run_tp_daily, CronTrigger(hour=7, minute=15, timezone=CST),
     replace_existing=True, misfire_grace_time=3600)
 
 
+def _run_sdr_daily():
+    """Daily SDR engine sweep, 06:15 CT (before the 07:15 TP daily so fresh
+    opportunities are on the board first). commit=True: verified PASS
+    companies become deduped rebuild opportunities in each brand's Twenty
+    (dedup = opportunity-existence, so repeat runs never duplicate). Never
+    sends outreach -- that switch is a later sub-project. aipg is
+    GHL-backed with no Twenty source; the engine refuses it honestly, so
+    only the three Twenty brands run. Authorized live by Michael
+    2026-07-31 ("all 3 brands live") + realignment plan 2026-08-07."""
+    from services.sdr_engine import run_sdr_engine
+    for brand in ("wd", "avi", "bookd"):
+        try:
+            out = run_sdr_engine(brand, commit=True)
+            logging.info(
+                "[sdr-daily] %s: produced=%s pass=%s needs_human=%s fail=%s "
+                "written=%s errors=%s digest=%s",
+                brand, out.get("produced"), out.get("pass"),
+                out.get("needs_human"), out.get("fail"),
+                out.get("written"), out.get("errors"), out.get("digest_path"))
+        except Exception as e:
+            logging.error("[sdr-daily] %s run failed: %s", brand, e)
+
+
+scheduler.add_job(_run_sdr_daily, CronTrigger(hour=6, minute=15, timezone=CST),
+    id="sdr_daily_railway", name="SDR Engine Daily Sweep (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
+
 def _run_growth_monitor():
     """Railway port of the laptop outbound monitor (com.avo.growth-monitor, 18:00 CT).
     Bounce/reply/warmup alarms via Instantly, appended to growth_analytics_state.md.
