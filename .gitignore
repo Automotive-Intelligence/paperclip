@@ -42,8 +42,11 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test files
-test_*.py
+# Root-level scratch tests only. The bare pattern also matched tests/test_*.py
+# at every depth, so every real test had to be force-added (76 were; one got
+# silently dropped from a PR on 2026-08-06). Anchor to root + negate the suite.
+/test_*.py
+!tests/test_*.py
 run_server.py
 run_test_suite.py
 
