@@ -1,0 +1,30 @@
+# Inbox janitor -- machine-noise sweep rules per Gmail account.
+#
+# Michael's ask (2026-08-06): weed vendor/CI noise out of the inbox so only
+# money, decisions, and the one alarm channel reach human eyes. Gmail FILTER
+# creation needs the gmail.settings.basic scope the postal tokens deliberately
+# lack, so the janitor gets the same outcome with the scopes we hold
+# (gmail.modify + gmail.labels): label + archive matching INBOX threads on a
+# schedule. ARCHIVE-ONLY -- never deletes, never marks read; everything stays
+# recoverable under the label.
+#
+# Each rule's query is sender-pinned and carries its own negative terms as the
+# guard (search results have no headers, so precision lives in the query).
+# `in:inbox` is enforced in code on every query. The lead side is unaffected:
+# the postal classifier escalates prospects on its own rail before this runs.
+enabled: true
+label: Machines
+accounts:
+  salesdroid:
+    # GitHub Actions workflow-run notifications (Run failed / cancelled spam).
+    # Safe to bury: rail-death has its own direct-email fallback in the watchdog.
+    - name: github-ci
+      query: 'cc:ci_activity@noreply.github.com'
+    # vercel[bot] deploy comments on blog PRs. The AVO Watchdog ISSUE thread is
+    # excluded by subject, belt on top of the sender pin.
+    - name: vercel-bot-pr-comments
+      query: 'from:notifications@github.com "vercel[bot]" -subject:"AVO Watchdog"'
+    # Google Ads promo drip (starts the moment an ad account exists). Billing
+    # receipts and invoices stay in the inbox -- we verify invoices in this shop.
+    - name: google-ads-promo
+      query: 'from:{googleads-noreply@google.com ads-account-noreply@google.com adwords-noreply@google.com} -subject:{invoice payment receipt}'
