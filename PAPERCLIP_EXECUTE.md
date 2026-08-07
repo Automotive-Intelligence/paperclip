@@ -489,6 +489,8 @@ Post to Agent Empire Skool every Saturday. This IS the build-in-public content.
 ---
 
 ## THE NORTH STAR
-$15,000 MRR across all five rivers.
+20+ recurring-revenue clients on every car and enough MRR for the Fields West deposit.
+First milestone: the first paying recurring clients on each car and our first durable MRR.
 Michael shows up to close. Agents do everything else.
 Funded by faith. Built for freedom.
+(Canonical source: config/principles.py -- this file mirrors it, never the reverse.)
