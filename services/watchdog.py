@@ -1186,8 +1186,26 @@ def _record_active(anomalies: List[Anomaly]) -> None:
 def run_once() -> Tuple[List[Anomaly], List[Anomaly]]:
     """Execute one Watchdog cycle. Returns (all_anomalies, new_anomalies).
     Idempotent + safe to call from HTTP endpoint or scheduler.
+
+    Tier 1 self-healing runs between detection and recording: anomalies with a
+    registered safe action get ONE fix attempt and a one-sweep grace hold (a
+    self-healed incident never reaches the alert rail); a fix that does not
+    clear surfaces next sweep with the attempt receipt in its human text.
     """
     anomalies = _all_anomalies()
+    try:
+        from services.watchdog_remediation import maybe_remediate
+        held, amended = maybe_remediate(anomalies, load_watchdog_config(), _now_utc())
+        if held:
+            anomalies = [a for a in anomalies if a.fingerprint not in held]
+        if amended:
+            anomalies = [
+                Anomaly(a.fingerprint, a.human + amended[a.fingerprint], a.severity)
+                if a.fingerprint in amended else a
+                for a in anomalies
+            ]
+    except Exception as e:
+        logger.warning("[watchdog] remediation layer failed, alerting normally: %s", e)
     try:
         active = _active_fingerprints()
     except Exception as e:

@@ -146,6 +146,15 @@ github_workflows:
       - analytics.yml
       - backlinks.yml
       - don_heartbeat.yml
+# auto_remediation: Tier 1 self-healing. Anomalies with a registered SAFE
+# in-process action (services/watchdog_remediation.py: monitor + heartbeat
+# re-runs only -- never money/outbound/auth/content-engine spend) get ONE fix
+# attempt per cooldown window and a one-sweep grace hold. Self-healed = zero
+# emails + a watchdog_remediations audit row; failed fix = normal alert with
+# the attempt receipt appended. enabled: false restores pure alerting.
+auto_remediation:
+  enabled: true
+  cooldown_hours: 20
 # acknowledged: executive acks on record. A listed fingerprint stays OFF the email
 # rail (shown in a quiet "acknowledged" section of the issue instead) until its
 # `until` date passes, then it resurfaces by itself. Ack a KNOWN condition with a
