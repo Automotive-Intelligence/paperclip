@@ -66,8 +66,57 @@ def append_registry(row: dict) -> None:
     path = registry_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     out = {"ts": datetime.now(_tz.utc).isoformat(timespec="seconds"), **row}
+    line = json.dumps(out, ensure_ascii=False)
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(out, ensure_ascii=False) + "\n")
+        f.write(line + "\n")
+    _commit_registry_row(out, line)
+
+
+def _commit_registry_row(row: dict, line: str) -> None:
+    """Durability: also append the row to salesdroid/avo-telemetry's COMMITTED
+    social_registry.jsonl — the file the CMO brief and every audit actually read
+    (via flag_router._fetch_telemetry_path). On Railway the local registry_path()
+    file is ephemeral (wiped every deploy) and was never committed, so the cloud
+    engine's schedules never reached the file the read side reads. That blindness
+    is exactly why the cross-brand social fan-out went unnoticed for weeks.
+
+    Gated on SOCIAL_REGISTRY_COMMIT=1 so local runs and the test suite never hit
+    the wire. Idempotent by post_id (a 409-retry re-apply cannot double-append the
+    same post). Best-effort: a durability failure NEVER breaks a publish that has
+    already happened — the row is always safe in the local file first."""
+    if os.environ.get("SOCIAL_REGISTRY_COMMIT", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    token = (os.environ.get("GITHUB_TOKEN_TELEMETRY")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
+    if not token:
+        logger.warning("[social_load] SOCIAL_REGISTRY_COMMIT set but no telemetry "
+                       "token present; row not durable: %s", row.get("post_id"))
+        return
+    pid = str(row.get("post_id") or "").strip()
+
+    def transform(content: str) -> Optional[str]:
+        # Idempotent: if this post_id is already recorded, a retry is a no-op.
+        if pid and pid not in ("None", "?"):
+            for existing in content.splitlines():
+                existing = existing.strip()
+                if not existing:
+                    continue
+                try:
+                    if str(json.loads(existing).get("post_id")) == pid:
+                        return None
+                except (ValueError, TypeError):
+                    continue
+        sep = "" if (not content or content.endswith("\n")) else "\n"
+        return content + sep + line + "\n"
+
+    try:
+        from services.avo_state_commit import update_state
+        msg = ("social registry: %s %s %s"
+               % (row.get("brand", "?"), row.get("platform", "?"), pid or "-")).strip()
+        update_state("social_registry.jsonl", transform, msg, token)
+    except Exception as e:  # noqa: BLE001 - durability is best-effort, never fatal
+        logger.warning("[social_load] durable registry commit failed "
+                       "(row kept in local file only): %s", e)
 
 
 # ---------------------------------------------------------------- routing
