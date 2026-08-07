@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 
 class TestUtm(unittest.TestCase):
@@ -52,6 +53,59 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["post_id"], "p1")
         self.assertIn("ts", rows[0])
+
+    def test_durable_commit_off_by_default_makes_no_network_call(self):
+        """SOCIAL_REGISTRY_COMMIT unset/0 => the row is written locally only, and
+        the repo commit path is never touched (local runs + tests stay offline)."""
+        from tools import social_load
+
+        def boom(*a, **k):
+            raise AssertionError("update_state must not be called when commit is off")
+
+        with tempfile.TemporaryDirectory() as d:
+            env = {"SOCIAL_REGISTRY_PATH": os.path.join(d, "r.jsonl"),
+                   "SOCIAL_REGISTRY_COMMIT": "0"}
+            with mock.patch.dict(os.environ, env, clear=False), \
+                    mock.patch("services.avo_state_commit.update_state", boom):
+                social_load.append_registry(
+                    {"brand": "avi", "platform": "x", "post_id": "p1"})
+            rows = [json.loads(l) for l in open(env["SOCIAL_REGISTRY_PATH"])]
+        self.assertEqual(len(rows), 1)  # still durable locally
+
+    def test_durable_commit_on_appends_to_repo_and_is_idempotent(self):
+        """SOCIAL_REGISTRY_COMMIT=1 => the row is also appended to the COMMITTED
+        avo-telemetry social_registry.jsonl the CMO brief reads. A second append of
+        the same post_id is an idempotent no-op in the repo (409-retry safe)."""
+        from tools import social_load
+        repo = {"content": ""}
+        captured = {}
+
+        def fake_update_state(path, transform, message, token, **kw):
+            captured["path"], captured["message"], captured["token"] = path, message, token
+            new = transform(repo["content"])
+            if new is None:
+                captured["skipped"] = True
+                return {"committed": False, "skipped": True}
+            repo["content"] = new
+            return {"committed": True}
+
+        with tempfile.TemporaryDirectory() as d:
+            env = {"SOCIAL_REGISTRY_PATH": os.path.join(d, "r.jsonl"),
+                   "SOCIAL_REGISTRY_COMMIT": "1", "GITHUB_TOKEN_TELEMETRY": "tok-test"}
+            with mock.patch.dict(os.environ, env, clear=False), \
+                    mock.patch("services.avo_state_commit.update_state", fake_update_state):
+                social_load.append_registry(
+                    {"brand": "aipg", "platform": "linkedin", "post_id": "z9"})
+                social_load.append_registry(
+                    {"brand": "aipg", "platform": "linkedin", "post_id": "z9"})
+
+        self.assertEqual(captured["path"], "social_registry.jsonl")
+        self.assertIn("aipg", captured["message"])
+        self.assertIn("z9", captured["message"])
+        self.assertEqual(captured["token"], "tok-test")
+        self.assertTrue(captured.get("skipped"))  # 2nd identical post_id de-duped
+        repo_rows = [json.loads(l) for l in repo["content"].splitlines() if l.strip()]
+        self.assertEqual(sum(1 for r in repo_rows if r.get("post_id") == "z9"), 1)
 
 
 class TestRouting(unittest.TestCase):
