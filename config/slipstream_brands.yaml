@@ -18,28 +18,53 @@ vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
 # and the engine skips a platform it cannot resolve. A brand missing a platform
 # below simply does not get that platform: that is correct and intended, not a gap
 # to paper over by omitting the id.
-# Verified 2026-08-06 against avo-telemetry social_registry.jsonl.
+# Re-verified 2026-08-06 against a LIVE Zernio accounts_get_all_accounts_health
+# sweep (25 accounts), not the registry file. Three comments here previously
+# claimed channels didn't exist (AIPG li/x, BAE ig) that were in fact connected
+# and healthy — a stale comment in this block silently suppresses a live channel,
+# so re-verify against Zernio, never against another document.
 zernio_accounts:
   autointelligence:
     linkedin: "69c8af5c6cb7b8cf4cabb057"
     x: "69c8b0356cb7b8cf4cabb272"
     facebook: "69c8aef66cb7b8cf4cabaf67"
     instagram: "69c8af386cb7b8cf4cabb001"
+    tiktok: "69c8b0016cb7b8cf4cabb1fa"
+    # NO youtube on purpose: the connected channel "whatthepromptai" (What The
+    # Prompt?) is Michael's personal channel, NOT an AvI brand surface. Posting
+    # brand content there would land on an unrelated audience.
   aiphoneguy:
-    # no LinkedIn or X account exists for AIPG (standing OAuth flag). Facebook and
-    # Instagram only, so the engine's linkedin/x pack is skipped for this brand.
+    # linkedin/x/tiktok verified CONNECTED + healthy 2026-08-06. The old comment
+    # claiming "no LinkedIn or X account exists" was stale and suppressed them.
     facebook: "6a43fd0a9d9472faae32a6e6"
     instagram: "6a43fca79d9472faae32a2a0"
+    linkedin: "6a7158c3eb10586dadd310d9"
+    x: "6a715f4aeb10586dadd46880"       # display name on X still reads "Michael Rodriguez" (hygiene: rename in X settings)
+    tiktok: "6a7158f0eb10586dadd31d20"
   agentempire:
-    # BAE has only Facebook connected (standing OAuth flag: no LI/X/IG profile).
+    # instagram + youtube verified CONNECTED + healthy 2026-08-06 (old comment
+    # claiming Facebook-only was stale).
     facebook: "6a5eef4a3d50078def1705d4"
+    instagram: "6a5eeefa3d50078def1702cf"
+    youtube: "6a5eef233d50078def1704cc"
   worshipdigital:
-    # WD is additionally hard-blocked at the loader until the handle rename (file 120).
+    # Handle rename is DONE (config/social_load.json wd_rename_done=true since
+    # 2026-07-13); the loader block is lifted. Two live hazards remain:
+    #   1. instagram 69c8ac35... reads status=error / needsReconnect ("Account
+    #      inactive") as of 2026-08-06 — reconnect in the Zernio UI before any
+    #      WD IG post is scheduled; the loader will otherwise schedule into a
+    #      dead account.
+    #   2. DUPLICATES: the same WD Facebook page + LinkedIn page are ALSO
+    #      connected under profile 6a43c691... as accounts 6a716ea7 (fb) /
+    #      6a716eb8 (li). Those are the SAME real pages connected twice —
+    #      never add them here or WD double-posts every send.
     linkedin: "69c8acb66cb7b8cf4caba886"
-    x: "69c8ace46cb7b8cf4caba8d9"
+    x: "69c8ace46cb7b8cf4caba8d9"        # handle is "wrshipdigital" (typo'd at creation; rename pending in X settings)
     facebook: "69c8ac0a6cb7b8cf4caba586"
     instagram: "69c8ac356cb7b8cf4caba743"
   bookd:
+    # linkedin is Ryan Velazquez's PERSONAL profile — consent-gated per file 107:
+    # nothing posts there without Ryan's explicit sign-off on the batch.
     linkedin: "6a67e90711e357f89d7e48d0"
     facebook: "6a67e85911e357f89d7e4155"
     instagram: "6a67e8e011e357f89d7e4722"
@@ -65,6 +90,10 @@ brands:
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
     components: ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote", "KeyTakeaway", "StatRow"]
+    # /hear-it is DELIBERATELY absent: it is the spec-158 PAID landing page —
+    # noindex, zero-nav, out of the sitemap, Don Draper's ad destination. Blog
+    # internal links to a noindexed page waste link equity and pollute paid
+    # measurement with organic traffic. Organic CTAs route to /discovery.
     money_pages: ["/discovery", "/how-it-works", "/contact"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/aipg_topics.md
