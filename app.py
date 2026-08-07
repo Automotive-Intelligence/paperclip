@@ -3221,6 +3221,28 @@ scheduler.add_job(_run_studio_social_weekly, CronTrigger(day_of_week="sun", hour
     replace_existing=True, misfire_grace_time=3600)
 
 
+def _run_studio_script_weekly():
+    """Studio SCRIPT engine (SPEC A, file 145): every Sunday, EMAIL Michael the
+    coming Tuesday's shoot scripts. Email-first is the load-bearing choice: two
+    gated sheets rotted unread in the repo because commit+flag was treated as
+    delivery. A hand-authored SHOOT_<tuesday>.md in avo-telemetry always wins
+    (the engine delivers it verbatim, never overwrites); otherwise it generates
+    one script per brand, gates them, commits, and emails. Failures email
+    Michael the failure itself; a failed email opens a GitHub issue."""
+    from services.studio_script_engine import run
+    try:
+        result = run()
+        log = logging.error if not result.get("ok") else logging.info
+        log("[script-engine] weekly run: %s", result)
+    except Exception as e:
+        logging.error("[script-engine] weekly run crashed: %s", e)
+
+
+scheduler.add_job(_run_studio_script_weekly, CronTrigger(day_of_week="sun", hour=17, minute=30, timezone=CST),
+    id="studio_script_weekly", name="Studio Weekly Shoot-Script Email (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
+
 def _run_tp_daily():
     """Railway port of the laptop TP daily heartbeat (com.avo.tp-daily, 07:15 CT).
     Reads live Instantly numbers, commits ONE honest block to team_principal_state.md.
@@ -5499,6 +5521,21 @@ async def wd_dmarc_audit_now(authorization: Optional[str] = Header(None)):
     validate_key(authorization)
     from services.wd_dmarc_monitor import run_now_json
     result = await asyncio.to_thread(run_now_json)
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-script-engine")
+async def run_script_engine_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the Studio script engine on demand (same code path as the Sunday
+    cron, so a deployed dry-run exercises the REAL entry point). Body:
+    {"dry_run": true} generates + gates but neither commits nor emails."""
+    validate_key(authorization)
+    from services.studio_script_engine import run
+    payload = payload or {}
+    result = await asyncio.to_thread(run, bool(payload.get("dry_run", False)))
     return JSONResponse(content=result)
 
 
