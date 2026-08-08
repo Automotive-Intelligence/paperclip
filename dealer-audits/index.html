@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealer Digital Diagnostics — Automotive Intelligence</title>
+<meta name="description" content="Top-agency digital teardowns for car dealerships: domain & rebrand migrations, local SEO, reputation, and AI answer-engine readiness.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='14' fill='%23111'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial Black,sans-serif' font-weight='900'>AI</text></svg>">
+<style>
+  @font-face{font-family:'Archivo';src:url('/assets/Archivo.woff2') format('woff2');
+    font-weight:100 900;font-stretch:62% 125%;font-display:swap}
+  @font-face{font-family:'Inter Tight';src:url('/assets/InterTight.woff2') format('woff2');
+    font-weight:100 900;font-display:swap}
+  :root{
+    --ink:#111111; --paper:#FFFFFF; --ground:#F1F1EE; --line:#E0E0DB;
+    --muted:#5C5C57; --faint:#8B8B85;
+    --crit:#C7362A; --warn:#A97B08; --good:#1E8F4E;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+    font:400 17px/1.65 'Inter Tight',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+  .display{font-family:'Archivo','Arial Black',Arial,sans-serif;font-stretch:118%;
+    text-transform:uppercase;letter-spacing:-.01em;line-height:.98;font-weight:900}
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+  a{color:inherit}
+  a:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .wrap{max-width:1020px;margin:0 auto;padding:0 24px}
+
+  /* header */
+  header{background:var(--ink);color:#fff}
+  header .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px}
+  header img{height:44px;width:auto;display:block}
+  header .cta{background:#fff;color:var(--ink);text-decoration:none;font-weight:700;font-size:14px;
+    padding:10px 16px;border-radius:8px;white-space:nowrap}
+  header .cta:hover{background:#e9e9e4}
+
+  /* hero */
+  .hero{background:var(--ink);color:#fff;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;inset:auto 0 0 0;height:1px;background:#333}
+  .hero .wrap{padding:64px 24px 72px;position:relative}
+  .kick{font:700 12.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.24em;text-transform:uppercase;color:#9a9a94}
+  .hero h1{font-size:clamp(42px,8vw,88px);margin:18px 0 0;color:#fff;text-wrap:balance}
+  .hero h1 .hollow{color:transparent;-webkit-text-stroke:2px #fff}
+  .hero p{color:#b9b9b3;max-width:58ch;font-size:18px;margin:22px 0 0}
+  .lights{display:flex;gap:10px;margin-top:28px}
+  .lights span{width:12px;height:12px;border-radius:50%}
+  .l1{background:var(--crit)} .l2{background:var(--warn)} .l3{background:var(--good)}
+
+  /* body */
+  section{padding:56px 0}
+  h2{font-size:clamp(24px,4vw,34px);margin:0 0 6px}
+  .sub{color:var(--muted);max-width:62ch;margin:0}
+
+  .report{display:block;text-decoration:none;background:var(--paper);border:2px solid var(--ink);
+    border-radius:16px;margin-top:28px;padding:28px;position:relative;
+    box-shadow:6px 6px 0 var(--ink);transition:transform .12s ease,box-shadow .12s ease}
+  .report:hover{transform:translate(-2px,-2px);box-shadow:9px 9px 0 var(--ink)}
+  .report .tag{display:inline-flex;gap:8px;align-items:center;font:700 11.5px/1 ui-monospace,Menlo,monospace;
+    letter-spacing:.14em;text-transform:uppercase;color:#fff;background:var(--crit);
+    padding:6px 10px;border-radius:999px}
+  .report h3{font-size:clamp(22px,3.5vw,30px);margin:16px 0 8px}
+  .report p{color:var(--muted);margin:0;max-width:62ch}
+  .report .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;
+    font:600 13px/1.5 ui-monospace,Menlo,monospace;color:var(--faint)}
+  .report .go{position:absolute;top:26px;right:26px;font:900 26px/1 'Archivo',Arial,sans-serif}
+  @media (max-width:560px){.report .go{display:none}}
+
+  .how{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:26px}
+  .step{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .step .n{font:900 15px/1 'Archivo',Arial,sans-serif;background:var(--ink);color:#fff;
+    width:34px;height:34px;border-radius:9px;display:grid;place-items:center}
+  .step h4{margin:14px 0 6px;font-size:16.5px}
+  .step p{margin:0;font-size:14.5px;color:var(--muted)}
+  .step .price{font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--faint);letter-spacing:.1em;margin-top:10px;display:block}
+
+  footer{background:var(--ink);color:#9a9a94;font-size:14px;margin-top:24px}
+  footer .wrap{padding:34px 24px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center}
+  footer a{color:#fff;text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/" aria-label="Automotive Intelligence home"><img src="/assets/avi-logo.png" alt="Automotive Intelligence"></a>
+    <a class="cta" href="mailto:michael@automotiveintelligence.io?subject=Free%20dealership%20digital%20assessment">Book a free assessment</a>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="kick">Automotive Intelligence · Dealer Services</p>
+    <h1 class="display">Dealer Digital<br><span class="hollow">Diagnostics</span></h1>
+    <p>We tear down a dealership's digital presence the way a master tech reads a scan tool — every warning light found, ranked by what it's costing the store, with the fix priced and sequenced.</p>
+    <div class="lights" aria-hidden="true"><span class="l1"></span><span class="l2"></span><span class="l3"></span></div>
+  </div>
+</div>
+
+<main>
+  <section><div class="wrap">
+    <h2 class="display" style="font-size:clamp(22px,3.6vw,30px)">Latest diagnostic</h2>
+    <p class="sub">Full teardown reports, free to the dealer. Read one and you'll know exactly how we work.</p>
+
+    <a class="report" href="/audits/sutherlin-kia-huntington-beach">
+      <span class="tag">● Overall D– · High-risk transition</span>
+      <span class="go" aria-hidden="true">→</span>
+      <h3 class="display" style="text-transform:none;font-stretch:110%">Sutherlin Kia Huntington Beach</h3>
+      <p>A decade-old store wearing a brand-new digital identity: two live domains splitting authority, ten years of reviews stranded under the retired "Car Pros Kia" name, and an entity AI answer-engines can't resolve. Seven systems checked, 8 findings, 30/60/90 fix plan.</p>
+      <span class="meta"><span>AUG 2026</span><span>18835 BEACH BLVD, HUNTINGTON BEACH CA</span><span>8 FINDINGS · 3× P0</span></span>
+    </a>
+  </div></section>
+
+  <section style="padding-top:0"><div class="wrap">
+    <h2 class="display" style="font-size:clamp(22px,3.6vw,30px)">How engagements work</h2>
+    <div class="how">
+      <div class="step"><span class="n">1</span><h4>Free 30-minute assessment</h4><p>We run the full crawl, pull your Google Business Profile and citation state, and walk you through the top three findings live.</p><span class="price">FREE</span></div>
+      <div class="step"><span class="n">2</span><h4>Deep audit &amp; blueprint</h4><p>Complete technical, local, reputation, and AI-readiness audit with a page-level migration map your team (or ours) can execute.</p><span class="price">$2,500</span></div>
+      <div class="step"><span class="n">3</span><h4>Full implementation</h4><p>Domain consolidation, profile &amp; citation migration, schema/AEO, analytics rebuild, and a running review engine.</p><span class="price">$7,500</span></div>
+    </div>
+  </div></section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Automotive Intelligence</span>
+    <a href="mailto:michael@automotiveintelligence.io">michael@automotiveintelligence.io</a>
+  </div>
+</footer>
+</body>
+</html>
