@@ -32,7 +32,7 @@
   .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
   h1,h2,h3{text-wrap:balance}
   a{color:inherit}
-  a:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid currentColor;outline-offset:3px}
   .wrap{max-width:980px;margin:0 auto;padding:0 24px}
 
   /* site header */
@@ -96,6 +96,7 @@
   .grade{font:900 19px/1 'Archivo',Arial,sans-serif;padding:8px 11px;border-radius:9px;min-width:44px;text-align:center}
   .g-crit{background:var(--crit-tint);color:var(--crit)}
   .g-warn{background:var(--warn-tint);color:var(--warn)}
+  .g-good{background:var(--good-tint);color:var(--good)}
   .g-neutral{background:var(--neutral-tint);color:var(--neutral)}
 
   /* chips */
@@ -143,7 +144,7 @@
   .phase li::before{content:"";position:absolute;left:0;top:8px;width:8px;height:8px;background:var(--ink);transform:rotate(45deg)}
   @media (max-width:620px){.phase{grid-template-columns:1fr;gap:8px}}
 
-  /* CTA */
+  /* CTA + lead form */
   .cta-block{background:var(--ink);color:#EDEDE8;border-radius:18px;padding:36px;margin-top:8px;position:relative;overflow:hidden}
   .cta-block h2{color:#fff;font-size:clamp(24px,4vw,32px);margin:0 0 12px;text-transform:uppercase}
   .cta-block p{color:#b3b3ad;margin:0 0 8px;max-width:64ch}
@@ -152,9 +153,28 @@
   .step .p{font:700 12px/1.6 ui-monospace,Menlo,monospace;color:#9a9a94;letter-spacing:.08em}
   .step .t{color:#fff;font-weight:700;margin-top:6px;font-size:15px}
   .step .d{color:#a5a5a0;font-size:13px;margin-top:4px}
+  .leadform{margin-top:26px;border-top:1px solid var(--hero-line);padding-top:24px}
+  .leadform .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:620px){.leadform .fgrid{grid-template-columns:1fr}}
+  .leadform label{display:block;font:700 11px/1.6 ui-monospace,Menlo,monospace;
+    letter-spacing:.1em;text-transform:uppercase;color:#9a9a94}
+  .leadform label.full{margin-top:12px}
+  .leadform input,.leadform textarea{display:block;width:100%;margin-top:6px;
+    background:rgba(255,255,255,.07);border:1px solid var(--hero-line);border-radius:9px;
+    color:#fff;font:400 15.5px/1.4 'Inter Tight',sans-serif;padding:11px 13px}
+  .leadform input::placeholder,.leadform textarea::placeholder{color:#6e6e68}
+  .leadform textarea{min-height:84px;resize:vertical}
+  .leadform .hp{position:absolute;left:-9999px;top:-9999px;height:1px;width:1px;opacity:0}
   .bookbtn{display:inline-block;background:#fff;color:var(--ink);text-decoration:none;font-weight:800;
-    padding:14px 22px;border-radius:10px;margin-top:24px;font-size:15.5px}
+    border:0;cursor:pointer;padding:14px 22px;border-radius:10px;margin-top:18px;font-size:15.5px;
+    font-family:'Inter Tight',sans-serif}
   .bookbtn:hover{background:#e9e9e4}
+  .bookbtn[disabled]{opacity:.6;cursor:wait}
+  .formnote{font-size:13px;color:#8f8f89;margin-top:12px}
+  .formnote a{color:#fff}
+  .formstate{font-size:14.5px;font-weight:600;margin-top:12px;display:none}
+  .formstate.err{display:block;color:#f2998c}
+  .formstate.ok{display:block;color:#7ed09e}
 
   .sources{font-size:13.5px;color:var(--muted)}
   .sources ul{margin:12px 0 0;padding-left:18px;display:grid;gap:6px}
@@ -169,7 +189,7 @@
 <header class="site">
   <div class="wrap">
     <a href="/" aria-label="Automotive Intelligence home"><img src="/assets/avi-logo.png" alt="Automotive Intelligence"></a>
-    <a class="cta" href="mailto:michael@automotiveintelligence.io?subject=Free%20assessment%20—%20Sutherlin%20Kia%20HB%20audit">Book a free assessment</a>
+    <a class="cta" href="#book">Book a free assessment</a>
   </div>
 </header>
 
@@ -202,9 +222,7 @@
       <p class="tl">Root cause</p>
       <p>A decade of reputation, ranking authority, and review equity is stranded under the retired <b>“Car Pros Kia”</b> brand — while the new <b>“Sutherlin Kia”</b> brand and its new domain start from near-zero. Two live domains for one store are splitting whatever authority remains. Fix the migration and you inherit the trust for free. Leave it and you rebuild from scratch while competitors keep theirs.</p>
     </div>
-    <div class="note">
-      <b>Methodology &amp; scope.</b> Render-dependent checks (PageSpeed / Core Web Vitals, JS-injected schema, tag inventory, form handlers) are flagged <b>[verify on-site]</b> and are confirmed during the free assessment with a rendered crawl. Every headline finding here is visible from the public web — which is exactly how Google and your shoppers see you.
-    </div>
+    <div class="note"><b>Methodology &amp; scope.</b> Render-dependent checks (PageSpeed / Core Web Vitals, JS-injected schema, tag inventory, form handlers) are flagged <b>[verify on-site]</b> and are confirmed during the free assessment with a rendered crawl. Every headline finding here is visible from the public web — which is exactly how Google and your shoppers see you.</div>
   </div></section>
 
   <!-- SCORECARD -->
@@ -233,8 +251,8 @@
         <thead><tr><th>Store</th><th>Location</th><th>Posture</th><th>Public review footprint</th></tr></thead>
         <tbody>
           <tr class="you"><td>Sutherlin Kia HB <span class="mono">(you)</span></td><td>18835 Beach Blvd</td><td>New brand · ex–Car Pros Kia</td><td>Equity stranded under old name</td></tr>
-          <tr><td>Sutherlin Subaru HB</td><td>18801 Beach Blvd</td><td>Sister store · ex–McKenna</td><td class="num">~4.7–4.8★ · 100–700+ reviews</td></tr>
-          <tr><td>Garden Grove Kia</td><td>Garden Grove</td><td>Independent competitor</td><td class="num">Weaker (~3.7★ on one source)</td></tr>
+          <tr><td>Sutherlin Subaru HB</td><td>18801 Beach Blvd</td><td>Sister store · ex–McKenna</td><td><span class="num">~4.7–4.8★ · 100–700+ reviews</span></td></tr>
+          <tr><td>Garden Grove Kia</td><td>Garden Grove</td><td>Independent competitor</td><td><span class="num">Weaker (~3.7★ on one source)</span></td></tr>
           <tr><td>Kia of Cerritos / Irvine</td><td>Cerritos · Irvine</td><td>Regional Kia rivals</td><td>Established, actively marketed</td></tr>
         </tbody>
       </table>
@@ -246,7 +264,6 @@
   <section><div class="wrap">
     <p class="kicker">Findings</p>
     <h2 class="sec display">Ranked by what it costs you</h2>
-
     <article class="find sev-crit">
       <div class="fh"><h3>1. Two live domains for one store</h3><span class="chip p0">P0 · Critical</span></div>
       <div class="body">
@@ -357,7 +374,7 @@
   </div></section>
 
   <!-- CTA -->
-  <section><div class="wrap">
+  <section id="book"><div class="wrap">
     <div class="cta-block">
       <h2 class="display">You did the expensive part.<br>The cleanup is cheap.</h2>
       <p>You bought a great store on a premium Beach Blvd corner with a decade of goodwill baked in. Until the migration is done, you're paying full price for a store whose reputation and rankings still ring up under the previous owner's name. Consolidate the domain and migrate the profiles correctly and you <em>inherit</em> ~10 years of authority in weeks, not years.</p>
@@ -366,7 +383,19 @@
         <div class="step"><div class="p">STEP 2 · $2,500</div><div class="t">Deep audit + blueprint</div><div class="d">Full technical + local + reputation audit with a page-level migration map.</div></div>
         <div class="step"><div class="p">STEP 3 · $7,500</div><div class="t">Full implementation</div><div class="d">Domain consolidation, profile/citation migration, schema/AEO, analytics rebuild, review engine.</div></div>
       </div>
-      <a class="bookbtn" href="mailto:michael@automotiveintelligence.io?subject=Free%20assessment%20—%20Sutherlin%20Kia%20HB%20audit">Book the free assessment →</a>
+      <form id="lead-form" class="leadform" novalidate>
+        <div class="fgrid">
+          <label>Name*<input name="name" autocomplete="name" required placeholder="First Last"></label>
+          <label>Work email<input name="email" type="email" autocomplete="email" placeholder="you@dealership.com"></label>
+          <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(555) 555-5555"></label>
+          <label>Dealership<input name="dealership" autocomplete="organization" placeholder="Store name"></label>
+        </div>
+        <label class="full">Anything specific?<textarea name="message" placeholder="What's going on with your digital presence?"></textarea></label>
+        <input class="hp" name="company_website" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button class="bookbtn" type="submit">Book the free assessment →</button>
+        <p class="formnote">We reply within one business day. Name plus a phone or email is all we need. Prefer email? <a href="mailto:michael@automotiveintelligence.io?subject=Free%20assessment%20—%20Sutherlin%20Kia%20HB%20audit">michael@automotiveintelligence.io</a></p>
+        <p class="formstate" role="status" aria-live="polite"></p>
+      </form>
     </div>
   </div></section>
 
@@ -389,5 +418,46 @@
     <a href="mailto:michael@automotiveintelligence.io">michael@automotiveintelligence.io</a>
   </div>
 </footer>
+
+<script>
+(function () {
+  var form = document.getElementById('lead-form');
+  if (!form) return;
+  var state = form.querySelector('.formstate');
+  var btn = form.querySelector('button[type=submit]');
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var d = new FormData(form);
+    var body = {
+      name: d.get('name') || '', email: d.get('email') || '', phone: d.get('phone') || '',
+      dealership: d.get('dealership') || '', message: d.get('message') || '',
+      company_website: d.get('company_website') || '',
+      source: 'audit-sutherlin-kia-hb'
+    };
+    state.className = 'formstate';
+    if (!body.name.trim() || (!body.email.trim() && !body.phone.trim())) {
+      state.textContent = 'Please add your name and a phone or email so we can reach you.';
+      state.className = 'formstate err';
+      return;
+    }
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch('/api/lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok && j.ok }; }); })
+      .then(function (res) {
+        if (res.ok) {
+          form.innerHTML = '<p class="formstate ok" style="display:block;font-size:17px">Got it — we\'ll be in touch within one business day to schedule your assessment.</p>';
+        } else { throw new Error('ingest'); }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Book the free assessment →';
+        state.innerHTML = 'That didn\'t go through. Email us directly at <a href="mailto:michael@automotiveintelligence.io" style="color:#fff">michael@automotiveintelligence.io</a> and we\'ll take it from there.';
+        state.className = 'formstate err';
+      });
+  });
+})();
+</script>
 </body>
 </html>

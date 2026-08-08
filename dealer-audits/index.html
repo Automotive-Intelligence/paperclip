@@ -73,6 +73,31 @@
   .step p{margin:0;font-size:14.5px;color:var(--muted)}
   .step .price{font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--faint);letter-spacing:.1em;margin-top:10px;display:block}
 
+  /* lead form */
+  .leadwrap{background:var(--paper);border:2px solid var(--ink);border-radius:16px;
+    box-shadow:6px 6px 0 var(--ink);padding:28px;margin-top:26px}
+  .leadform .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:620px){.leadform .fgrid{grid-template-columns:1fr}}
+  .leadform label{display:block;font:700 11px/1.6 ui-monospace,Menlo,monospace;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .leadform label.full{margin-top:12px}
+  .leadform input,.leadform textarea{display:block;width:100%;margin-top:6px;
+    background:var(--ground);border:1px solid var(--line);border-radius:9px;
+    color:var(--ink);font:400 15.5px/1.4 'Inter Tight',sans-serif;padding:11px 13px}
+  .leadform input:focus-visible,.leadform textarea:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .leadform textarea{min-height:84px;resize:vertical}
+  .leadform .hp{position:absolute;left:-9999px;top:-9999px;height:1px;width:1px;opacity:0}
+  .bookbtn{display:inline-block;background:var(--ink);color:#fff;border:0;cursor:pointer;
+    font-weight:800;padding:14px 22px;border-radius:10px;margin-top:18px;font-size:15.5px;
+    font-family:'Inter Tight',sans-serif}
+  .bookbtn:hover{background:#333}
+  .bookbtn[disabled]{opacity:.6;cursor:wait}
+  .formnote{font-size:13px;color:var(--faint);margin-top:12px}
+  .formnote a{color:var(--ink)}
+  .formstate{font-size:14.5px;font-weight:600;margin-top:12px;display:none}
+  .formstate.err{display:block;color:var(--crit)}
+  .formstate.ok{display:block;color:var(--good)}
+
   footer{background:var(--ink);color:#9a9a94;font-size:14px;margin-top:24px}
   footer .wrap{padding:34px 24px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center}
   footer a{color:#fff;text-decoration:none;font-weight:600}
@@ -83,7 +108,7 @@
 <header>
   <div class="wrap">
     <a href="/" aria-label="Automotive Intelligence home"><img src="/assets/avi-logo.png" alt="Automotive Intelligence"></a>
-    <a class="cta" href="mailto:michael@automotiveintelligence.io?subject=Free%20dealership%20digital%20assessment">Book a free assessment</a>
+    <a class="cta" href="#contact">Book a free assessment</a>
   </div>
 </header>
 
@@ -118,7 +143,68 @@
       <div class="step"><span class="n">3</span><h4>Full implementation</h4><p>Domain consolidation, profile &amp; citation migration, schema/AEO, analytics rebuild, and a running review engine.</p><span class="price">$7,500</span></div>
     </div>
   </div></section>
+
+  <section id="contact" style="padding-top:0"><div class="wrap">
+    <h2 class="display" style="font-size:clamp(22px,3.6vw,30px)">Book the free assessment</h2>
+    <p class="sub">Name plus a phone or email is all we need. We reply within one business day.</p>
+    <div class="leadwrap">
+      <form id="lead-form" class="leadform" novalidate>
+        <div class="fgrid">
+          <label>Name*<input name="name" autocomplete="name" required placeholder="First Last"></label>
+          <label>Work email<input name="email" type="email" autocomplete="email" placeholder="you@dealership.com"></label>
+          <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(555) 555-5555"></label>
+          <label>Dealership<input name="dealership" autocomplete="organization" placeholder="Store name"></label>
+        </div>
+        <label class="full">Anything specific?<textarea name="message" placeholder="What's going on with your digital presence?"></textarea></label>
+        <input class="hp" name="company_website" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button class="bookbtn" type="submit">Book the free assessment →</button>
+        <p class="formnote">Prefer email? <a href="mailto:michael@automotiveintelligence.io?subject=Free%20dealership%20digital%20assessment">michael@automotiveintelligence.io</a></p>
+        <p class="formstate" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </div></section>
 </main>
+
+<script>
+(function () {
+  var form = document.getElementById('lead-form');
+  if (!form) return;
+  var state = form.querySelector('.formstate');
+  var btn = form.querySelector('button[type=submit]');
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var d = new FormData(form);
+    var body = {
+      name: d.get('name') || '', email: d.get('email') || '', phone: d.get('phone') || '',
+      dealership: d.get('dealership') || '', message: d.get('message') || '',
+      company_website: d.get('company_website') || '',
+      source: 'dealer-audits-hub'
+    };
+    state.className = 'formstate';
+    if (!body.name.trim() || (!body.email.trim() && !body.phone.trim())) {
+      state.textContent = 'Please add your name and a phone or email so we can reach you.';
+      state.className = 'formstate err';
+      return;
+    }
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch('/api/lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok && j.ok }; }); })
+      .then(function (res) {
+        if (res.ok) {
+          form.innerHTML = '<p class="formstate ok" style="display:block;font-size:17px">Got it — we\'ll be in touch within one business day to schedule your assessment.</p>';
+        } else { throw new Error('ingest'); }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Book the free assessment →';
+        state.innerHTML = 'That didn\'t go through. Email us directly at <a href="mailto:michael@automotiveintelligence.io">michael@automotiveintelligence.io</a> and we\'ll take it from there.';
+        state.className = 'formstate err';
+      });
+  });
+})();
+</script>
 
 <footer>
   <div class="wrap">

@@ -1,0 +1,176 @@
+{
+  "slug": "sutherlin-kia-huntington-beach",
+  "title": "Sutherlin Kia Huntington Beach — Digital Diagnostic | Automotive Intelligence",
+  "meta_description": "Digital diagnostic of Sutherlin Kia Huntington Beach: rebrand-migration teardown, health scorecard, 8 findings, and a 30/60/90 fix plan.",
+  "noindex": true,
+  "grade": "D–",
+  "gauge_pct": 76,
+  "hero": {
+    "title_html": "Sutherlin Kia<br>Huntington Beach",
+    "sub": "A top-agency teardown of the store's digital presence — read like a vehicle diagnostic: every warning light, ranked by what it's costing you.",
+    "meta": [
+      ["PROPERTY", "sutherlinkia.com"],
+      ["LOCATION", "18835 Beach Blvd, Huntington Beach, CA"],
+      ["DATE", "Aug 8, 2026"]
+    ]
+  },
+  "verdict": {
+    "title": "High-risk transition — high upside in the next 60 days",
+    "text": "A strong, decade-established store is wearing a brand-new digital identity the market hasn't caught up to. The store is healthy; the digital migration was never run. That gap is fixable — and cheap relative to what it's leaking."
+  },
+  "thesis": {
+    "kicker": "The one finding that matters most",
+    "headline": "You bought ten years of trust. It's ringing up under the old name.",
+    "label": "Root cause",
+    "html": "A decade of reputation, ranking authority, and review equity is stranded under the retired <b>“Car Pros Kia”</b> brand — while the new <b>“Sutherlin Kia”</b> brand and its new domain start from near-zero. Two live domains for one store are splitting whatever authority remains. Fix the migration and you inherit the trust for free. Leave it and you rebuild from scratch while competitors keep theirs."
+  },
+  "note_html": "<b>Methodology &amp; scope.</b> Render-dependent checks (PageSpeed / Core Web Vitals, JS-injected schema, tag inventory, form handlers) are flagged <b>[verify on-site]</b> and are confirmed during the free assessment with a rendered crawl. Every headline finding here is visible from the public web — which is exactly how Google and your shoppers see you.",
+  "scorecard": {
+    "headline": "Seven systems, checked",
+    "cards": [
+      { "name": "Brand &amp; Domain Migration", "grade": "F", "tone": "crit", "text": "Two live domains, split authority, no visible consolidation strategy." },
+      { "name": "Local SEO &amp; Google Profile", "grade": "D–", "tone": "crit", "text": "Review &amp; citation equity trapped under the retired “Car Pros Kia” name." },
+      { "name": "Reputation / Reviews", "grade": "C", "tone": "warn", "text": "Strong legacy volume (1,700+ Yelp) — but under the wrong brand, not carried forward." },
+      { "name": "Technical SEO", "grade": "C–", "tone": "warn", "text": "Legacy templated build; duplicate-domain &amp; canonical risk. <span class=\"mono\">[verify]</span>" },
+      { "name": "Website UX &amp; Conversion", "grade": "C+", "tone": "warn", "text": "OEM-compliant template; conversion hinges on lead-path hygiene. <span class=\"mono\">[verify]</span>" },
+      { "name": "Paid Media &amp; Analytics", "grade": "—", "tone": "neutral", "text": "Attribution almost certainly fragmented across two domains and the rebrand." },
+      { "name": "AI / Answer-Engine Readiness", "grade": "D", "tone": "crit", "text": "Inconsistent name + brand ambiguity make you hard for ChatGPT / AI Overviews to cite." }
+    ]
+  },
+  "context": {
+    "headline": "A strong operator wearing a new jersey",
+    "lead_html": "Sutherlin Automotive Group (family-owned, ~50 years, CEO Brett Sutherlin) entered California in Sept 2025 with McKenna Subaru, then rebranded the Kia store next door — the former <b>Car Pros Kia Huntington Beach</b> — as Sutherlin Kia. The building changed hands cleanly. The digital identity didn't migrate with it.",
+    "table_head": ["Store", "Location", "Posture", "Public review footprint"],
+    "table_rows": [
+      { "you": true, "cells": ["Sutherlin Kia HB <span class=\"mono\">(you)</span>", "18835 Beach Blvd", "New brand · ex–Car Pros Kia", "Equity stranded under old name"] },
+      { "cells": ["Sutherlin Subaru HB", "18801 Beach Blvd", "Sister store · ex–McKenna", "<span class=\"num\">~4.7–4.8★ · 100–700+ reviews</span>"] },
+      { "cells": ["Garden Grove Kia", "Garden Grove", "Independent competitor", "<span class=\"num\">Weaker (~3.7★ on one source)</span>"] },
+      { "cells": ["Kia of Cerritos / Irvine", "Cerritos · Irvine", "Regional Kia rivals", "Established, actively marketed"] }
+    ],
+    "after_html": "The moat is real: the store you rebranded built <b>1,700+ Yelp reviews and 460+ on Cars.com</b>, with KBB dealer ratings of 4.3–4.7. Today that moat protects a name you no longer use. The whole game is to <em>inherit</em> it, not abandon it."
+  },
+  "findings": [
+    {
+      "title": "1. Two live domains for one store",
+      "chip": "P0 · Critical", "chip_class": "p0", "severity": "crit",
+      "rows": [
+        ["Issue", "Both <span class=\"mono\">sutherlinkia.com</span> (new) and <span class=\"mono\">orangecountykia.com</span> (legacy) resolve as live dealership sites. The legacy domain even renders the <em>new</em> title tag while its body still says “Car Pros Kia.” One store, two front doors."],
+        ["Evidence", "Google indexes both hosts for identical inventory; legacy interior pages (<span class=\"mono\">/promotions/index.htm</span>, <span class=\"mono\">/service/center.htm</span>) still carry Car Pros branding at the same address &amp; phone."],
+        ["Impact", "<span class=\"impact-hi\">High.</span> Link authority, crawl budget, and ranking signals split across two domains — neither ranks as well as one consolidated site. Pixels &amp; analytics fragment too."],
+        ["Fix", "Pick the canonical domain (<b>recommend sutherlinkia.com</b>). <strong>301-redirect every legacy URL to its exact equivalent</strong> — page-to-page, not blanket-to-home. Keep the old domain redirecting 12+ months. Verify both in Search Console and file Change of Address."]
+      ]
+    },
+    {
+      "title": "2. Migrate the Google Business Profile in place — never recreate it",
+      "chip": "P0 · Critical", "chip_class": "p0", "severity": "crit",
+      "rows": [
+        ["Issue", "The classic rebrand mistake is spinning up a <em>new</em> profile for “Sutherlin Kia” and orphaning the decade-old Car Pros Kia listing with all its reviews and local ranking history."],
+        ["Impact", "<span class=\"impact-hi\">Severe.</span> A new listing starts at zero reviews and zero local authority; Google may flag a same-address duplicate and suppress both."],
+        ["Fix", "Edit the <strong>existing</strong> profile's name to “Sutherlin Kia Huntington Beach,” update the URL/photos/hours. Google preserves reviews and ranking through an in-place name change. Merge or remove any duplicate — never run both."]
+      ]
+    },
+    {
+      "title": "3. Name inconsistency across the citation graph",
+      "chip": "P0 · Critical", "chip_class": "p0", "severity": "crit",
+      "rows": [
+        ["Issue", "The store's <b>name</b> reads “Car Pros Kia” on Yelp, Cars.com, CARFAX, KBB, DealerRater &amp; CarGurus — but “Sutherlin Kia” on the site. Address and phones are consistent (good); the name mismatch alone breaks Google's entity resolution."],
+        ["Impact", "<span class=\"impact-hi\">High</span> on map-pack ranking and on AI answer engines."],
+        ["Fix", "Citation cleanup across the top 20 directories — start with the <b>Kia OEM locator</b>, Google, Bing, Apple Maps, then the big-4 shopping sites. Do the OEM locator and maps by hand; a tool accelerates the long tail."]
+      ]
+    },
+    {
+      "title": "4. No public “we've rebranded” bridge",
+      "chip": "P1 · High", "chip_class": "p1", "severity": "warn",
+      "rows": [
+        ["Issue", "Nothing connects “Car Pros Kia” ↔ “Sutherlin Kia.” Returning customers Googling the old name can't tell it's the same store, same building, same service department."],
+        ["Impact", "<span class=\"impact-hi\">High</span> on returning-customer retention and service-drive traffic — the most profitable traffic a dealer has."],
+        ["Fix", "Persistent “Car Pros Kia is now Sutherlin Kia — same team, same location” notice on-site, in the Google profile description, and on a short FAQ/press page. Protects branded search for years."]
+      ]
+    },
+    {
+      "title": "5. Reputation: great asset, wrong label",
+      "chip": "P1 · High", "chip_class": "p1", "severity": "warn",
+      "rows": [
+        ["Issue", "1,700+ Yelp and 460+ Cars.com reviews all live under “Car Pros Kia.” Under the new brand, fresh shoppers see a near-empty history and assume you're unproven."],
+        ["Impact", "<span class=\"impact-hi\">High</span> on close rate — reviews are the #1 trust factor in auto retail."],
+        ["Fix", "Preserve legacy reviews via in-place renames; launch an aggressive review-generation cadence (SMS/email at every sale &amp; RO); add a Google-review-backed testimonials strip on-site; respond to every review within 24–48h."]
+      ]
+    },
+    {
+      "title": "6. Technical SEO on a legacy templated build",
+      "chip": "P1 · High", "chip_class": "p1", "severity": "warn",
+      "rows": [
+        ["Issue", "URL fingerprint (<span class=\"mono\">/new-inventory/index.htm</span>, <span class=\"mono\">/service/center.htm</span>) is the classic Cox Dealer.com / DealerOn-family pattern — OEM-compliant but shared by thousands of stores. <span class=\"mono\">[verify vendor + package]</span>"],
+        ["Checks", "Duplicate content across two domains (canonicals likely not cross-pointing) · self-canonical hygiene on VDP/SRP · brand strings still mixed in templates · Core Web Vitals on mobile <span class=\"mono\">[verify]</span> · Local/Vehicle/Review schema must carry the <em>new</em> name <span class=\"mono\">[verify]</span> · legacy sitemap still feeding Google."],
+        ["Impact", "<span class=\"impact-hi\">High</span> (duplicate/canonical) → <span class=\"impact-med\">Medium</span> (speed/schema)."],
+        ["Fix", "After domain consolidation, run a rendered crawl + PageSpeed on home/SRP/VDP + Rich Results validation; ticket by severity."]
+      ]
+    },
+    {
+      "title": "7. Conversion &amp; analytics hygiene",
+      "chip": "P2 · Verify", "chip_class": "p2", "severity": "low",
+      "rows": [
+        ["Tune", "One primary CTA per template · trim lead-form fields to name + contact + vehicle · one-tap click-to-call above the fold + sticky mobile call/text bar · confirm chat/text route into the CRM (not a dead widget) · digital-retail tools (payment, trade, pre-qual) lead-connected · service scheduler prominent and on the surviving domain."],
+        ["Critical", "<strong>Rebuild GA4 + call tracking + form events on the canonical domain.</strong> A rebrand + domain split is the #1 cause of “our leads dropped” that's actually just broken tracking."]
+      ]
+    },
+    {
+      "title": "8. AI / Answer-Engine readiness (where we live)",
+      "chip": "P1 · High", "chip_class": "p1", "severity": "crit",
+      "rows": [
+        ["Issue", "Shoppers now ask ChatGPT, AI Overviews &amp; Perplexity “best Kia dealer near Huntington Beach.” They answer from consistent, structured entity data — and right now they see a fractured entity: two domains, two names, reviews on a brand you dropped."],
+        ["Impact", "<span class=\"impact-hi\">High and growing</span> — the fastest-shifting acquisition channel in auto retail, and you're near-invisible or mislabeled in it."],
+        ["Fix", "Findings 1–3 <em>are</em> the AEO foundation. Then add complete AutoDealer / LocalBusiness + Review + FAQ schema with the new name, and publish a crisp factual “About Sutherlin Kia Huntington Beach” entity page (incl. the Car Pros → Sutherlin history) that engines can quote verbatim."]
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "num": "30", "label": "Stop the bleeding · P0",
+      "items": [
+        "Pick canonical domain; 301-map every legacy URL → survivor",
+        "Rename the existing Google Business Profile (do not recreate)",
+        "Reconcile the name on the top 20 citations — OEM locator + maps first",
+        "Verify both domains in Search Console; file Change of Address; submit clean sitemap",
+        "Re-instrument GA4 + call/form tracking on the surviving domain"
+      ]
+    },
+    {
+      "num": "60", "label": "Reclaim the equity · P1",
+      "items": [
+        "Publish the “Car Pros Kia is now Sutherlin Kia” bridge (site + profile + FAQ)",
+        "Deploy AutoDealer / LocalBusiness / Review / FAQ schema with the new name",
+        "Launch review-generation cadence + a 24–48h response SLA",
+        "Rendered technical crawl + PageSpeed/CWV pass on home/SRP/VDP",
+        "Homepage trust strip: live Google rating + testimonials"
+      ]
+    },
+    {
+      "num": "90", "label": "Compound the lead · P2–P3",
+      "items": [
+        "CRO pass: single primary CTA, form-field reduction, sticky mobile call/text",
+        "Confirm chat/text CRM routing; digital-retail tools lead-connected",
+        "Local content: Huntington Beach / Orange County &amp; service-drive pages",
+        "AEO monitoring: track how ChatGPT / AI Overviews / Perplexity describe the store"
+      ]
+    }
+  ],
+  "cta": {
+    "headline_html": "You did the expensive part.<br>The cleanup is cheap.",
+    "text_html": "You bought a great store on a premium Beach Blvd corner with a decade of goodwill baked in. Until the migration is done, you're paying full price for a store whose reputation and rankings still ring up under the previous owner's name. Consolidate the domain and migrate the profiles correctly and you <em>inherit</em> ~10 years of authority in weeks, not years.",
+    "steps": [
+      { "p": "STEP 1 · FREE", "t": "30-min assessment", "d": "We run the live rendered crawl, pull your real profile + citation state, and hand you a fixed-scope migration plan." },
+      { "p": "STEP 2 · $2,500", "t": "Deep audit + blueprint", "d": "Full technical + local + reputation audit with a page-level migration map." },
+      { "p": "STEP 3 · $7,500", "t": "Full implementation", "d": "Domain consolidation, profile/citation migration, schema/AEO, analytics rebuild, review engine." }
+    ],
+    "mailto_subject": "Free%20assessment%20—%20Sutherlin%20Kia%20HB%20audit",
+    "form_source": "audit-sutherlin-kia-hb"
+  },
+  "sources": [
+    "Sutherlin Kia Huntington Beach — <a href=\"https://www.sutherlinkia.com/\" rel=\"noopener\">sutherlinkia.com</a>",
+    "Legacy domain (Car Pros Kia) — <a href=\"https://www.orangecountykia.com/\" rel=\"noopener\">orangecountykia.com</a>",
+    "Sutherlin acquires McKenna Subaru (CA entry) — <a href=\"https://www.prnewswire.com/news-releases/pinnacle-mergers--acquisitions-sutherlin-automotive-group-acquires-mckenna-subaru-sets-sights-on-building-largest-subaru-dealership-in-the-united-states-302570162.html\" rel=\"noopener\">PR Newswire</a> · <a href=\"https://digitaldealer.com/news/sutherlin-automotive-group-acquires-mckenna-subaru-sets-sights-on-building-largest-subaru-dealership-in-the-united-states/167531/\" rel=\"noopener\">Digital Dealer</a>",
+    "Car Pros Kia HB reviews — <a href=\"https://www.yelp.com/biz/car-pros-kia-huntington-beach-huntington-beach-4\" rel=\"noopener\">Yelp (1,700+)</a> · <a href=\"https://www.cars.com/dealers/202615/car-pros-kia-huntington-beach/\" rel=\"noopener\">Cars.com (460+)</a> · <a href=\"https://www.kbb.com/dealers/huntington-beach-ca/65471391/car-pros-kia-huntington-beach/\" rel=\"noopener\">KBB</a>",
+    "Sister store — <a href=\"https://www.sutherlinsubaruhb.com/\" rel=\"noopener\">Sutherlin Subaru HB</a> · Competitor — <a href=\"https://www.ggkia.com/\" rel=\"noopener\">Garden Grove Kia</a>"
+  ]
+}
