@@ -4704,6 +4704,23 @@ def validate_key(authorization: Optional[str] = Header(None)):
     return True
 
 
+def validate_bookd_agent_key(authorization: Optional[str] = Header(None)):
+    """Auth for the Book'd partner-agent port (/bookd/agent/* + /bookd/mcp) ONLY.
+
+    Deliberately a SEPARATE credential universe from the master API_KEYS: the partner
+    key (env BOOKD_AGENT_KEYS, comma-separated) unlocks nothing else in this app, and
+    master keys do NOT unlock this surface. Scoped grant, independent revocation."""
+    allowed = [k.strip() for k in (os.getenv("BOOKD_AGENT_KEYS") or "").split(",") if k.strip()]
+    if not allowed:
+        raise HTTPException(status_code=503, detail="Book'd agent port is not enabled.")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split("Bearer ", 1)[1].strip()
+    if not any(hmac.compare_digest(token, k) for k in allowed):
+        raise HTTPException(status_code=403, detail="Invalid Book'd agent key.")
+    return True
+
+
 def validate_routine_or_key(authorization: Optional[str] = Header(None)):
     """Auth for the web-based Slipstream routine endpoints (blog-image + social
     publish). Accepts the master API key OR the scoped SLIPSTREAM_ROUTINE_TOKEN,
@@ -5840,6 +5857,113 @@ async def run_lead_reconcile_endpoint(
     result = await asyncio.to_thread(
         reconcile, str(payload.get("brand") or "aipg"),
         int(payload.get("hours") or 24), commit=bool(payload.get("commit", True)))
+    return JSONResponse(content=result)
+
+
+# --------------------------------------------------------------------------- #
+# Book'd partner-agent port (Ryan's Hermes agent <-> AVO, Book'd-walled).
+# Auth = validate_bookd_agent_key (scoped BOOKD_AGENT_KEYS, NEVER master API_KEYS).
+# Core lives in services/bookd_agent + services/bookd_handoff; MCP front door in
+# services/bookd_mcp. Admin handoff endpoints (master key) sit further below.
+# --------------------------------------------------------------------------- #
+@app.post("/bookd/agent/message")
+async def bookd_agent_message_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """One conversational turn with the Book'd-walled ops agent (answer-only)."""
+    validate_bookd_agent_key(authorization)
+    from services.bookd_agent import handle_message
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        handle_message, payload.get("conversation_id"),
+        str(payload.get("message") or ""), source="hermes-rest")
+    return JSONResponse(content=result)
+
+
+@app.get("/bookd/agent/status")
+async def bookd_agent_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Current Book'd workstream status (read-only, secret-scanned)."""
+    validate_bookd_agent_key(authorization)
+    from services.bookd_agent import status
+    return JSONResponse(content=await asyncio.to_thread(status))
+
+
+@app.post("/bookd/agent/handoff")
+async def bookd_agent_handoff_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Secure credential handoff: encrypted at rest, Michael approves the install."""
+    validate_bookd_agent_key(authorization)
+    from services.bookd_handoff import stage
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        stage, str(payload.get("key_name") or ""), str(payload.get("value") or ""),
+        "hermes-rest")
+    return JSONResponse(content=result)
+
+
+@app.post("/bookd/mcp")
+async def bookd_mcp_endpoint(
+    request: Request, authorization: Optional[str] = Header(None),
+):
+    """Stateless MCP (Streamable HTTP, JSON responses) over the same walled core."""
+    validate_bookd_agent_key(authorization)
+    from services.bookd_mcp import handle_rpc
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={
+            "jsonrpc": "2.0", "id": None,
+            "error": {"code": -32700, "message": "parse error"}})
+    if isinstance(payload, list):                      # JSON-RPC batch
+        responses = [r for r in (await asyncio.gather(
+            *[asyncio.to_thread(handle_rpc, p) for p in payload])) if r is not None]
+        return JSONResponse(content=responses) if responses else JSONResponse(
+            status_code=202, content=None)
+    response = await asyncio.to_thread(handle_rpc, payload)
+    if response is None:                               # notification: acknowledge only
+        return JSONResponse(status_code=202, content=None)
+    return JSONResponse(content=response)
+
+
+@app.get("/bookd/mcp")
+async def bookd_mcp_get_endpoint(authorization: Optional[str] = Header(None)):
+    """Stateless server: no SSE stream to open. 405 tells clients to POST."""
+    validate_bookd_agent_key(authorization)
+    return JSONResponse(status_code=405, content={"detail": "stateless MCP: POST only"})
+
+
+@app.get("/admin/bookd-handoffs")
+async def admin_bookd_handoffs_endpoint(authorization: Optional[str] = Header(None)):
+    """Master-key admin: list staged/revealed credential handoffs (names only)."""
+    validate_key(authorization)
+    from services.bookd_handoff import list_pending
+    return JSONResponse(content={"handoffs": await asyncio.to_thread(list_pending)})
+
+
+@app.post("/admin/bookd-handoff-reveal")
+async def admin_bookd_handoff_reveal_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Master-key admin: ONE-SHOT decrypt of a staged handoff for manual install."""
+    validate_key(authorization)
+    from services.bookd_handoff import reveal
+    result = await asyncio.to_thread(reveal, int((payload or {}).get("id") or 0))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/bookd-handoff-applied")
+async def admin_bookd_handoff_applied_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Master-key admin: mark a revealed handoff as installed in Doppler."""
+    validate_key(authorization)
+    from services.bookd_handoff import mark_applied
+    result = await asyncio.to_thread(mark_applied, int((payload or {}).get("id") or 0))
     return JSONResponse(content=result)
 
 
