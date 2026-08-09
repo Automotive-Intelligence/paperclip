@@ -3287,6 +3287,25 @@ scheduler.add_job(_run_sdr_daily, CronTrigger(hour=6, minute=15, timezone=CST),
     replace_existing=True, misfire_grace_time=3600)
 
 
+def _run_first_touch_daily():
+    """Weekdays 10:05 CT: SP4 autonomous first touch (owner amendment
+    2026-08-07, no approval queue). The engine carries the full guardrail
+    stack; SDR_FIRST_TOUCH_ENABLED=1 is the kill switch it checks per send."""
+    from services.sdr_first_touch import run_first_touch
+    try:
+        out = run_first_touch(commit=True)
+        logging.info("[first-touch] %s", {k: out[k] for k in
+                     ("considered", "sent", "exceptions", "skipped_touched")})
+    except Exception as e:
+        logging.error("[first-touch] run failed: %s", e)
+
+
+scheduler.add_job(_run_first_touch_daily,
+    CronTrigger(day_of_week="mon-fri", hour=10, minute=5, timezone=CST),
+    id="sdr_first_touch_daily", name="SDR First Touch (SP4, weekdays 10:05 CT)",
+    replace_existing=True, misfire_grace_time=3600)
+
+
 def _run_reply_sync():
     """Hourly: Instantly replies -> the brand's Twenty (idempotent per message
     id via intent_inbound). Positives surface with a note + hot-reply SMS;
@@ -5782,6 +5801,23 @@ async def run_reply_sync_endpoint(
     from services.instantly_reply_sync import run_reply_sync
     payload = payload or {}
     result = await asyncio.to_thread(run_reply_sync, bool(payload.get("commit")))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/run-first-touch")
+async def run_first_touch_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """SP4: autonomous first touch, no approval queue (owner amendment
+    2026-08-07; spec 2026-08-07-sdr-first-touch-design.md). Dry-run by
+    default; {"commit": true} sends live -- through the full guardrail stack
+    (source lock, Scrutineering Gate, 5/day/brand cap, verified recipient,
+    suppression, window, kill switch SDR_FIRST_TOUCH_ENABLED)."""
+    validate_key(authorization)
+    from services.sdr_first_touch import run_first_touch
+    payload = payload or {}
+    result = await asyncio.to_thread(run_first_touch, bool(payload.get("commit")))
     return JSONResponse(content=result)
 
 
