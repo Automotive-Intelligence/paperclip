@@ -59,6 +59,23 @@ _JUNK_DOMAIN_HOSTS = frozenset({
     "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com",
 })
 
+# Franchise/corporate brands, never independent owner-operators -- the exact
+# opposite of WD's founder/owner_operator ICP. Michael, 2026-08-11: "let's
+# kick all Keller Williams listings, no need to chase." Generalized to the
+# rest of the real-estate franchise class (Coldwell Banker also surfaced in
+# manual research 2026-08-09) since the same mismatch applies to all of them.
+# Name-matched, case-insensitive, substring -- catches "Keller Williams
+# Allen - Kim McCarty Group" as well as the bare corporate office listing.
+_FRANCHISE_MARKERS = (
+    "keller williams", "coldwell banker", "re/max", "remax", "century 21",
+    "berkshire hathaway homeservices", "compass real estate", "exp realty",
+)
+
+
+def _is_franchise(name: str) -> bool:
+    n = (name or "").strip().lower()
+    return any(marker in n for marker in _FRANCHISE_MARKERS)
+
 
 def _places_key() -> str:
     key = (os.getenv("GOOGLE_PLACES_API_KEY") or "").strip()
@@ -89,12 +106,15 @@ def search_places(query: str, *, limit: int = 8) -> List[dict]:
     r.raise_for_status()
     out = []
     for p in r.json().get("places", []):
+        name = (p.get("displayName") or {}).get("text", "").strip()
         site = p.get("websiteUri") or ""
         domain = _domain_host(site)
         if not domain or domain in _JUNK_DOMAIN_HOSTS:
             continue
+        if _is_franchise(name):
+            continue
         out.append({
-            "name": (p.get("displayName") or {}).get("text", "").strip(),
+            "name": name,
             "domain": domain,
             "rating": p.get("rating"),
             "review_count": p.get("userRatingCount"),
