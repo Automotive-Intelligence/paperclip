@@ -5838,6 +5838,30 @@ async def run_first_touch_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-source-discovery")
+async def run_source_discovery_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Automated NEW-prospect sourcing via Google Places (New). Dry-run by
+    default; {"commit": true} loads genuinely new companies into the brand's
+    Twenty (plain name+domain only -- the verification gate does all
+    defect/contact/claim work on its own next sweep, unchanged). WD-only
+    today. NOT on a cron -- Places has real per-request cost, so cadence and
+    batch size are an owner call, same class of decision as ad spend.
+    Body: {"brand": "wd", "commit": bool, "cities": [str,...]}."""
+    validate_key(authorization)
+    from services.sdr_source_discovery import discover_new_companies
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        discover_new_companies,
+        payload.get("brand") or "wd",
+        commit=bool(payload.get("commit")),
+        cities=payload.get("cities"),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/run-inbox-janitor")
 async def run_inbox_janitor_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
