@@ -108,6 +108,28 @@ def test_read_telemetry_file_rejects_binary_paths(monkeypatch):
     assert "unsupported" in out2.lower() or "invalid" in out2.lower()
 
 
+def test_state_snapshot_fetches_all_core_files_concurrently(monkeypatch):
+    """Cold-turn latency: all core files fetched (order-independent), concatenated."""
+    import time as _t
+    seen = []
+
+    def _slow_fetch(path):
+        _t.sleep(0.05)                    # simulate GitHub latency; parallel << 15*0.05
+        seen.append(path)
+        return f"body of {path}"
+
+    monkeypatch.setattr(MA, "_fetch_file", _slow_fetch)
+    MA._snapshot_cache.update(ts=0.0, text="")
+    t0 = _t.time()
+    text = MA._state_snapshot()
+    elapsed = _t.time() - t0
+    assert set(seen) == set(MA._CORE_STATE_FILES)          # every core file fetched
+    for path in MA._CORE_STATE_FILES:
+        assert path in text                                 # each labeled in the snapshot
+    assert elapsed < 0.05 * len(MA._CORE_STATE_FILES) / 2   # concurrent, not sequential
+    MA._snapshot_cache.update(ts=0.0, text="")              # leave cache clean
+
+
 def test_fetch_file_is_secret_scrubbed(monkeypatch):
     class _R:
         ok = True

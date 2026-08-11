@@ -116,11 +116,11 @@ def _state_snapshot() -> str:
     now = time.time()
     if _snapshot_cache["text"] and now - _snapshot_cache["ts"] < _SNAPSHOT_TTL_S:
         return _snapshot_cache["text"]
-    parts: List[str] = []
-    for path in _CORE_STATE_FILES:
-        body = _fetch_file(path)
-        if body:
-            parts.append(f"----- {path} -----\n{body}")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        bodies = list(pool.map(_fetch_file, _CORE_STATE_FILES))
+    parts = [f"----- {path} -----\n{body}"
+             for path, body in zip(_CORE_STATE_FILES, bodies) if body]
     text = "\n\n".join(parts) or "(live telemetry unavailable right now)"
     _snapshot_cache.update(ts=now, text=text)
     return text
