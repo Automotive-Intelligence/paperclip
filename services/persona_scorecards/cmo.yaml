@@ -33,36 +33,28 @@ kpis:
     threshold_yellow: 0
     threshold_red: -5
     cadence: weekly
-    per_brand: ["worshipdigital.co", "automotiveintelligence.io", "theaiphoneguy.ai", "bookd.cx", "buildagentempire.com"]
+    per_brand: ["worshipdigital.co", "automotiveintelligence.io", "theaiphoneguy.com", "bookd.cx", "buildagentempire.com"]  # .ai->.com fixed 2026-08-11: the site migrated; GSC tracks the .com property
     levers:
       - "spawn seo_audit_agent on declining brand"
       - "redirect content lane priority to declining brand (Zernio + Higgsfield)"
 
-  - name: newsletter_open_rate
-    display: "Newsletter open rate (per-brand)"
-    source: loops
-    target: 38                  # locked 2026-06-27 — industry benchmark for engaged SMB/B2B newsletters (30-40%)
-    target_unit: "% opened"
-    threshold_yellow: 30
-    threshold_red: 22
-    cadence: weekly
-    levers:
-      - "subject-line A/B test (spawn email_optim_agent)"
-      - "list hygiene sweep (spawn list_hygiene_agent)"
-      - "sender reputation check (DKIM/SPF/DMARC verify)"
+  # newsletter_open_rate CUT 2026-08-11: the locked KPI (loops, target 38%) was set
+  # against a newsletter that does not exist on any owned brand — a KPI cannot measure
+  # a channel we do not run. Re-add when a brand actually launches a nurture/broadcast
+  # list; the Loops surface (tools/loops.py) has no analytics endpoint wrapped anyway.
 
-  - name: content_velocity
-    display: "Content posts shipped per week per brand"
-    source: buffer_higgsfield_zernio_join
-    target: 7                   # locked 2026-06-27 — Michael's call: 7 posts/brand/week
-    target_unit: "posts/week/brand"
-    threshold_yellow: 5
-    threshold_red: 3
+  - name: publishing_coverage
+    display: "Publishing coverage % — shipped vs the daily mandate, per brand x channel"
+    source: content_coverage
+    target: 95                  # NORTH-STAR (2026-08-11). >=95% green. Coverage = shipped posting-days / intended (7/day per CONNECTED channel), from the durable social_registry (paperclip #256). Replaced content_velocity (coarse 7/wk/brand) with a true per-brand x per-channel ratio now that the registry carries the platform axis and commits back.
+    target_unit: "% coverage"
+    threshold_yellow: 85        # 85-94 = yellow; <85 = red; <70 = escalate.
+    threshold_red: 70           # denominator = configured platforms INTERSECT connected; deliberately-off channels excluded, connection gaps surfaced separately in raw_payload.
     cadence: weekly
     levers:
-      - "spawn higgsfield_content_agent for under-shipping brand"
-      - "spawn zernio_repost_agent to syndicate top-performing existing content"
-      - "flag to Internal Marketing if brand-specific production lane is blocked"
+      - "spawn higgsfield_content_agent for the under-shipping brand x channel"
+      - "spawn zernio_repost_agent to syndicate top-performing existing content into empty slots"
+      - "flag a connection gap (configured channel not connected, e.g. needsReconnect) to B&T"
 
   - name: brand_voice_compliance
     display: "Brand voice + hero-metrics policy compliance (% of outbound content passing review)"
