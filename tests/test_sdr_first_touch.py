@@ -4,7 +4,7 @@ Every guardrail must fail CLOSED and die as a digest exception -- never a
 send, never a crash, never a queue. Dry-run must be a full evaluation that
 writes nothing.
 """
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -18,15 +18,16 @@ _OPP = {"id": "opp1", "companyId": "c1",
         "name": "Bel Air Partners, LLC | Website Rebuild (SDR-verified: pinch_zoom_blocked)"}
 
 
-def _wire(monkeypatch, *, opps=None, email="info@belair.com", touched=False,
-          scrutineer_block=False, suppressed=False, sends_today=0):
+def _wire(monkeypatch, *, opps=None, email="info@belair.com", touch_state=(0, None),
+          scrutineer_block=False, suppressed=False, sends_today=0, replied=False):
     # constrain to ONE brand so counts are deterministic
     monkeypatch.setattr(F, "_BRANDS", {"wd": ("callingdigital", "wd", "Worship Digital", True)})
     monkeypatch.setattr(F, "_sdr_opportunities", lambda rk: opps if opps is not None else [_OPP])
     monkeypatch.setattr(F, "_company_domain", lambda rk, cid: ("Bel Air Partners, LLC", "belair.com"))
-    monkeypatch.setattr(F, "_already_touched", lambda rk, oid: touched)
+    monkeypatch.setattr(F, "_touch_state", lambda rk, oid: touch_state)
     monkeypatch.setattr(F, "_published_email", lambda d: email)
     monkeypatch.setattr(F, "_suppressed", lambda e, b: suppressed)
+    monkeypatch.setattr(F, "_has_replied", lambda desk, em, since: replied)
     monkeypatch.setattr(F, "_scrutineer",
                         lambda *a, **k: (scrutineer_block, "generic" if scrutineer_block else "ok"))
     monkeypatch.setattr(F, "_sends_today", lambda ident: sends_today)
@@ -60,7 +61,7 @@ def test_dry_run_full_evaluation_sends_nothing(monkeypatch):
     out = F.run_first_touch(commit=False, now=_TUE_10AM)
     assert fired == []
     assert out["sent"] == 0 and out["considered"] == 1
-    assert "WOULD SEND to info@belair.com" in out["digest"]
+    assert "WOULD SEND touch 1 to info@belair.com" in out["digest"]
 
 
 def test_kill_switch_blocks_commit_sends(monkeypatch):
@@ -80,18 +81,18 @@ def test_commit_sends_once_and_marks_touched(monkeypatch):
     monkeypatch.setattr(
         "tools.brand_send.send_as_brand",
         lambda **k: fired.append(k) or SimpleNamespace(sent=True, outcome="sent"))
-    monkeypatch.setattr(F, "_mark_touched", lambda rk, oid, em: marked.append(oid))
+    monkeypatch.setattr(F, "_mark_touched", lambda rk, oid, em, touch_number=1: marked.append((oid, touch_number)))
     out = F.run_first_touch(commit=True, now=_TUE_10AM)
     assert out["sent"] == 1 and len(fired) == 1
     assert fired[0]["to"] == "info@belair.com"
     assert fired[0]["from_identity"] == "wd"
     assert fired[0]["seat"] == "sdr_first_touch"
-    assert marked == ["opp1"]
+    assert marked == [("opp1", 1)]
 
 
 def test_every_guardrail_dies_as_exception_never_a_send(monkeypatch):
     cases = [
-        dict(touched=True),                 # dedup -> skip (not exception)
+        dict(touch_state=(F.MAX_TOUCHES, date(2026, 8, 1))),  # sequence complete -> skip
         dict(email=None),                   # no verified email
         dict(suppressed=True),              # DNC
         dict(scrutineer_block=True),        # gate BLOCK
@@ -147,3 +148,95 @@ def test_cap_check_fails_closed_when_audit_store_unreachable(monkeypatch):
         raise RuntimeError("db down")
     monkeypatch.setattr(F, "_sends_today", boom)
     assert F._sends_today_safe("avi") == F.DAILY_CAP_PER_BRAND
+
+
+# ---- follow-up sequence (2026-08-11) --------------------------------------
+
+def test_touch_2_and_3_compose_no_new_fabricated_claim(monkeypatch):
+    for n in (2, 3):
+        s, b = F.compose("Bel Air Partners, LLC", "belair.com", "pinch_zoom_blocked",
+                         "Worship Digital", touch_number=n)
+        assert F.validate(s, b, company_name="Bel Air Partners, LLC", domain="belair.com",
+                          defect_kind="pinch_zoom_blocked", brand_name="Worship Digital",
+                          touch_number=n) is None
+        assert "pinch-to-zoom" in b  # same real evidence, never a new one
+        assert "—" not in b
+        assert "$" not in b and "price" not in b.lower()
+    assert "Last one from me" in F.compose("A", "a.com", "slow_load", "WD", 3)[1]
+
+
+def test_touch_2_not_due_before_the_gap(monkeypatch):
+    # touch 1 sent yesterday; touch 2 needs >=2 days -- must not fire yet.
+    _wire(monkeypatch, touch_state=(1, date(2026, 8, 10)))
+    monkeypatch.setenv("SDR_FIRST_TOUCH_ENABLED", "1")
+    fired = []
+    monkeypatch.setattr("tools.brand_send.send_as_brand",
+                        lambda **k: fired.append(k) or SimpleNamespace(sent=True, outcome="sent"))
+    out = F.run_first_touch(commit=True, now=_TUE_10AM)  # "today" = 2026-08-11
+    assert fired == []
+    assert "not due yet" in out["digest"]
+
+
+def test_touch_2_fires_after_the_gap_when_no_reply(monkeypatch):
+    # touch 1 sent 3 days ago (>=2 required), no reply -> touch 2 fires.
+    _wire(monkeypatch, touch_state=(1, date(2026, 8, 8)), replied=False)
+    monkeypatch.setenv("SDR_FIRST_TOUCH_ENABLED", "1")
+    fired = []
+    monkeypatch.setattr("tools.brand_send.send_as_brand",
+                        lambda **k: fired.append(k) or SimpleNamespace(sent=True, outcome="sent"))
+    out = F.run_first_touch(commit=True, now=_TUE_10AM)
+    assert len(fired) == 1 and out["sent"] == 1
+    assert "Last one from me" not in fired[0]["body"]  # this is touch 2, not touch 3
+    assert "touch 2" in out["digest"]
+
+
+def test_reply_stops_the_sequence_never_sends_the_next_touch(monkeypatch):
+    _wire(monkeypatch, touch_state=(1, date(2026, 8, 8)), replied=True)
+    monkeypatch.setenv("SDR_FIRST_TOUCH_ENABLED", "1")
+    fired = []
+    monkeypatch.setattr("tools.brand_send.send_as_brand",
+                        lambda **k: fired.append(k) or SimpleNamespace(sent=True, outcome="sent"))
+    out = F.run_first_touch(commit=True, now=_TUE_10AM)
+    assert fired == []
+    assert out["sent"] == 0
+    assert "replied" in out["digest"]
+
+
+def test_has_replied_fails_closed_on_gmail_error(monkeypatch):
+    def boom(desk, query, limit=5):
+        raise RuntimeError("gmail api down")
+    monkeypatch.setattr("tools.gmail_multi.search", boom)
+    assert F._has_replied("wd", "prospect@x.com", date(2026, 8, 1)) is True
+
+
+def test_has_replied_true_when_a_thread_is_found(monkeypatch):
+    monkeypatch.setattr("tools.gmail_multi.search", lambda desk, q, limit=5: [{"id": "t1"}])
+    assert F._has_replied("wd", "prospect@x.com", date(2026, 8, 1)) is True
+
+
+def test_has_replied_false_when_inbox_is_silent(monkeypatch):
+    monkeypatch.setattr("tools.gmail_multi.search", lambda desk, q, limit=5: [])
+    assert F._has_replied("wd", "prospect@x.com", date(2026, 8, 1)) is False
+
+
+def test_touch_state_read_failure_fails_closed_to_max_touches(monkeypatch):
+    import requests as req_mod
+
+    class _Resp:
+        ok = False
+    monkeypatch.setattr(F, "_twenty", lambda rk: ("https://x", {}))
+    monkeypatch.setattr(req_mod, "get", lambda *a, **k: _Resp())
+    n, d = F._touch_state("callingdigital", "opp1")
+    assert n == F.MAX_TOUCHES
+    assert d is None
+
+
+def test_sequence_completes_after_touch_3(monkeypatch):
+    _wire(monkeypatch, touch_state=(F.MAX_TOUCHES, date(2026, 8, 1)))
+    monkeypatch.setenv("SDR_FIRST_TOUCH_ENABLED", "1")
+    fired = []
+    monkeypatch.setattr("tools.brand_send.send_as_brand",
+                        lambda **k: fired.append(k) or SimpleNamespace(sent=True, outcome="sent"))
+    out = F.run_first_touch(commit=True, now=_TUE_10AM)
+    assert fired == []
+    assert "sequence complete" in out["digest"]
