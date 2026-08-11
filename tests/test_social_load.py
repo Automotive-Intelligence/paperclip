@@ -461,3 +461,46 @@ class TestScoreboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- no-tap platforms: IG/TikTok captions must never carry raw URLs ----------
+def test_strip_links_for_no_tap_removes_url_and_adds_bio_line():
+    from tools.social_load import strip_links_for_no_tap
+    out = strip_links_for_no_tap(
+        "Run the free AI Reality Check to find them: https://x.io/check?a=1\n\nMore text.")
+    assert "https://" not in out and "utm" not in out
+    assert "Run the free AI Reality Check to find them." in out
+    assert out.endswith("Link in bio.")
+
+
+def test_strip_links_no_duplicate_bio_line():
+    from tools.social_load import strip_links_for_no_tap
+    out = strip_links_for_no_tap("Grab it, link in bio. https://x.io/p")
+    assert out.count("bio") == 1
+
+
+def test_strip_links_untouched_when_no_url():
+    from tools.social_load import strip_links_for_no_tap
+    assert strip_links_for_no_tap("No links here. DM me.") == "No links here. DM me."
+
+
+def test_loader_strips_ig_but_tags_facebook(monkeypatch):
+    from tools.social_load import PostJob, load_jobs
+    captured = {}
+
+    def _publish(**kw):
+        captured[kw["platforms"][0]] = kw["content"]
+        return {"_id": "x", "status": "scheduled"}
+
+    rails = {"zernio_list": lambda: [], "zernio_publish": _publish,
+             "media_fetch": lambda url: (b"", "image/png"),
+             "media_upload": lambda **kw: "https://media.zernio.com/x.png",
+             "buffer_list": lambda cid: [], "buffer_draft": lambda *a: "[]"}
+    jobs = [PostJob(brand="avi", platform=p, content="See it: https://a.io/x",
+                    scheduled_for="2026-08-13T12:00:00", content_id="c1",
+                    entry_point="studio", account_id="acct1")
+            for p in ("instagram", "facebook")]
+    load_jobs(jobs, commit=True, rails=rails, cfg={"wd_rename_done": True})
+    assert "https://" not in captured["instagram"]
+    assert "Link in bio." in captured["instagram"]
+    assert "utm_source=facebook" in captured["facebook"]

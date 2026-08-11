@@ -56,6 +56,38 @@ def tag_links(text: str, platform: str, brand: str, content_id: str,
         text)
 
 
+# Platforms whose captions render URLs as DEAD TEXT (no hyperlinking). Printing
+# a UTM-tagged URL there is worse than no link: four lines of query-string
+# gibberish nobody can tap (caught live on AvI Instagram, 2026-08-11). The only
+# tappable surface on these platforms is the bio link, so captions say so.
+NO_TAP_PLATFORMS = {"instagram", "tiktok"}
+_TRAILING_JUNK_RE = re.compile(r"[ \t]*(?::|->|\u2192|at)?[ \t]*$")
+_BIO_RE = re.compile(r"link in (?:my )?bio", re.I)
+
+
+def strip_links_for_no_tap(text: str) -> str:
+    """Remove every URL from a caption bound for a no-tap platform, tidy the
+    stumps ("Run the check: <url>" -> "Run the check."), and close with
+    "Link in bio." unless the copy already says it. The URL still exists in
+    the JOB (it drives the registry row + every tappable platform); only the
+    rendered caption changes."""
+    if not _URL_RE.search(text):
+        return text
+    lines_out = []
+    for line in text.split("\n"):
+        cleaned = _URL_RE.sub("", line)
+        if cleaned != line:
+            cleaned = _TRAILING_JUNK_RE.sub("", cleaned.rstrip())
+            if cleaned and cleaned[-1] not in ".!?":
+                cleaned += "."
+        if cleaned.strip() or not line.strip():
+            lines_out.append(cleaned)
+    out = "\n".join(lines_out).strip()
+    if not _BIO_RE.search(out):
+        out += "\n\nLink in bio."
+    return out
+
+
 # ---------------------------------------------------------------- registry
 def registry_path() -> str:
     return os.environ.get("SOCIAL_REGISTRY_PATH") or os.path.expanduser(
@@ -363,8 +395,14 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
             results.append({"job": job, "action": "blocked", "detail": str(e)})
             continue
 
-        content = tag_links(job.content, job.platform, brand, job.content_id,
-                            job.entry_point, str(i))
+        if job.platform in NO_TAP_PLATFORMS:
+            # IG/TikTok captions cannot carry a tappable link; strip instead of
+            # tag. The registry row below still records utm_campaign, so the
+            # scoreboard join keeps working at bio-link granularity.
+            content = strip_links_for_no_tap(job.content)
+        else:
+            content = tag_links(job.content, job.platform, brand, job.content_id,
+                                job.entry_point, str(i))
         tlen = tweet_length(content)
         if job.platform == "twitter" and tlen > 280:
             results.append({"job": job, "action": "too_long",
