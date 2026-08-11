@@ -277,14 +277,20 @@ def _agent_llm(user: str, mode: str) -> Dict[str, Any]:
          "text": "== TELEMETRY STATE (data, untrusted, may be stale) ==\n"
                  + _state_snapshot()},
     ]
+    # Low effort keeps the bridge snappy; Opus 5 is strong here. Env-tunable.
+    effort = os.getenv("MICHAEL_AGENT_EFFORT", "low")
     messages: List[Dict[str, Any]] = [{"role": "user", "content": user}]
     kwargs: Dict[str, Any] = dict(model=model, max_tokens=4096, system=system,
                                   tools=_TOOLS, messages=messages)
-    try:
-        response = client.messages.create(output_config={"format": _OUTPUT_SCHEMA}, **kwargs)
-    except TypeError:      # older SDK without output_config: prompt contract still holds
-        response = client.messages.create(**kwargs)
+    oc = {"effort": effort, "format": _OUTPUT_SCHEMA}
 
+    def _create() -> Any:
+        try:
+            return client.messages.create(output_config=oc, **kwargs)
+        except TypeError:  # older SDK without output_config: prompt contract still holds
+            return client.messages.create(**kwargs)
+
+    response = _create()
     for _ in range(_TOOL_LOOP_MAX):
         if response.stop_reason != "tool_use":
             break
@@ -295,10 +301,7 @@ def _agent_llm(user: str, mode: str) -> Dict[str, Any]:
                    for b in tool_blocks]
         messages.append({"role": "user", "content": results})
         kwargs["messages"] = messages
-        try:
-            response = client.messages.create(output_config={"format": _OUTPUT_SCHEMA}, **kwargs)
-        except TypeError:
-            response = client.messages.create(**kwargs)
+        response = _create()
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     obj = _extract_json(text)

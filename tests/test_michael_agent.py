@@ -139,6 +139,37 @@ def test_michael_key_auth_is_a_separate_universe(monkeypatch):
     assert e3.value.status_code == 401
 
 
+def test_agent_llm_passes_low_effort_by_default(monkeypatch):
+    """Latency lever: the bridge answers at low effort unless MICHAEL_AGENT_EFFORT set."""
+    seen = {}
+
+    class _Resp:
+        stop_reason = "end_turn"
+        content = [type("B", (), {"type": "text",
+                                  "text": '{"speak":"hi","reply":"hi"}'})()]
+
+    class _Msgs:
+        def create(self, **kw):
+            seen.update(kw)
+            return _Resp()
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self.messages = _Msgs()
+
+    monkeypatch.setattr("anthropic.Anthropic", _Client)
+    monkeypatch.delenv("MICHAEL_AGENT_EFFORT", raising=False)
+    monkeypatch.setattr(MA, "_state_snapshot", lambda: "quiet")
+    monkeypatch.setattr(MA, "_seat_map", lambda: "seats")
+    MA._agent_llm("hi", "voice")
+    assert seen["output_config"]["effort"] == "low"
+
+    seen.clear()
+    monkeypatch.setenv("MICHAEL_AGENT_EFFORT", "medium")
+    MA._agent_llm("hi", "voice")
+    assert seen["output_config"]["effort"] == "medium"
+
+
 def test_paperclip_run_endpoint_now_requires_master_key(monkeypatch):
     from fastapi import HTTPException
     import app as APP
