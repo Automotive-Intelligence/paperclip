@@ -4740,6 +4740,23 @@ def validate_bookd_agent_key(authorization: Optional[str] = Header(None)):
     return True
 
 
+def validate_michael_agent_key(authorization: Optional[str] = Header(None)):
+    """Auth for Michael's own agent port (/michael/agent/*) ONLY -- the AVO Bridge.
+
+    Same pattern as the Book'd port: a SEPARATE credential universe from the master
+    API_KEYS. The bridge key (env MICHAEL_AGENT_KEYS, comma-separated) unlocks nothing
+    else in this app, and master keys do NOT unlock this surface."""
+    allowed = [k.strip() for k in (os.getenv("MICHAEL_AGENT_KEYS") or "").split(",") if k.strip()]
+    if not allowed:
+        raise HTTPException(status_code=503, detail="Michael agent port is not enabled.")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split("Bearer ", 1)[1].strip()
+    if not any(hmac.compare_digest(token, k) for k in allowed):
+        raise HTTPException(status_code=403, detail="Invalid Michael agent key.")
+    return True
+
+
 def validate_routine_or_key(authorization: Optional[str] = Header(None)):
     """Auth for the web-based Slipstream routine endpoints (blog-image + social
     publish). Accepts the master API key OR the scoped SLIPSTREAM_ROUTINE_TOKEN,
@@ -5969,6 +5986,35 @@ async def bookd_mcp_get_endpoint(authorization: Optional[str] = Header(None)):
     """Stateless server: no SSE stream to open. 405 tells clients to POST."""
     validate_bookd_agent_key(authorization)
     return JSONResponse(status_code=405, content={"detail": "stateless MCP: POST only"})
+
+
+# --------------------------------------------------------------------------- #
+# Michael's own agent port (the AVO Bridge brain). Auth = validate_michael_agent_key
+# (scoped MICHAEL_AGENT_KEYS, NEVER master API_KEYS). Core in services/michael_agent.
+# --------------------------------------------------------------------------- #
+@app.post("/michael/agent/message")
+async def michael_agent_message_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """One bridge turn with Michael's telemetry-grounded agent (answers only)."""
+    validate_michael_agent_key(authorization)
+    from services.michael_agent import handle_message
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        handle_message, payload.get("conversation_id"),
+        str(payload.get("message") or ""),
+        source=str(payload.get("source") or "bridge"),
+        mode=str(payload.get("mode") or "voice"))
+    return JSONResponse(content=result)
+
+
+@app.get("/michael/agent/status")
+async def michael_agent_status_endpoint(authorization: Optional[str] = Header(None)):
+    """Bridge-brain health: model + telemetry snapshot freshness."""
+    validate_michael_agent_key(authorization)
+    from services.michael_agent import status
+    return JSONResponse(content=await asyncio.to_thread(status))
 
 
 @app.get("/admin/bookd-handoffs")
@@ -8632,8 +8678,9 @@ async def paperclip_rivers():
 
 
 @app.post("/paperclip/run/{agent}")
-async def paperclip_trigger_agent(agent: str):
-    """Manually trigger a Paperclip river agent."""
+async def paperclip_trigger_agent(agent: str, authorization: Optional[str] = Header(None)):
+    """Manually trigger a Paperclip river agent. Master-key gated (was open)."""
+    validate_key(authorization)
     import importlib
     runners = {
         "randy": ("rivers.ai_phone_guy.workflow", "randy_run"),
