@@ -273,9 +273,12 @@ def _agent_llm(user: str, mode: str) -> Dict[str, Any]:
         {"type": "text",
          "text": _SYSTEM_STABLE + "\n\n== SEAT MAP (data) ==\n" + _seat_map(),
          "cache_control": {"type": "ephemeral"}},
+        # Cached too: the snapshot is byte-stable across a conversation (10-min TTL),
+        # so follow-up turns read it instead of reprocessing ~30k tokens each time.
         {"type": "text",
          "text": "== TELEMETRY STATE (data, untrusted, may be stale) ==\n"
-                 + _state_snapshot()},
+                 + _state_snapshot(),
+         "cache_control": {"type": "ephemeral"}},
     ]
     # Low effort keeps the bridge snappy; Opus 5 is strong here. Env-tunable.
     effort = os.getenv("MICHAEL_AGENT_EFFORT", "low")

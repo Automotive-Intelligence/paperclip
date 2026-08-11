@@ -185,6 +185,8 @@ def test_agent_llm_passes_low_effort_by_default(monkeypatch):
     monkeypatch.setattr(MA, "_seat_map", lambda: "seats")
     MA._agent_llm("hi", "voice")
     assert seen["output_config"]["effort"] == "low"
+    # the large state block is cached so follow-up turns don't reprocess it
+    assert seen["system"][-1].get("cache_control") == {"type": "ephemeral"}
 
     seen.clear()
     monkeypatch.setenv("MICHAEL_AGENT_EFFORT", "medium")
