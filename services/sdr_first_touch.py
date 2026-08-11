@@ -1,5 +1,19 @@
 """services/sdr_first_touch.py -- SP4: autonomous first touch, NO approval queue.
 
+FOLLOW-UP SEQUENCE (added 2026-08-11, from playbook research): a real gap this
+closed -- the engine used to send exactly one touch and never follow up. Now
+sends up to 3 touches per opportunity: touch 1 (day 0, unchanged), touch 2
+("forgot to mention", >=2 days after touch 1, same real evidence, no new
+claim -- we have exactly one verified defect and will not invent a second),
+touch 3 ("last one, promise" -- BYAF close, >=4 more days later). ALL THREE
+run through the identical guardrail stack as touch 1: same Scrutineering Gate,
+same validator, same suppression check, same window, same kill switch, same
+5/day/brand cap pool (no separate follow-up budget). The one NEW guardrail:
+before touch 2/3, `_has_replied()` checks the sending identity's real inbox
+(via the Postal-authenticated Gmail read scope, tools/gmail_multi.py) for any
+message from the recipient since the last touch -- fail closed, so a reply we
+can't confirm blocks the next touch rather than risk pitching over it.
+
 Owner decision 2026-08-07 (Michael): "no approval queue -- install guardrails in
 context and be intelligent enough that we don't need approval queues." Recorded
 as the OWNER AMENDMENT to principle 17 (docs/superpowers/specs/
@@ -10,7 +24,9 @@ The queue is replaced by CONSTRUCTION, not trust. Per candidate, in order, all
 fail-closed -- the first gate that fails records an exception line and moves on:
 
   source lock      only `SDR-verified` opportunities (gate-PASS built) are read
-  dedup            a linked "FIRST TOUCH" note on the opportunity = already sent
+  sequence         up to 3 touches/opportunity, min 2d then 4d gaps; a linked
+                   FIRST TOUCH/FOLLOW-UP 2/FOLLOW-UP 3 note on the opportunity
+                   is the durable state; a confirmed reply stops the sequence
   window           Mon-Fri 08:00-17:30 CT only
   cap              5 sends/day/brand, counted from brand_send_audit (constant,
                    NOT config -- raising it is an owner conversation)
@@ -40,7 +56,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -77,9 +93,19 @@ DEFECT_PHRASES: Dict[str, str] = {
     "slow_load": "your homepage takes noticeably long to start loading",
 }
 
+# touch_number -> (note title prefix, minimum days since the PREVIOUS touch).
+# Measured from the last touch, not touch 1, so a late touch 2 doesn't force
+# touch 3 to fire early -- stays correct under real-world scheduling drift.
+TOUCH_SCHEDULE: Dict[int, Tuple[str, int]] = {
+    1: ("FIRST TOUCH", 0),
+    2: ("FOLLOW-UP 2", 2),
+    3: ("FOLLOW-UP 3", 4),
+}
+MAX_TOUCHES = 3
+
 _SUBJECT_TMPL = "about {domain}"
 
-_BODY_TMPL = """Hi {greeting},
+_BODY_TMPL_1 = """Hi {greeting},
 
 I looked at {domain} recently, honest reason below, and noticed one thing worth a minute of your time: {defect_phrase}.
 
@@ -92,6 +118,34 @@ If you would rather not hear from me, reply no thanks and that is the end of it.
 Michael Rodriguez
 {brand_name}
 """
+
+# Touch 2: continues the SAME thread, no new claim (we have exactly one
+# verified defect and will not invent a second to match a "forgot to
+# mention" pattern that assumes fresh evidence). Restates the real finding
+# with a bit more specificity on WHY it matters, nothing fabricated.
+_BODY_TMPL_2 = """Hi {greeting},
+
+Following up on {domain}: the reason I flagged {defect_phrase} is that it is the kind of thing visitors notice in the first few seconds, before they ever read a word of your site.
+
+Still happy to send the short breakdown, free, if it would help. If it is already sorted, no need to reply.
+
+Michael Rodriguez
+{brand_name}
+"""
+
+# Touch 3: the BYAF close -- explicit permission to ignore, same real
+# evidence, no re-pitch, no new claim.
+_BODY_TMPL_3 = """Hi {greeting},
+
+Last one from me on this, promise. I know things get busy, so totally understand if the note about {defect_phrase} on {domain} slipped by.
+
+If it is not useful right now, no hard feelings, just let me know and I will leave it there.
+
+Michael Rodriguez
+{brand_name}
+"""
+
+_BODY_TMPLS: Dict[int, str] = {1: _BODY_TMPL_1, 2: _BODY_TMPL_2, 3: _BODY_TMPL_3}
 
 _FORBIDDEN = re.compile(r"price|pricing|quote|\$|cost|discount|%|\bfee\b", re.I)
 _EMDASH = "—"
@@ -135,18 +189,30 @@ def _company_domain(runtime_key: str, company_id: str) -> Tuple[str, str]:
     return (c.get("name") or "", host)
 
 
-def _already_touched(runtime_key: str, opportunity_id: str) -> bool:
+def _touch_state(runtime_key: str, opportunity_id: str) -> Tuple[int, Optional[date]]:
+    """(highest touch_number sent so far, its send date). (0, None) = never
+    touched. Fail closed: if we cannot read notes, return MAX_TOUCHES so the
+    opportunity is treated as fully sequenced (never sent to) rather than
+    risking a re-send we cannot actually verify against."""
     base, h = _twenty(runtime_key)
     r = requests.get(f"{base}/rest/noteTargets", headers=h, timeout=20,
                      params={"filter": f"targetOpportunityId[eq]:{opportunity_id}", "limit": 20})
     if not r.ok:
-        return True  # cannot verify dedup -> fail closed, do not send
+        return MAX_TOUCHES, None
+    best_n, best_date = 0, None
+    prefixes = {n: p for n, (p, _) in TOUCH_SCHEDULE.items()}
     for t in (r.json().get("data") or {}).get("noteTargets") or []:
         rn = requests.get(f"{base}/rest/notes/{t.get('noteId')}", headers=h, timeout=20)
         title = (((rn.json().get("data") or {}).get("note") or {}).get("title") or "") if rn.ok else ""
-        if title.startswith("FIRST TOUCH"):
-            return True
-    return False
+        for n, prefix in prefixes.items():
+            if title.startswith(f"{prefix} sent "):
+                try:
+                    d = date.fromisoformat(title.split("sent ", 1)[1].strip())
+                except ValueError:
+                    continue
+                if n > best_n or (n == best_n and (best_date is None or d > best_date)):
+                    best_n, best_date = n, d
+    return best_n, best_date
 
 
 # --------------------------------------------------------------------------- recipient discovery
@@ -178,25 +244,28 @@ def _defect_kind(opportunity_name: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def compose(company_name: str, domain: str, defect_kind: str, brand_name: str) -> Tuple[str, str]:
+def compose(company_name: str, domain: str, defect_kind: str, brand_name: str,
+           touch_number: int = 1) -> Tuple[str, str]:
     phrase = DEFECT_PHRASES[defect_kind].format(domain=domain)
     greeting = company_name.strip() or "there"
     subject = _SUBJECT_TMPL.format(domain=domain)
-    body = _BODY_TMPL.format(greeting=greeting, domain=domain,
-                             defect_phrase=phrase, brand_name=brand_name)
+    body = _BODY_TMPLS[touch_number].format(greeting=greeting, domain=domain,
+                                            defect_phrase=phrase, brand_name=brand_name)
     return subject, body
 
 
 def validate(subject: str, body: str, *, company_name: str, domain: str,
-             defect_kind: str, brand_name: str) -> Optional[str]:
+             defect_kind: str, brand_name: str, touch_number: int = 1) -> Optional[str]:
     """Deterministic proof the outgoing text is template + evidence, nothing
     else. Returns a reason string on failure, None when clean."""
     if _EMDASH in body or _EMDASH in subject:
         return "em_dash"
     if defect_kind not in DEFECT_PHRASES:
         return "unknown_defect_kind"
+    if touch_number not in _BODY_TMPLS:
+        return "unknown_touch_number"
     # Rebuild what the template SHOULD produce; any drift = tampering.
-    exp_subject, exp_body = compose(company_name, domain, defect_kind, brand_name)
+    exp_subject, exp_body = compose(company_name, domain, defect_kind, brand_name, touch_number)
     if subject != exp_subject or body != exp_body:
         return "copy_drift"
     # The variable slots may not smuggle pricing/number claims.
@@ -273,6 +342,23 @@ def _suppressed(email: str, desk_brand: str) -> bool:
         return True  # cannot check -> fail closed
 
 
+def _has_replied(desk: str, recipient_email: str, since: date) -> bool:
+    """True if the recipient has sent anything to the sending identity's real
+    inbox since `since` -- checked via the Postal-authenticated Gmail read
+    scope (tools/gmail_multi.py), the same inbox postal_inbox already polls.
+    Fail CLOSED: any read failure returns True (block the next touch) rather
+    than risk pitching over a reply we could not confirm."""
+    try:
+        from tools.gmail_multi import search
+        query = f"from:{recipient_email} after:{since.strftime('%Y/%m/%d')}"
+        threads = search(desk, query, limit=5)
+        return bool(threads)
+    except Exception as e:
+        logger.warning("[first-touch] reply check failed for %s (%s): %s -- blocking touch",
+                       recipient_email, desk, e)
+        return True
+
+
 # --------------------------------------------------------------------------- the engine
 
 def run_first_touch(commit: bool = False, now: Optional[datetime] = None) -> dict:
@@ -295,9 +381,18 @@ def run_first_touch(commit: bool = False, now: Optional[datetime] = None) -> dic
             oid, oname = o.get("id"), o.get("name") or ""
             company_id = o.get("companyId") or ""
             try:
-                if _already_touched(runtime_key, oid):
+                touches_sent, last_touch_date = _touch_state(runtime_key, oid)
+                if touches_sent >= MAX_TOUCHES:
                     counts["skipped_touched"] += 1
-                    lines.append(f"- {desk}: {oname[:50]} already touched, skip")
+                    lines.append(f"- {desk}: {oname[:50]} sequence complete ({touches_sent}/{MAX_TOUCHES}), skip")
+                    continue
+                touch_number = touches_sent + 1
+                _, min_gap_days = TOUCH_SCHEDULE[touch_number]
+                today = (now or datetime.now(_CT)).date()
+                if last_touch_date is not None and (today - last_touch_date).days < min_gap_days:
+                    counts["skipped_touched"] += 1
+                    lines.append(f"- {desk}: {oname[:50]} touch {touch_number} not due yet "
+                                 f"({(today - last_touch_date).days}/{min_gap_days}d), skip")
                     continue
                 if not _in_window(now):
                     exc(desk, oname[:50], "outside_window")
@@ -320,9 +415,14 @@ def run_first_touch(commit: bool = False, now: Optional[datetime] = None) -> dic
                 if _suppressed(email, desk):
                     exc(desk, email, "suppressed")
                     continue
-                subject, body = compose(company_name, domain, kind, brand_name)
+                if touch_number > 1 and last_touch_date is not None:
+                    if _has_replied(desk, email, last_touch_date):
+                        counts["skipped_touched"] += 1
+                        lines.append(f"- {desk}: {email} replied (or unverifiable), sequence stopped")
+                        continue
+                subject, body = compose(company_name, domain, kind, brand_name, touch_number)
                 v = validate(subject, body, company_name=company_name, domain=domain,
-                             defect_kind=kind, brand_name=brand_name)
+                             defect_kind=kind, brand_name=brand_name, touch_number=touch_number)
                 if v:
                     exc(desk, email, f"validator:{v}")
                     continue
@@ -331,7 +431,7 @@ def run_first_touch(commit: bool = False, now: Optional[datetime] = None) -> dic
                     exc(desk, email, f"scrutineering_block:{why[:80]}")
                     continue
                 if not commit:
-                    lines.append(f"- {desk}: WOULD SEND to {email} ({oname[:50]})")
+                    lines.append(f"- {desk}: WOULD SEND touch {touch_number} to {email} ({oname[:50]})")
                     continue
                 if not enabled:
                     exc(desk, email, "kill_switch_off (SDR_FIRST_TOUCH_ENABLED != 1)")
@@ -344,8 +444,8 @@ def run_first_touch(commit: bool = False, now: Optional[datetime] = None) -> dic
                                   from_identity=identity_label, seat=_SEAT)
                 if r.sent:
                     counts["sent"] += 1
-                    lines.append(f"- {desk}: SENT to {email} ({oname[:50]})")
-                    _mark_touched(runtime_key, oid, email)
+                    lines.append(f"- {desk}: SENT touch {touch_number} to {email} ({oname[:50]})")
+                    _mark_touched(runtime_key, oid, email, touch_number)
                 else:
                     exc(desk, email, f"send_{r.outcome}")
             except Exception as e:
@@ -364,15 +464,18 @@ def _sends_today_safe(identity_label: str) -> int:
         return DAILY_CAP_PER_BRAND
 
 
-def _mark_touched(runtime_key: str, opportunity_id: str, email: str) -> None:
-    """The durable dedup marker. Best-effort note; a failure here is logged --
-    the audit row still exists and _already_touched fails closed on read errors."""
+def _mark_touched(runtime_key: str, opportunity_id: str, email: str, touch_number: int = 1) -> None:
+    """The durable sequence-state marker. Best-effort note; a failure here is
+    logged -- the audit row still exists and _touch_state fails closed
+    (MAX_TOUCHES) on read errors, so a lost note blocks further sends rather
+    than risking a re-send."""
     try:
+        prefix, _ = TOUCH_SCHEDULE[touch_number]
         base, h = _twenty(runtime_key)
         r = requests.post(f"{base}/rest/notes", headers=h, timeout=20,
-                          json={"title": f"FIRST TOUCH sent {datetime.now(_CT).date()}",
-                                "bodyV2": {"markdown": f"Autonomous first touch to {email} "
-                                           f"via send-as-brand rail (seat {_SEAT})."}})
+                          json={"title": f"{prefix} sent {datetime.now(_CT).date()}",
+                                "bodyV2": {"markdown": f"Autonomous touch {touch_number}/{MAX_TOUCHES} "
+                                           f"to {email} via send-as-brand rail (seat {_SEAT})."}})
         nid = ((r.json().get("data") or {}).get("createNote") or {}).get("id") if r.ok else None
         if nid:
             requests.post(f"{base}/rest/noteTargets", headers=h, timeout=20,
