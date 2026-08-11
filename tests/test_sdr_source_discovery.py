@@ -70,12 +70,18 @@ def test_one_bad_query_does_not_kill_the_whole_run(monkeypatch):
     assert "Ok Co" in out["digest"]
 
 
-def test_junk_and_websiteless_results_are_dropped(monkeypatch):
+def test_junk_websiteless_and_franchise_results_are_dropped(monkeypatch):
     monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-key")
     payload = {"places": [
         {"displayName": {"text": "No Website Co"}, "rating": 4.0, "userRatingCount": 1},
         {"displayName": {"text": "Gmail Biz"}, "websiteUri": "https://gmail.com",
          "rating": 3.0, "userRatingCount": 2},
+        {"displayName": {"text": "Keller Williams Realty Allen"}, "websiteUri": "https://allenkw.com",
+         "rating": 4.7, "userRatingCount": 35},
+        {"displayName": {"text": "Keller Williams Allen- Kim McCarty-The McCarty Group Realty"},
+         "websiteUri": "https://mccartygroup.com", "rating": 4.9, "userRatingCount": 88},
+        {"displayName": {"text": "Coldwell Banker Realty Southlake"}, "websiteUri": "https://cbsouthlake.com",
+         "rating": 4.5, "userRatingCount": 60},
         {"displayName": {"text": "Real Co"}, "websiteUri": "https://real-co.com",
          "rating": 4.9, "userRatingCount": 100},
     ]}
@@ -85,6 +91,15 @@ def test_junk_and_websiteless_results_are_dropped(monkeypatch):
         results = D.search_places("test query")
     names = {r["name"] for r in results}
     assert names == {"Real Co"}
+
+
+def test_is_franchise_catches_marker_anywhere_in_the_name():
+    assert D._is_franchise("Keller Williams Realty Allen") is True
+    assert D._is_franchise("Keller Williams Allen- Kim McCarty-The McCarty Group Realty") is True
+    assert D._is_franchise("Coldwell Banker Realty Southlake") is True
+    assert D._is_franchise("RE/MAX Dallas Suburbs") is True
+    assert D._is_franchise("The McCarty Group") is False
+    assert D._is_franchise("Jeannie Anderson Group") is False
 
 
 def test_unconfigured_brand_returns_honest_message():
