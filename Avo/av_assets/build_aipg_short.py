@@ -21,7 +21,9 @@ from brand_kit import kit, font as kfont, rgb  # noqa: E402
 K = kit("aiphoneguy")          # fonts, colors, logos, CTA. Never hardcode these.
 
 AD = pathlib.Path("/Users/michaelrodriguez/paperclip/Avo/av_assets")
-BEAT = AD / "aipg_missedcall_v3.mp4"
+# Patch-free source: the fictional "Renno" chest embroidery is inpainted out
+# (remove_patch.py). Never build ads from the raw beat.
+BEAT = AD / "aipg_missedcall_v3_clean.mp4"
 VO = AD / "aipg_vo_short.mp3"
 OUT = pathlib.Path("/Users/michaelrodriguez/avo-telemetry/marketing_deliverables"
                    "/116_video_leg_activation/renders/aipg_cinematic_short_9x16.mp4")
@@ -175,7 +177,7 @@ def build_endcard(aspect):
 
 def main():
     vo_len = make_vo()
-    body = 12.05
+    body = 12.02   # clean beat is 12.04s at 24fps
     card = max(2.6, vo_len - body + 1.9)
     total = body + card
     print(f"VO {vo_len:.2f}s | beat {body:.2f}s | card {card:.2f}s | total {total:.2f}s",
