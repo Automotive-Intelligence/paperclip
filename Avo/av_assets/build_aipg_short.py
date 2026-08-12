@@ -21,9 +21,10 @@ from brand_kit import kit, font as kfont, rgb  # noqa: E402
 K = kit("aiphoneguy")          # fonts, colors, logos, CTA. Never hardcode these.
 
 AD = pathlib.Path("/Users/michaelrodriguez/paperclip/Avo/av_assets")
-# Patch-free source: the fictional "Renno" chest embroidery is inpainted out
-# (remove_patch.py). Never build ads from the raw beat.
-BEAT = AD / "aipg_missedcall_v3_clean.mp4"
+# Fully cleaned source: fictional "Renno" chest embroidery inpainted out
+# (remove_patch.py) AND facial blemishes removed (remove_blemish.py).
+# Never build ads from the raw beat.
+BEAT = AD / "aipg_missedcall_v3_final.mp4"
 VO = AD / "aipg_vo_short.mp3"
 OUT = pathlib.Path("/Users/michaelrodriguez/avo-telemetry/marketing_deliverables"
                    "/116_video_leg_activation/renders/aipg_cinematic_short_9x16.mp4")
