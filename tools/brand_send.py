@@ -88,6 +88,7 @@ BRAND_IDENTITIES: dict[str, str] = {
     "wd": "michael@worshipdigital.co",
     "avi": "michael@automotiveintelligence.io",
     "bookd": "michael@bookd.cx",
+    "aipg": "michael@theaiphoneguy.com",
 }
 
 _AUTH_ENV = "SEND_AUTHORIZED_MAILBOXES"
