@@ -82,7 +82,78 @@ phrase map is a code constant reviewed here:
 - The 5/day/brand cap is a code constant on purpose. Raising it is an owner
   conversation about cold-domain infra (primary-mailbox doctrine).
 
-## Out of scope
+## Out of scope (v1, WD rebuild motion)
 
-Sequences/follow-up touches (reply-sync + humans own the thread after touch 1);
-non-Twenty brands (AIPG/GHL later); price talk (permanent hold).
+Sequences/follow-up touches -- SHIPPED 2026-08-11, see
+`sdr_first_touch.py`'s module docstring (up to 3 touches, reply-gated).
+Price talk stays a permanent hold (unchanged).
+
+## 2026-08-11 -- SP5 direction: the no-call-close motion, AIPG-first
+
+**Owner decision (Michael, verbatim intent):** processed an external
+agency-outreach video ("2-minute audit / no-call close"). Real, reusable
+mechanics extracted (guru credibility-signaling packaging discarded):
+permission-first ask before pitching, a non-restarting 3-touch follow-up
+(shipped, above), the BYAF "you're free to say no" close (already in the
+touch-1 opt-out line; extended into follow-ups), the price-tag rule (price
+never stated alone, paired with value math the PROSPECT computes -- scoped
+to the human close call only, S5 of file 400, NOT autonomous sends), and
+the core mechanism itself: a short audit (video, in the source) that states
+one real, evidence-backed problem, the fix, the price, and a direct way to
+buy -- no call, ever.
+
+**Product-fit reasoning (Michael + Claude, 2026-08-11):** the video's own
+example product was a narrow, cheap-to-deliver, flat-monthly automation (a
+3-message review-request sequence), NOT a broad engagement. Checked each
+AVO brand against "narrow, cheap to deliver, provably automated, no setup
+fee, no minimum term":
+- WD (rebuild motion, current SP4) -- wrong shape; broad marketing work,
+  not a narrow SaaS-style deliverable. This is WHY no existing WD price
+  ($1,500/mo Foundations, $399/mo sales-floor, $482/mo verbal ruling) ever
+  cleanly fit a no-call price-in-message close -- wrong product, not just
+  wrong number.
+- AvI ($2,500 diagnostic -> $3,500/mo advisory) -- high-touch consulting,
+  wrong shape.
+- Book'd -- ALREADY self-serve, ALREADY no-call by design (live Stripe
+  checkout, $59/$69/$79 tiers, no setup fee, no minimum term). Michael,
+  2026-08-11: "I think booked would be a fit for this as well" -- flagged
+  as a strong architectural fit (Ryan's business/product/pricing; AVO
+  builds the OUTREACH layer pointing at Book'd's existing checkout, never
+  redesigns the product or price without Ryan).
+- **AIPG -- the confirmed first build.** Already a narrow, flat-monthly
+  SaaS product (Sophie, $299/$499/mo per pricing.yaml, or $482 per
+  Michael's 08-02 ruling -- UNSETTLED, same as WD, needs the deferred
+  Money Architecture session). The evidence is honestly, publicly provable
+  without any live secret-shop call at scale (legal/consent complexity,
+  doesn't safely automate): mine the business's OWN Google reviews (Places
+  New `places.reviews` field) for missed-call/no-answer language. Same
+  principle as the video's review-count-gap -- use evidence the business
+  already published, never manufacture new contact.
+
+**Real scope, not a toggle (owning the "you don't update the files"
+correction: this is the honest accounting, written down before more
+building happens):**
+1. AIPG has an active Postal token with `gmail.send` already granted
+   (verified live 2026-08-07) but is MISSING from `tools/brand_send.py`
+   `BRAND_IDENTITIES` -- a real gap, small fix.
+2. AIPG has NO Twenty workspace. SP1-4's whole pipeline (gate, engine,
+   first-touch) is built around Twenty as the opportunity store. AIPG's
+   real CRM is GHL (`tools/ghl.py` already has a `send_email` conversations
+   path). A new AIPG motion needs GHL as its store, not a Twenty shim --
+   this is new plumbing, not a flag flip.
+3. A new evidence check (missed-call review mining via Places) -- new
+   code, needs its own honesty validator (same discipline as
+   `DEFECT_PHRASES`: only what a fetched review literally says, never an
+   inferred count).
+4. A new copy template + Scrutineering pass for this motion (Sophie
+   as the fix, not a website rebuild).
+
+**Book'd: gate intentionally NOT flipped yet.** `sdr_first_touch.py`'s
+`_BRANDS["bookd"]` motion_ok stays `False` until Book'd has its OWN
+template -- flipping it today would route Book'd candidates through the
+WD rebuild-defect copy, which is false (Book'd does not sell website
+rebuilds). That would be exactly the kind of fabricated-claim mistake this
+whole system exists to prevent. Real next step once AIPG ships: a Book'd
+motion using the same review-evidence approach, built WITH Ryan's product/
+pricing sign-off (it is his business), pointing at Book'd's existing live
+checkout -- not a new price invented by AVO.

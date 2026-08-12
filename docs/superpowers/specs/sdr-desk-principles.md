@@ -41,4 +41,4 @@ Spend, pricing/quotes, contracts, discounts, and the live-send switch. The desk 
 
 ---
 
-**Build order (from the article's data + our gate-first safety):** Verification Gate (done) -> Prospect Researcher -> Voice Writer -> Reply Classifier -> Sequence Builder -> the rest. Research and voice move reply rate most; the gate makes all of it safe.
+**Build order (from the article's data + our gate-first safety):** Verification Gate (done) -> Prospect Researcher (done, SP2/SP3) -> Voice Writer (done, SP4) -> Reply Classifier (done) -> Sequence Builder (done, 2026-08-11 follow-up sequence) -> **SP5: the no-call-close motion, AIPG-first (2026-08-11, in progress)** -> Book'd (candidate, pending Ryan sign-off on product/pricing; not WD -- WD's rebuild motion is the wrong shape for a narrow no-call price-in-message close, see 2026-08-07-sdr-first-touch-design.md's 2026-08-11 addendum). Research and voice move reply rate most; the gate makes all of it safe.
