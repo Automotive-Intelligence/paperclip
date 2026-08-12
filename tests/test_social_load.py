@@ -504,3 +504,9 @@ def test_loader_strips_ig_but_tags_facebook(monkeypatch):
     assert "https://" not in captured["instagram"]
     assert "Link in bio." in captured["instagram"]
     assert "utm_source=facebook" in captured["facebook"]
+
+
+def test_strip_links_collapses_the_gap_left_by_the_url():
+    from tools.social_load import strip_links_for_no_tap
+    out = strip_links_for_no_tap("Line one.\n\nhttps://x.io/p\n\n#tag")
+    assert "\n\n\n" not in out
