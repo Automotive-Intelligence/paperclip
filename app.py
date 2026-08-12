@@ -5862,6 +5862,33 @@ async def run_source_discovery_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-aipg-no-call-close")
+async def run_aipg_no_call_close_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """SP5: the no-call-close motion, AIPG-first (Michael, 2026-08-11, after
+    processing an agency-outreach video together -- see
+    docs/superpowers/specs/2026-08-07-sdr-first-touch-design.md's 2026-08-11
+    addendum for the full product-fit reasoning). Sources DFW trades/dental/
+    PI-law prospects via Places (New), finds a real quoted missed-call
+    review, sends ONE evidence-only email via AIPG's live GHL connection
+    (not the Postal-Gmail rail -- AIPG's Postal token is needs_reauth).
+    Dry-run by default; {"commit": true} sends live through the full
+    guardrail stack (same Scrutineering Gate + kill switch as SP4, shared
+    5/day cap pool). NOT on a cron -- Places has real per-request cost, same
+    class of decision as ad spend. Body: {"commit": bool, "cities": [str,...]}."""
+    validate_key(authorization)
+    from services.sdr_aipg_no_call_close import run_no_call_close
+    payload = payload or {}
+    result = await asyncio.to_thread(
+        run_no_call_close,
+        commit=bool(payload.get("commit")),
+        cities=payload.get("cities"),
+    )
+    return JSONResponse(content=result)
+
+
 @app.post("/admin/run-inbox-janitor")
 async def run_inbox_janitor_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
