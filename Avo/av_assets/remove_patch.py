@@ -42,7 +42,7 @@ FPS = source_fps()
 PIN_T = 11.5
 BOX = (548, 1040, 92, 38)          # x, y, w, h
 SEARCH = 70                        # +/- px local search per frame
-SAD_LIMIT = 26.0                   # mean abs diff per px; above this = lost, skip
+MIN_PX = 40                        # below this the shirt is clean; skip the frame
 
 
 def frames_out():
@@ -58,77 +58,109 @@ def luma(img):
     return np.asarray(img.convert("L"), dtype=np.float32)
 
 
-def match(gray, tmpl, cx, cy):
-    """Best (x, y) for tmpl near (cx, cy), plus its mean abs difference."""
-    th, tw = tmpl.shape
-    H, W = gray.shape
-    x0, x1 = max(0, cx - SEARCH), min(W - tw, cx + SEARCH)
-    y0, y1 = max(0, cy - SEARCH), min(H - th, cy + SEARCH)
-    best, bx, by = 1e9, cx, cy
-    for y in range(y0, y1 + 1, 2):
-        row = gray[y:y + th]
-        for x in range(x0, x1 + 1, 2):
-            d = np.abs(row[:, x:x + tw] - tmpl).mean()
-            if d < best:
-                best, bx, by = d, x, y
-    return bx, by, best
+def shirt_text_mask(im):
+    """Mask the bright embroidery ANYWHERE on the navy shirt.
+
+    Locating a box failed twice: template matching latched onto plain fabric
+    (a mostly-navy template matches navy), and blob detection latched onto his
+    ear, grass and the phone. Both tried to answer "where is it", which is hard
+    because he moves and the camera pushes in.
+
+    This asks an easier question instead: which pixels are SHARP AND BRIGHT while
+    sitting on dark blue fabric? The shirt is otherwise smooth, its buttons and
+    seams are darker not brighter, and fold highlights are broad and
+    low-frequency, so a high-pass tuned to embroidery stroke width catches the
+    lettering and nothing else. No tracking required.
+    """
+    rgb = np.asarray(im, np.float32)
+    gray = np.asarray(im.convert("L"), np.float32)
+
+    # The navy region is low-frequency, so derive it at quarter scale: the
+    # full-res GaussianBlur(18) + MinFilter(21) cost 1.8s/frame for information
+    # that survives downsampling intact.
+    small = im.resize((im.width // 4, im.height // 4), Image.BILINEAR)
+    ss = np.asarray(small.filter(ImageFilter.GaussianBlur(5)), np.float32)
+    navy_s = (ss[:, :, 2] > ss[:, :, 0] + 8) & (ss.mean(2) < 110)
+    # ERODE inward: without this the mask also grabbed the shirt's outer edge
+    # against the bright background, and inpainting there would soften his
+    # silhouette. The embroidery sits well inside the garment, so a ~10px band
+    # at the boundary can be excluded with nothing lost.
+    navy_s = Image.fromarray((navy_s * 255).astype(np.uint8)).filter(
+        ImageFilter.MinFilter(7))
+    navy = np.asarray(navy_s.resize(im.size, Image.BILINEAR), np.uint8) > 127
+
+    blur_g = np.asarray(Image.fromarray(gray.astype(np.uint8)).filter(
+        ImageFilter.GaussianBlur(4)), np.float32)
+    hp = gray - blur_g
+
+    # MEASURED at a known patch (t=11.5), rather than guessed. Text pixels:
+    # gray 125-198 (median 157), high-pass median 55. Surrounding shirt: gray
+    # ~51, high-pass ~-3. That gap is the discriminator.
+    # A "whiteness" test was tried and was WRONG: the thread reads B-R = 34,
+    # i.e. distinctly blue, so keying on neutrality excluded the target itself.
+    # Broad fold highlights survive because a radius-4 high-pass barely responds
+    # to low-frequency lighting.
+    m = ((hp > 30) & (gray > 100) & navy).astype(np.uint8) * 255
+    # 13 not 7: the mask caught the bright strokes but not their anti-aliased
+    # halo, and the leftover halo alone still read as legible lettering.
+    m = np.asarray(Image.fromarray(m).filter(ImageFilter.MaxFilter(13)), np.uint8)
+    return m > 0
 
 
-def heal(img, x, y, w, h, pad=34, iters=90, radius=4, grow=4):
-    """Diffusion inpaint. Hold the pixels OUTSIDE the hole fixed and repeatedly
-    blur, so surrounding fabric propagates inward and the text is never a source
-    pixel. Blurring or median-filtering the region could NOT remove the text:
-    those spread its brightness rather than replacing it, and a legible ghost
-    survived every strength tried (blur 11/26, median 15/21)."""
-    X0, Y0 = max(0, x - pad), max(0, y - pad)
-    X1, Y1 = min(img.width, x + w + pad), min(img.height, y + h + pad)
-    ctx = img.crop((X0, Y0, X1, Y1))
+def heal_mask(im, mask, iters=80, radius=4, pad=30):
+    """Diffusion inpaint over an arbitrary mask, CROPPED to the mask's bounding
+    box. Running the iterations over the full 1080x1920 frame took ~90s each,
+    a seven-hour job for 289 frames; the marks occupy a tiny fraction of the
+    frame, so all the work outside their neighbourhood was wasted. Iterations
+    dropped to 45 at radius 4, which converges on regions this small.
+
+    Blur or median ALONE cannot remove text: they spread its brightness rather
+    than replacing it. Holding the pixels outside the hole fixed and blurring
+    repeatedly makes surrounding fabric flow inward instead.
+    """
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return im
+    x0, x1 = max(0, xs.min() - pad), min(im.width, xs.max() + pad + 1)
+    y0, y1 = max(0, ys.min() - pad), min(im.height, ys.max() + pad + 1)
+
+    ctx = im.crop((x0, y0, x1, y1))
+    sub = mask[y0:y1, x0:x1]
     arr = np.asarray(ctx, np.float32)
+    known = ~sub
+    if not known.any():
+        return im
 
-    hole = np.zeros(arr.shape[:2], bool)
-    hole[(y - Y0 - grow):(y - Y0 + h + grow), (x - X0 - grow):(x - X0 + w + grow)] = True
-    known = ~hole
     orig = arr.copy()
     cur = arr.copy()
-    cur[hole] = arr[known].mean(0)
+    cur[sub] = arr[known].mean(0)
     for _ in range(iters):
         b = np.asarray(Image.fromarray(cur.astype(np.uint8)).filter(
             ImageFilter.GaussianBlur(radius)), np.float32)
-        cur[hole] = b[hole]
+        cur[sub] = b[sub]
         cur[known] = orig[known]
 
-    m = np.zeros(arr.shape[:2], np.uint8)
-    m[hole] = 255
-    mask = Image.fromarray(m).filter(ImageFilter.GaussianBlur(7))
-    ctx.paste(Image.fromarray(cur.astype(np.uint8)), (0, 0), mask)
-    img.paste(ctx, (X0, Y0))
-    return img
+    soft = Image.fromarray((sub * 255).astype(np.uint8)).filter(
+        ImageFilter.GaussianBlur(4))
+    ctx.paste(Image.fromarray(cur.astype(np.uint8)), (0, 0), soft)
+    out = im.copy()
+    out.paste(ctx, (x0, y0))
+    return out
 
 
 def main():
     frames = frames_out()
     n = len(frames)
-    pin_i = min(n - 1, int(PIN_T * FPS))
-    print(f"{n} frames; pinned on frame {pin_i}", flush=True)
+    print(f"{n} frames @ {FPS:g}fps", flush=True)
 
-    x, y, w, h = BOX
-    tmpl = luma(Image.open(frames[pin_i]))[y:y + h, x:x + w]
-
-    positions = {}
-    for direction in (range(pin_i, -1, -1), range(pin_i, n)):
-        cx, cy = x, y
-        for i in direction:
-            g = luma(Image.open(frames[i]))
-            bx, by, sad = match(g, tmpl, cx, cy)
-            if sad <= SAD_LIMIT:
-                positions[i] = (bx, by)
-                cx, cy = bx, by
-            # lost: keep searching from the last good spot, do not paint a guess
-
-    print(f"patch located on {len(positions)}/{n} frames", flush=True)
-    for i, (px, py) in positions.items():
-        im = Image.open(frames[i]).convert("RGB")
-        heal(im, px, py, w, h).save(frames[i])
+    touched = 0
+    for fp in frames:
+        im = Image.open(fp).convert("RGB")
+        mask = shirt_text_mask(im)
+        if mask.sum() >= MIN_PX:
+            heal_mask(im, mask).save(fp)
+            touched += 1
+    print(f"embroidery suppressed on {touched}/{n} frames", flush=True)
 
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", f"{FPS:g}",
                     "-i", str(WORK / "f_%04d.png"), "-i", str(SRC),
