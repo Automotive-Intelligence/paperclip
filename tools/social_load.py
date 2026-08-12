@@ -82,7 +82,9 @@ def strip_links_for_no_tap(text: str) -> str:
                 cleaned += "."
         if cleaned.strip() or not line.strip():
             lines_out.append(cleaned)
-    out = "\n".join(lines_out).strip()
+    # Collapse the blank line the removed URL leaves behind, so IG copy does
+    # not ship with a stray gap where the link used to be.
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines_out)).strip()
     if not _BIO_RE.search(out):
         out += "\n\nLink in bio."
     return out
