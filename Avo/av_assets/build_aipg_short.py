@@ -26,21 +26,35 @@ VO = AD / "aipg_vo_short.mp3"
 OUT = pathlib.Path("/Users/michaelrodriguez/avo-telemetry/marketing_deliverables"
                    "/116_video_leg_activation/renders/aipg_cinematic_short_9x16.mp4")
 W, H, FPS = 1080, 1920, 30
+# Don's funnel-#1 brief requires BOTH. 1:1 is a centre crop of the same beat with
+# captions and end card re-laid out, never a squashed 9:16.
+ASPECTS = {"9x16": (1080, 1920), "1x1": (1080, 1080)}
 
 # Sized to the 12.1s beat. The payoff ("Missed calls are the problem. We end
 # them.") moves to the end card so the VO is not rushed.
 SCRIPT = ("When your hands are full, the phone still rings. "
           "And the customer who cannot reach you just calls the next name on Google. "
-          "I built a system that answers every call and books the job.")
+          "I built a system that answers every call and books the job. "
+          "Call the line and hear it work.")
 
 CAPTIONS = [
     (0.35, 3.10, ["WHEN YOUR HANDS ARE FULL,", "THE PHONE STILL RINGS"]),
     (3.25, 7.40, ["THE CUSTOMER WHO CANNOT REACH YOU", "CALLS THE NEXT NAME ON GOOGLE"]),
-    (7.55, 11.60, ["I BUILT A SYSTEM THAT ANSWERS", "AND BOOKS THE JOB"]),
+    (7.55, 11.20, ["I BUILT A SYSTEM THAT ANSWERS", "AND BOOKS THE JOB"]),
+    (11.35, 12.05, ["CALL THE LINE", "AND HEAR IT WORK"]),
 ]
 MAX_W = K["caption"]["max_width"]
 TRACKING = K["caption"]["tracking"]
 TEXT_Y = K["caption"]["baseline_y"]
+
+
+def _canvas(aspect):
+    return ASPECTS[aspect]
+
+
+def _text_y(aspect):
+    # 1:1 crops the vertical centre, so the 9:16 baseline would fall outside it.
+    return TEXT_Y if aspect == "9x16" else 900
 
 
 def make_vo():
@@ -82,11 +96,12 @@ def _tracked(d, x, y, s, f, tracking, stroke, sfill):
         x += d.textlength(c, font=f) + tracking
 
 
-def build_cards():
+def build_cards(aspect):
     from PIL import Image, ImageDraw, ImageFont
     out = []
     for i, (_, _, lines) in enumerate(CAPTIONS):
-        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        cw, ch = _canvas(aspect)
+        img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         size = 62
         while size >= 40:
@@ -96,12 +111,12 @@ def build_cards():
                 break
             size -= 2
         lh = size * 1.42
-        y = TEXT_Y - (lh * len(lines)) / 2
+        y = _text_y(aspect) - (lh * len(lines)) / 2
         for l, wd in zip(lines, widths):
-            _tracked(d, (W - wd) / 2, y, l, f, TRACKING, 4, (6, 9, 12, 225))
+            _tracked(d, (cw - wd) / 2, y, l, f, TRACKING, 4, (6, 9, 12, 225))
             y += lh
         _paste_corner(img)
-        p = AD / f"short_cap_{i}.png"
+        p = AD / f"short_cap_{aspect}_{i}.png"
         img.save(p)
         out.append(p)
     return out
@@ -120,80 +135,83 @@ def _paste_corner(img):
     img.alpha_composite(chip, (m, m))
 
 
-def build_endcard():
+def build_endcard(aspect):
     from PIL import Image, ImageDraw
     C = K["colors"]
-    img = Image.new("RGBA", (W, H), rgb(C["ink"]) + (255,))
+    cw, ch = _canvas(aspect)
+    img = Image.new("RGBA", (cw, ch), rgb(C["ink"]) + (255,))
     d = ImageDraw.Draw(img)
+    # 1:1 has 840px less height, so the lockup shrinks and rides higher or
+    # the URL row falls off the bottom edge (it did on the first square cut).
+    lock_top = 560 if aspect == "9x16" else 120
 
     # The brand LOCKUP is the hero of the card (mascot + wordmark), sized to
     # the frame rather than a text-only card with no mark on it anywhere.
     lock = Image.open(K["logos"]["endcard"]).convert("RGBA")
-    lw = 860
+    lw = 860 if aspect == "9x16" else 620
     lock = lock.resize((lw, round(lw * lock.height / lock.width)), Image.LANCZOS)
-    img.alpha_composite(lock, ((W - lw) // 2, 560))
+    img.alpha_composite(lock, ((cw - lw) // 2, lock_top))
 
     fb = kfont(K, "display", 66)
     fm = kfont(K, "body", 46)
     fs = kfont(K, "body", 36)
-    base = 560 + lock.height + 90
+    base = lock_top + lock.height + 70
     rows = [("MISSED CALLS ARE THE PROBLEM.", fm, rgb(C["muted"]), 0),
             ("WE END THEM.", fb, rgb(C["paper"]), 78),
             (K["cta"]["phone"], fb, rgb(C["accent"]), 232),
             (K["cta"]["url"], fs, rgb(C["muted"]), 322)]
     for text, f, color, dy in rows:
         wdt = _tw(d, text, f)
-        _x = (W - wdt) / 2
+        _x = (cw - wdt) / 2
         for c in text:
             d.text((_x, base + dy), c, font=f, fill=color)
             _x += d.textlength(c, font=f) + TRACKING
-    d.line([(W / 2 - 130, base + 186), (W / 2 + 130, base + 186)],
+    d.line([(cw / 2 - 130, base + 186), (cw / 2 + 130, base + 186)],
            fill=rgb(C["accent"]), width=4)
-    p = AD / "short_endcard.png"
+    p = AD / f"short_endcard_{aspect}.png"
     img.convert("RGB").save(p)
     return p
 
 
 def main():
     vo_len = make_vo()
-    caps = build_cards()
-    ec = build_endcard()
-
-    # The beat is 12.1s and the VO runs longer, so the final line finishes OVER
-    # the end card rather than being amputated. Video = beat + card; audio = the
-    # whole VO padded with silence to match. Never trim Michael mid-sentence.
     body = 12.05
     card = max(2.6, vo_len - body + 1.9)
     total = body + card
     print(f"VO {vo_len:.2f}s | beat {body:.2f}s | card {card:.2f}s | total {total:.2f}s",
           flush=True)
 
-    inputs = ["-i", str(BEAT), "-i", str(VO),
-              "-loop", "1", "-framerate", str(FPS), "-t", f"{card + 0.5:.3f}", "-i", str(ec)]
-    for c in caps:
-        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{total + 1:.3f}", "-i", str(c)]
+    for aspect, (cw, ch) in ASPECTS.items():
+        caps = build_cards(aspect)
+        ec = build_endcard(aspect)
+        out = OUT.parent / f"aipg_cinematic_short_{aspect}.mp4"
 
-    g = f"[0:v]trim=0:{body:.3f},setpts=PTS-STARTPTS[bv];"
-    cur = "bv"
-    for j, (a, b, _) in enumerate(CAPTIONS):
-        # shortest=1 is load-bearing: overlay defaults to shortest=0, so the
-        # output would run as long as the looped caption still, not the beat.
-        g += (f"[{cur}][{3 + j}:v]overlay=0:0:shortest=1:"
-              f"enable='between(t,{a},{min(b, body):.3f})'[c{j}];")
-        cur = f"c{j}"
-    g += (f"[2:v]trim=duration={card:.3f},setpts=PTS-STARTPTS[ecv];"
-          f"[{cur}][ecv]concat=n=2:v=1[outv];"
-          # Michael's real voice only; the beat's generated audio is dropped.
-          f"[1:a]apad=whole_dur={total:.3f},atrim=0:{total:.3f},asetpts=PTS-STARTPTS,"
-          "loudnorm=I=-16:TP=-1.5:LRA=11[outa]")
+        inputs = ["-i", str(BEAT), "-i", str(VO),
+                  "-loop", "1", "-framerate", str(FPS), "-t", f"{card + 0.5:.3f}", "-i", str(ec)]
+        for c in caps:
+            inputs += ["-loop", "1", "-framerate", str(FPS),
+                       "-t", f"{total + 1:.3f}", "-i", str(c)]
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", g,
-                    "-map", "[outv]", "-map", "[outa]", "-r", str(FPS),
-                    "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                    "-t", f"{total:.3f}", str(OUT)], check=True)
-    print("rendered:", OUT, flush=True)
+        # 1:1 is a CENTRE CROP of the same 1080x1920 beat, never a squash.
+        crop = "" if aspect == "9x16" else f",crop={cw}:{ch}:0:{(1920 - ch) // 2}"
+        g = f"[0:v]trim=0:{body:.3f},setpts=PTS-STARTPTS{crop}[bv];"
+        cur = "bv"
+        for j, (a, b, _) in enumerate(CAPTIONS):
+            g += (f"[{cur}][{3 + j}:v]overlay=0:0:shortest=1:"
+                  f"enable='between(t,{a},{min(b, body):.3f})'[c{j}];")
+            cur = f"c{j}"
+        g += (f"[2:v]trim=duration={card:.3f},setpts=PTS-STARTPTS[ecv];"
+              f"[{cur}][ecv]concat=n=2:v=1[outv];"
+              f"[1:a]apad=whole_dur={total:.3f},atrim=0:{total:.3f},asetpts=PTS-STARTPTS,"
+              "loudnorm=I=-16:TP=-1.5:LRA=11[outa]")
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", g,
+                        "-map", "[outv]", "-map", "[outa]", "-r", str(FPS),
+                        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                        "-t", f"{total:.3f}", str(out)], check=True)
+        print("rendered:", out.name, flush=True)
 
 
 if __name__ == "__main__":
