@@ -1,0 +1,75 @@
+# BRAND VIDEO KIT — the single source of truth for how a brand's video LOOKS.
+#
+# Why this file exists: on 2026-08-12 an AIPG cinematic short shipped with
+# Helvetica captions, a teal accent, and NO logo, while the correct Archivo/Inter
+# fonts sat in ~/avo-telemetry/assets/fonts/, the canonical marks sat in
+# marketing_deliverables/160_canonical_video_logos/, and AIPG's CSS said in
+# writing "NO green anywhere" (the brand is burnt orange). Michael had corrected
+# this before. Hand-specifying type and color per build is what caused the
+# repeat, so no build script may hardcode a font, a color, or a logo again:
+# read this file, or the video is not brand-correct.
+#
+# Consumed by: Avo/av_assets/build_aipg_short.py and every future brand video
+# build. Adding a brand = an entry here, not new code.
+
+defaults:
+  resolution: [1080, 1920]
+  fps: 30
+  loudness_lufs: -16
+  caption:
+    max_width: 940          # px; captions that exceed this get stepped down, never clipped
+    tracking: 2.0
+    baseline_y: 1560
+    stroke_px: 4
+  corner_logo:
+    width_px: 190           # chip size on a 1080-wide frame
+    margin_px: 54
+    opacity: 0.92
+
+brands:
+  aiphoneguy:
+    display_name: "The AI Phone Guy"
+    # Verified from the LIVE site (src/app/layout.tsx + globals.css), not recalled.
+    fonts:
+      display: "~/avo-telemetry/assets/fonts/Archivo.ttf"    # headings, 800/900 on site
+      body: "~/avo-telemetry/assets/fonts/InterTight.ttf"
+    colors:
+      accent: "#e8772e"       # burnt orange. globals.css: "Brand — burnt orange (NO green anywhere)"
+      accent_deep: "#c75b16"
+      ink: "#16191d"          # asphalt charcoal
+      paper: "#fffdf9"
+      muted: "#8a8f98"
+    logos:
+      corner: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg_corner_transparent.png"
+      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg_endcard.png"
+    cta:
+      phone: "(817) 670-9689"     # the tracked demo line; Meta counts the call
+      url: "theaiphoneguy.com/discovery"
+
+  # The marks below are canonical (file 160). Fonts and colors are NOT yet
+  # verified from each brand's live source, so fill them from the site before
+  # building video for these brands rather than guessing here.
+  autointelligence:
+    display_name: "Automotive Intelligence"
+    logos:
+      corner: "~/automotive-intelligence-site/public/logo-mark.png"
+      endcard: "~/automotive-intelligence-site/public/logo.png"
+    cta:
+      url: "automotiveintelligence.io/diagnostic-call"
+  agentempire:
+    display_name: "Agent Empire"
+    colors:
+      accent: "#F6A623"       # amber, locked kit file 115; cyan recolors are RETIRED
+    logos:
+      corner: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/bae_corner_solidcrown_amber.png"
+      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/bae_endcard_lockupA_amber.png"
+  worshipdigital:
+    display_name: "Worship Digital"
+    logos:
+      corner: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/wd_corner_monogram_gold.png"
+      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/wd_endcard_lockup_navy.png"
+  bookd:
+    display_name: "Book'd"
+    logos:
+      corner: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/bookd_corner_avatar.png"
+      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/bookd_endcard_wordmark_white.png"
