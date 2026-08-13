@@ -110,16 +110,41 @@ def _measure(d: ImageDraw.ImageDraw, text: str, font, tracking: float) -> float:
     return sum(d.textlength(c, font=font) for c in text) + tracking * (len(text) - 1)
 
 
+def group_by_counts(words, counts):
+    """Split into explicit phrase lengths, or return None if they do not fit.
+
+    Automatic chunking is fine for volume, but it split "...reach you just calls
+    the next name..." as "YOU JUST CALLS", which reads as a grammatical error on
+    screen even though the sentence is correct. Don flagged it as a quality
+    signal a trade owner would hold against us. For a hero asset the phrasing is
+    worth pinning by hand; the auto path stays the default everywhere else."""
+    if sum(counts) != len(words):
+        return None
+    out, i = [], 0
+    for n in counts:
+        out.append(words[i:i + n])
+        i += n
+    return out
+
+
 def render_layer(words, canvas: Tuple[int, int], baseline_y: int, fps: float,
                  duration: float, kit: Dict[str, Any], font_for,
                  rgb, out_path: pathlib.Path, chunk_size: int = 3,
-                 corner_paint=None) -> pathlib.Path:
+                 corner_paint=None, phrase_counts=None) -> pathlib.Path:
     """Write a transparent qtrle .mov of the animated captions."""
     cw, ch = canvas
     accent = rgb(kit["colors"]["accent"])
     tracking = kit["caption"]["tracking"]
     max_w = kit["caption"]["max_width"]
-    groups = chunk(words, chunk_size)
+    groups = None
+    if phrase_counts:
+        groups = group_by_counts(words, phrase_counts)
+        if groups is None:
+            print(f"[karaoke] phrase_counts sum={sum(phrase_counts)} but "
+                  f"{len(words)} words transcribed; falling back to auto-chunking",
+                  flush=True)
+    if groups is None:
+        groups = chunk(words, chunk_size)
 
     # active-word index -> rendered PNG, so each state rasterises once
     cache: Dict[Tuple[int, int], Image.Image] = {}

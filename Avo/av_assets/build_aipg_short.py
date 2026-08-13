@@ -47,6 +47,12 @@ CAPTIONS = [
     (7.55, 11.20, ["I BUILT A SYSTEM THAT ANSWERS", "AND BOOKS THE JOB"]),
     (11.35, 12.05, ["CALL THE LINE", "AND HEAR IT WORK"]),
 ]
+# Hand-tuned caption phrasing for this hero script. Auto-chunking produced
+# "YOU JUST CALLS", which reads as a grammar error on screen; Don held the cut
+# over it. Counts must total the transcribed word count or the build falls back
+# to auto-chunking and says so.
+PHRASE_COUNTS = [3, 2, 4, 3, 4, 5, 2, 4, 4, 4, 3, 4]
+
 MAX_W = K["caption"]["max_width"]
 TRACKING = K["caption"]["tracking"]
 TEXT_Y = K["caption"]["baseline_y"]
@@ -200,7 +206,8 @@ def main():
         cap_mov = AD / f"karaoke_{aspect}.mov"
         karaoke.render_layer(words, (cw, ch), _text_y(aspect), FPS, body, K,
                              kfont, rgb, cap_mov, chunk_size=3,
-                             corner_paint=_paste_corner)
+                             corner_paint=_paste_corner,
+                             phrase_counts=PHRASE_COUNTS)
 
         inputs = ["-i", str(BEAT), "-i", str(VO),
                   "-loop", "1", "-framerate", str(FPS), "-t", f"{card + 0.5:.3f}",
