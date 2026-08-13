@@ -17,6 +17,7 @@ import requests
 import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from brand_kit import kit, font as kfont, rgb  # noqa: E402
+import karaoke  # noqa: E402
 
 K = kit("aiphoneguy")          # fonts, colors, logos, CTA. Never hardcode these.
 
@@ -190,28 +191,28 @@ def main():
           flush=True)
 
     for aspect, (cw, ch) in ASPECTS.items():
-        caps = build_cards(aspect)
         ec = build_endcard(aspect)
         out = OUT.parent / f"aipg_cinematic_short_{aspect}.mp4"
 
-        inputs = ["-i", str(BEAT), "-i", str(VO),
-                  "-loop", "1", "-framerate", str(FPS), "-t", f"{card + 0.5:.3f}", "-i", str(ec)]
-        for c in caps:
-            inputs += ["-loop", "1", "-framerate", str(FPS),
-                       "-t", f"{total + 1:.3f}", "-i", str(c)]
+        # ONE animated caption layer, not N static cards. Word-level highlight
+        # off the VO's own whisper timings; see karaoke.py for why.
+        words = karaoke.word_timings(VO)
+        cap_mov = AD / f"karaoke_{aspect}.mov"
+        karaoke.render_layer(words, (cw, ch), _text_y(aspect), FPS, body, K,
+                             kfont, rgb, cap_mov, chunk_size=3,
+                             corner_paint=_paste_corner)
 
-        # 1:1 is a CENTRE CROP of the same 1080x1920 beat, never a squash.
+        inputs = ["-i", str(BEAT), "-i", str(VO),
+                  "-loop", "1", "-framerate", str(FPS), "-t", f"{card + 0.5:.3f}",
+                  "-i", str(ec), "-i", str(cap_mov)]
+
         crop = "" if aspect == "9x16" else f",crop={cw}:{ch}:0:{(1920 - ch) // 2}"
-        g = f"[0:v]trim=0:{body:.3f},setpts=PTS-STARTPTS{crop}[bv];"
-        cur = "bv"
-        for j, (a, b, _) in enumerate(CAPTIONS):
-            g += (f"[{cur}][{3 + j}:v]overlay=0:0:shortest=1:"
-                  f"enable='between(t,{a},{min(b, body):.3f})'[c{j}];")
-            cur = f"c{j}"
-        g += (f"[2:v]trim=duration={card:.3f},setpts=PTS-STARTPTS[ecv];"
-              f"[{cur}][ecv]concat=n=2:v=1[outv];"
-              f"[1:a]apad=whole_dur={total:.3f},atrim=0:{total:.3f},asetpts=PTS-STARTPTS,"
-              "loudnorm=I=-16:TP=-1.5:LRA=11[outa]")
+        g = (f"[0:v]trim=0:{body:.3f},setpts=PTS-STARTPTS{crop}[bv];"
+             f"[bv][3:v]overlay=0:0:shortest=1[capped];"
+             f"[2:v]trim=duration={card:.3f},setpts=PTS-STARTPTS[ecv];"
+             f"[capped][ecv]concat=n=2:v=1[outv];"
+             f"[1:a]apad=whole_dur={total:.3f},atrim=0:{total:.3f},asetpts=PTS-STARTPTS,"
+             "loudnorm=I=-16:TP=-1.5:LRA=11[outa]")
 
         out.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", g,
