@@ -41,7 +41,13 @@ brands:
       muted: "#8a8f98"
     logos:
       corner: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg_corner_transparent.png"
-      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg_endcard.png"
+      # ON-DARK lockup, and it is load-bearing. The end card ink is #16191d and
+      # the previous mark's wordmark is NAVY, so on the card only the orange
+      # "AI" survived and "TheAIPhoneGuy.com" was unreadable (Michael, 08-12).
+      # Per the kit README: light surface -> on-light, dark surface -> on-dark.
+      # Stacked is Michael's pick over horizontal.
+      endcard: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg-stacked-on-dark.png"
+      endcard_on_light: "~/avo-telemetry/marketing_deliverables/160_canonical_video_logos/aipg-stacked-on-light.png"
     cta:
       phone: "(817) 670-9689"     # the tracked demo line; Meta counts the call
       url: "theaiphoneguy.com/discovery"

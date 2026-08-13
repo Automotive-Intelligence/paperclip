@@ -146,12 +146,17 @@ def build_endcard(aspect):
     d = ImageDraw.Draw(img)
     # 1:1 has 840px less height, so the lockup shrinks and rides higher or
     # the URL row falls off the bottom edge (it did on the first square cut).
-    lock_top = 560 if aspect == "9x16" else 120
+    lock_top = 380 if aspect == "9x16" else 90
 
     # The brand LOCKUP is the hero of the card (mascot + wordmark), sized to
     # the frame rather than a text-only card with no mark on it anywhere.
     lock = Image.open(K["logos"]["endcard"]).convert("RGBA")
-    lw = 860 if aspect == "9x16" else 620
+    # Size by HEIGHT, not width. The previous mark was a wide horizontal lockup;
+    # the on-dark pick is STACKED (547x737, taller than wide), so the old fixed
+    # widths would have blown its height past the card and pushed the URL row
+    # off the bottom edge again.
+    lock_h = 560 if aspect == "9x16" else 330
+    lw = round(lock.width * lock_h / lock.height)
     lock = lock.resize((lw, round(lw * lock.height / lock.width)), Image.LANCZOS)
     img.alpha_composite(lock, ((cw - lw) // 2, lock_top))
 
