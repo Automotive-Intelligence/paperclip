@@ -78,9 +78,15 @@ class Brand:
     domain: Optional[str] = None
 
 
-# Canonical brand set for the brief. The four Slipstream brands map to their
-# Next.js repos; Book'd has no Slipstream rail (Cloudflare Pages, oversight-only)
-# so it carries social-only signal.
+# Canonical brand set for the brief. Five brands publish MDX blog posts via the
+# Slipstream engine (auto_merge defaults true, so they full-auto). Book'd is
+# oversight-only for an ARCHITECTURAL reason, not a permission one: its site
+# renders blog posts as hand-authored TSX components (src/content/posts/*.tsx
+# registered in src/lib/blog.ts), which the MDX engine cannot generate. NOTE
+# (2026-08-13): the old "Cloudflare Pages" reason is stale — Book'd migrated to
+# salesdroid/bookd-marketing-site on Vercel (08-08); the TSX-vs-MDX mismatch is
+# the real blocker. Auto-publishing Book'd needs a TSX generator or an MDX
+# migration of its blog — a build, not a flag flip.
 BRANDS: List[Brand] = [
     Brand("worshipdigital", "Worship Digital", "auto", "\U0001F7E2",
           "salesdroid/worship-digital", "src/content/posts.ts",
@@ -91,7 +97,10 @@ BRANDS: List[Brand] = [
     Brand("agentempire", "Build Agent Empire", "auto", "\U0001F7E2",
           "salesdroid/buildagentempire", "src/content/blog",
           ("agent_empire",), "buildagentempire.com"),
-    Brand("aiphoneguy", "AI Phone Guy", "partial", "\U0001F7E1",
+    # AIPG promoted partial->auto 2026-08-13: it auto-publishes MDX like the other
+    # three (auto_merge unset -> defaults true); the "partial" label was stale from
+    # the .ai->.com + OAuth issues, now resolved. Blog autonomy is full-auto.
+    Brand("aiphoneguy", "AI Phone Guy", "auto", "\U0001F7E2",
           "salesdroid/ai-phone-guy-site", "src/content/blog",
           ("aipg",), "theaiphoneguy.com"),
     Brand("bookd", "Book'd", "oversight", "⚪",

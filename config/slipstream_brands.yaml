@@ -127,15 +127,18 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/wd_topics.md
   bookd:
-    repo: Kingvelazquez013/bookdcx-website   # Ryan's repo; Michael is co-founder, no permission gate
-    domain: bookd.cx                          # Cloudflare Pages auto-deploys from main
-    enabled: true
-    # auto_merge stays OFF for a mechanical reason, not a permission one:
-    # merge_when_green verifies a PR by polling the VERCEL API, and bookd.cx is
-    # hosted on Cloudflare Pages, so there is no Vercel deployment to check and
-    # the merge would fail closed every time. The engine opens a PR each run and
-    # a human merges it. Flipping this to true requires a Cloudflare Pages build
-    # check in merge_when_green first.
+    # DISABLED 2026-08-13 (CMO): this rail is DEAD and was burning generation spend.
+    # bookd.cx migrated to salesdroid/bookd-marketing-site on Vercel (verified live:
+    # Cloudflare DNS -> Vercel origin, x-vercel-id present), and that site renders its
+    # blog as hand-authored TSX (src/content/posts/*.tsx, registered in src/lib/blog.ts).
+    # The engine below still targets Ryan's OLD Cloudflare repo and writes MDX, so every
+    # run generated a post (LLM + fal images) that published NOWHERE the live site reads
+    # (36 topics still queued). Re-enabling is a real rebuild, not a flag flip: repoint to
+    # salesdroid/bookd-marketing-site AND either add an MDX blog route there or make the
+    # engine emit TSX + register it in src/lib/blog.ts. Off until that lands.
+    enabled: false
+    repo: Kingvelazquez013/bookdcx-website   # STALE: Ryan's old Cloudflare repo; no longer serves bookd.cx
+    domain: bookd.cx
     auto_merge: false
     # format omitted => "mdx". The blog was converted from TSX-module-per-post to
     # MDX in bookdcx-website PR #10 so engine output drops in as one .mdx file.
