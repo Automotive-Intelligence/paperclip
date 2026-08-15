@@ -6,6 +6,7 @@ writes nothing.
 """
 from datetime import date, datetime
 from types import SimpleNamespace
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 from services import sdr_first_touch as F
@@ -240,3 +241,85 @@ def test_sequence_completes_after_touch_3(monkeypatch):
     out = F.run_first_touch(commit=True, now=_TUE_10AM)
     assert fired == []
     assert "sequence complete" in out["digest"]
+
+
+# --------------------------------------------------------------------- _published_email discovery
+# 2026-08-14: live-verified against production Twenty. Wyndham Custom Homes,
+# the ONE eligible WD candidate in the entire system, was failing
+# no_verified_email -- its real site (checked live) publishes no email at
+# all on homepage or /contact-us, only a contact form. These tests prove the
+# widened discovery (more guessed paths + homepage-nav link crawl) finds
+# real emails a fixed 4-path guess list missed, while a genuinely
+# email-less, form-only site (Wyndham's real shape) still correctly
+# returns None -- never inventing a broker/guessed address.
+
+def _resp(html="", ok=True):
+    return SimpleNamespace(ok=ok, text=html)
+
+
+def test_finds_email_on_a_newly_added_guess_path(monkeypatch):
+    # /team wasn't checked before this fix; the homepage and old guesses
+    # have nothing.
+    def fake_get(url, **kw):
+        if url == "https://acme.com/team":
+            return _resp("<p>Reach us: hello@acme.com</p>")
+        return _resp("<p>no contact info here</p>")
+    monkeypatch.setattr(F.requests, "get", fake_get)
+    assert F._published_email("acme.com") == "hello@acme.com"
+
+
+def test_finds_email_via_discovered_nav_link_not_in_fixed_guesses(monkeypatch):
+    # A CMS-specific path ("/get-in-touch") that isn't in the fixed guess
+    # list, but IS linked from the homepage nav with contact-hinting text.
+    home = '<nav><a href="/get-in-touch">Get In Touch</a></nav>'
+
+    def fake_get(url, **kw):
+        if url == "https://acme.com":
+            return _resp(home)
+        if url == "https://acme.com/get-in-touch":
+            return _resp("<p>Email owner@acme.com anytime</p>")
+        return _resp("no email", ok=True)
+    monkeypatch.setattr(F.requests, "get", fake_get)
+    assert F._published_email("acme.com") == "owner@acme.com"
+
+
+def test_form_only_site_with_no_published_email_returns_none():
+    # Wyndham's real shape: homepage links to a contact page, the contact
+    # page 200s, but neither page publishes an email -- only a <form>.
+    home = '<nav><a href="https://wyndhamcustomhomes.com/contact-us/">Contact Us</a></nav>'
+    contact = '<form action="/submit"><input name="email"></form>'
+
+    def fake_get(url, **kw):
+        if url == "https://wyndhamcustomhomes.com":
+            return _resp(home)
+        if "contact" in url:
+            return _resp(contact)
+        return _resp("", ok=False)
+    with mock.patch.object(F.requests, "get", side_effect=fake_get):
+        assert F._published_email("wyndhamcustomhomes.com") is None
+
+
+def test_junk_local_parts_still_excluded():
+    def fake_get(url, **kw):
+        if url == "https://acme.com":
+            return _resp("<p>webmaster@acme.com or postmaster@acme.com only</p>")
+        return _resp("", ok=False)
+    with mock.patch.object(F.requests, "get", side_effect=fake_get):
+        assert F._published_email("acme.com") is None
+
+
+def test_wrong_domain_email_never_returned():
+    def fake_get(url, **kw):
+        if url == "https://acme.com":
+            return _resp("<p>Support widget by help@othervendor.com</p>")
+        return _resp("", ok=False)
+    with mock.patch.object(F.requests, "get", side_effect=fake_get):
+        assert F._published_email("acme.com") is None
+
+
+def test_discovered_links_capped_and_deduped():
+    home = "".join(f'<a href="/contact-{i}">Contact {i}</a>' for i in range(10))
+    home += '<a href="/contact-0">Contact again</a>'
+    links = F._discover_contact_links(home, "acme.com")
+    assert len(links) == F._MAX_DISCOVERED_LINKS
+    assert len(set(links)) == len(links)

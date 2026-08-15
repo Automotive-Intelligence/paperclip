@@ -358,37 +358,70 @@ def check_defect(real_domain: str, motion: str) -> "dict | None":
 _TRUSTED_CONTACT_SOURCES = ("site", "gbp", "yelp")
 
 
+# Supplementary pages checked ONLY when the homepage publishes neither a
+# tel: nor a mailto: link -- same strong-evidence bar (still requires an
+# actual tel:/mailto: href, never an inferred phone-shaped number), just a
+# wider search radius. Added 2026-08-14: live-verified against production,
+# ~28% of real WD candidates were landing on NEEDS_HUMAN "no published
+# number" purely because the homepage-only check missed a tel:/mailto: link
+# that was one click away on /contact.
+_CONTACT_CHECK_PATHS = ("/contact", "/contact-us", "/contact-us/", "/about", "/about-us")
+
+
+def _scan_contact_html(html: str) -> "tuple[Optional[str], Optional[str]]":
+    tel = re.search(r"tel:(\+?\d[\d\-\(\) ]{9,})", html)
+    mailto = re.search(r"mailto:([^\"'>\s?]+)", html, re.I)
+    phone = re.sub(r"[^\d+]", "", tel.group(1)) if tel else None
+    email = mailto.group(1) if mailto else None
+    return phone, email
+
+
+def _fetch_path_html(domain: str, path: str) -> str:
+    r = requests.get(f"https://{domain}{path}", timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+    return r.text if r.ok else ""
+
+
 def check_contact(entity: dict, real_domain: str) -> "dict | None":
     """Check 3 -- real contact from published info (spec section 5:
     "a contact name plus a phone/email pulled from the company's OWN
     published info").
 
-    Prefers a tel: link scraped straight off the resolved primary site,
-    and captures a mailto: link alongside it when present. Falls back to
-    an entity-carried phone only if its recorded source is one of the
-    company's own published channels (site/gbp/yelp) -- NEVER a data
-    broker like RocketReach/ZoomInfo (the fabricated-enrichment trap the
-    2026-07-15 rebuild week ran into). A site-published mailto: with no
-    phone at all is still itself a verified contact channel. Returns
-    {"name","phone","email","source"} (phone/email may be None if only the
-    other was found) or None if nothing is verifiable.
+    Prefers a tel: link scraped straight off the resolved primary site
+    (homepage first, then a few common contact/about paths when the
+    homepage has neither), and captures a mailto: link alongside it when
+    present. Falls back to an entity-carried phone only if its recorded
+    source is one of the company's own published channels (site/gbp/yelp)
+    -- NEVER a data broker like RocketReach/ZoomInfo (the fabricated-
+    enrichment trap the 2026-07-15 rebuild week ran into). A site-published
+    mailto: with no phone at all is still itself a verified contact
+    channel. Returns {"name","phone","email","source"} (phone/email may be
+    None if only the other was found) or None if nothing is verifiable.
 
-    A transient GET failure (fix-round-2, FIX B) is treated the same as
-    "nothing found on the page" -- returns None, same as the module's
-    existing "unverified" outcome, which verify() already routes to
-    NEEDS_HUMAN. No sentinel needed here (unlike check_defect): None
-    already means the same thing -- "could not verify" -- in both cases.
+    A transient GET failure on any single page is treated the same as
+    "nothing found on that page" -- it never aborts the search, and if
+    nothing is found anywhere this still returns None, same as the
+    module's existing "unverified" outcome, which verify() already routes
+    to NEEDS_HUMAN.
     """
     try:
-        html = _fetch_html(real_domain)
+        home_html = _fetch_html(real_domain)
     except Exception:
-        return None
-    tel = re.search(r"tel:(\+?\d[\d\-\(\) ]{9,})", html)
-    mailto = re.search(r"mailto:([^\"'>\s?]+)", html, re.I)
-    email = mailto.group(1) if mailto else None
+        home_html = ""
+    phone, email = _scan_contact_html(home_html)
 
-    if tel:
-        phone = re.sub(r"[^\d+]", "", tel.group(1))
+    if not phone and not email:
+        for path in _CONTACT_CHECK_PATHS:
+            try:
+                page_html = _fetch_path_html(real_domain, path)
+            except Exception:
+                continue
+            if not page_html:
+                continue
+            phone, email = _scan_contact_html(page_html)
+            if phone or email:
+                break
+
+    if phone:
         return {"name": entity.get("contact_name"), "phone": phone, "email": email, "source": "site"}
 
     src = (entity.get("phone_source") or "").lower()
@@ -425,8 +458,17 @@ class VerificationResult:
     reason: str = ""
 
 
+def _normalize_host(host: str) -> str:
+    """Lowercase, strip a leading www. -- www vs non-www and case are NOT a
+    different site (a real bug found 2026-08-14: candidates whose only
+    'mismatch' was www.example.com vs example.com, or case, were failing as
+    'not a rebuild target' -- rejecting real, correctly-owned domains)."""
+    h = (host or "").strip().lower()
+    return h[4:] if h.startswith("www.") else h
+
+
 def _primary_is_our_domain(domain_on_file: str, real: str) -> bool:
-    return _host(domain_on_file) == _host(real)
+    return _normalize_host(_host(domain_on_file)) == _normalize_host(_host(real))
 
 
 # ---------------------------------------------------------------------------
