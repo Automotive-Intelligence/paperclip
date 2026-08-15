@@ -38,6 +38,11 @@ def test_rebuild_verdict_matches_human(name, expected, monkeypatch):
     monkeypatch.setattr("services.sdr_verification_gate._probe_headers", lambda d: fx["headers"])
     monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: fx["html"])
     monkeypatch.setattr("services.sdr_verification_gate._ttfb", lambda d: fx["ttfb"])
+    # 2026-08-14: check_contact now falls back to a few supplementary pages
+    # when the homepage alone has no tel:/mailto:. Keep this fixture-driven
+    # test fully offline -- the fixtures only ever encode homepage HTML, so
+    # supplementary pages correctly find nothing new for every golden case.
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_path_html", lambda d, p: "")
     # services.studio_social_llm.llm_json is the real two-positional-arg
     # seam (system, user) -- verify() imports it locally at call time, so
     # patching the attribute on its home module (not on

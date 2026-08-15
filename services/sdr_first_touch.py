@@ -217,23 +217,92 @@ def _touch_state(runtime_key: str, opportunity_id: str) -> Tuple[int, Optional[d
 
 # --------------------------------------------------------------------------- recipient discovery
 
+_EMAIL_PAT = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_JUNK_LOCAL_PARTS = (
+    "noreply", "no-reply", "wordpress", "example", "sentry", "webmaster",
+    "postmaster", "abuse", "mailer-daemon", "donotreply",
+)
+# Fixed guesses for common CMS conventions (checked first -- cheapest path).
+_EMAIL_GUESS_PATHS = (
+    "", "/contact", "/contact-us", "/contact-us/", "/about", "/about-us",
+    "/team", "/our-team", "/staff", "/leadership",
+)
+# Homepage nav links whose href or visible text hints at a contact page --
+# catches CMS-specific URLs the fixed guesses above miss (e.g. "/get-in-touch",
+# "/reach-us"). Bounded so one slow site can't blow up the crawl.
+_CONTACT_LINK_HINT = re.compile(r"contact|about|team|staff|touch|reach|connect", re.I)
+_HREF_PAT = re.compile(r'href=["\']([^"\'#?]+)', re.I)
+_MAX_DISCOVERED_LINKS = 4
+
+
+def _extract_email(html: str, root: str) -> Optional[str]:
+    for m in _EMAIL_PAT.findall(html):
+        local, _, host = m.lower().partition("@")
+        if host.endswith(root) and local not in _JUNK_LOCAL_PARTS and not local.startswith(_JUNK_LOCAL_PARTS):
+            return m
+    return None
+
+
+def _discover_contact_links(html: str, domain: str) -> List[str]:
+    """Same-domain hrefs from the homepage nav that look like a contact/about
+    page, in document order, deduped, capped at _MAX_DISCOVERED_LINKS."""
+    seen: List[str] = []
+    for href in _HREF_PAT.findall(html):
+        if not _CONTACT_LINK_HINT.search(href):
+            continue
+        path = href
+        if path.startswith("http"):
+            if _domain_host(path) != domain:
+                continue
+            path = "/" + path.split("/", 3)[3] if path.count("/") >= 3 else "/"
+        if not path.startswith("/"):
+            continue
+        if path not in seen:
+            seen.append(path)
+        if len(seen) >= _MAX_DISCOVERED_LINKS:
+            break
+    return seen
+
+
+def _domain_host(url: str) -> str:
+    return url.split("//", 1)[-1].split("/", 1)[0].lower()
+
+
 def _published_email(domain: str) -> Optional[str]:
-    """An email the company itself publishes (homepage or /contact), same
-    registrable domain (subdomain-tolerant). Never any other source."""
-    pat = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    """An email the company itself publishes -- homepage, a guessed common
+    contact/about/team path, or a contact-like link discovered in the
+    homepage nav -- same registrable domain (subdomain-tolerant). Never any
+    other source (no brokers, no inference)."""
     root = ".".join(domain.split(".")[-2:])
-    for path in ("", "/contact", "/contact-us", "/about"):
+    home_html = ""
+    checked = set()
+    for path in _EMAIL_GUESS_PATHS:
+        checked.add(path)
         try:
             r = requests.get(f"https://{domain}{path}", timeout=12,
                              headers={"User-Agent": "Mozilla/5.0"})
-            if not r.ok:
-                continue
-            for m in pat.findall(r.text):
-                if m.lower().split("@")[1].endswith(root) and not m.lower().startswith(
-                        ("noreply", "no-reply", "wordpress", "example", "sentry")):
-                    return m
         except Exception:
             continue
+        if not r.ok:
+            continue
+        if path == "":
+            home_html = r.text
+        found = _extract_email(r.text, root)
+        if found:
+            return found
+    for path in _discover_contact_links(home_html, domain):
+        if path in checked:
+            continue
+        try:
+            r = requests.get(f"https://{domain}{path}", timeout=12,
+                             headers={"User-Agent": "Mozilla/5.0"})
+        except Exception:
+            continue
+        if not r.ok:
+            continue
+        found = _extract_email(r.text, root)
+        if found:
+            return found
     return None
 
 

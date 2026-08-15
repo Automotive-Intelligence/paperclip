@@ -11,12 +11,27 @@ contract.
 from services.sdr_verification_gate import (
     VerificationRequest,
     VerificationResult,
+    _primary_is_our_domain,
     check_contact,
     check_defect,
     resolve_primary_site,
     run,
     verify,
 )
+
+
+def test_www_prefix_alone_is_not_a_different_domain():
+    assert _primary_is_our_domain("stannp.com", "www.stannp.com")
+    assert _primary_is_our_domain("www.loudermilkhomes.com", "loudermilkhomes.com")
+
+
+def test_case_alone_is_not_a_different_domain():
+    assert _primary_is_our_domain("HomesByJAnthony.com", "homesbyjanthony.com")
+
+
+def test_a_genuinely_different_domain_still_fails():
+    assert not _primary_is_our_domain("longocustombuilders.com", "zew.hxy.temporary.site")
+    assert not _primary_is_our_domain("excaliburpest.com", "webdisk.excaliburpest.com")
 
 
 def test_cert_cn_mismatch_resolves_to_real_host(monkeypatch):
@@ -211,16 +226,37 @@ def test_check_contact_fetch_failure_is_unverified_not_an_exception(monkeypatch)
         raise ConnectionError("transient DNS failure")
 
     monkeypatch.setattr("services.sdr_verification_gate._fetch_html", raising_fetch)
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_path_html", lambda d, p: "")
     assert check_contact({"contact_name": "X"}, "example.com") is None
 
 
 def test_broker_only_contact_is_rejected(monkeypatch):
     monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "no phone here")
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_path_html", lambda d, p: "")
     # entity carries a broker-sourced phone; must NOT be accepted
     assert check_contact(
         {"contact_name": "X", "contact_phone": "+15550001111", "phone_source": "rocketreach"},
         "example.com",
     ) is None
+
+
+def test_contact_found_on_a_supplementary_path_when_homepage_has_none(monkeypatch):
+    # Homepage publishes neither tel: nor mailto:; /contact-us does.
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "no contact info here")
+
+    def fake_path(domain, path):
+        if path == "/contact-us":
+            return '<a href="tel:+18175550100">Call</a>'
+        return ""
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_path_html", fake_path)
+    c = check_contact({"contact_name": "Sam"}, "example.com")
+    assert c and c["phone"] == "+18175550100" and c["source"] == "site"
+
+
+def test_nothing_found_anywhere_still_returns_none(monkeypatch):
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_html", lambda d: "nothing here")
+    monkeypatch.setattr("services.sdr_verification_gate._fetch_path_html", lambda d, p: "")
+    assert check_contact({"contact_name": "X"}, "example.com") is None
 
 
 def _req(**kw):
