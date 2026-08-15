@@ -245,3 +245,229 @@ def assemble_ts_posts(
     insert_at = current.index("\n", idx) + 1
     new_content = current[:insert_at] + literal + current[insert_at:]
     return new_content, []
+
+
+# ---------------------------------------------------------------------------
+# tsx_post format (Book'd): render the block-array body to a per-post .tsx module
+# that imports the site's existing Slipstream components, and splice its import +
+# registry entry into src/lib/blog.ts. Same read-modify-write discipline as
+# assemble_ts_posts (validate_blocks gate, idempotency guard, anchor splice), but
+# for the TWO-FILE shape the bookd-marketing-site blog already uses. No site change.
+# ---------------------------------------------------------------------------
+
+_REGISTRY_ANCHOR = "const registry: PostEntry[] = ["
+
+
+def _jsx_text(s: Any) -> str:
+    """Render text as a JS-string EXPRESSION child: `{"..."}`. Wrapping in a JS
+    string (not raw JSX text) means braces, angle brackets, quotes and ampersands
+    in LLM copy can never break JSX compilation."""
+    return "{" + _ts_str(s) + "}"
+
+
+def _heading_id(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-") or "section"
+
+
+def _js_ident(slug: str) -> str:
+    ident = re.sub(r"[^a-zA-Z0-9]", "_", str(slug))
+    return "Post_" + ident  # prefix guarantees a valid, collision-safe identifier
+
+
+def _reading_minutes(blocks: List[dict]) -> int:
+    words = 0
+    for b in blocks:
+        if b.get("text"):
+            words += len(str(b["text"]).split())
+        for it in (b.get("items") or []):
+            words += len(str(it).split()) if isinstance(it, str) else 0
+        for row in (b.get("rows") or []):
+            words += sum(len(str(c).split()) for c in row)
+    return max(1, round(words / 200))
+
+
+def _blocks_to_jsx(blocks: List[dict], ind: str = "      ") -> str:
+    """Render the generator's typed block array into JSX using the components the
+    bookd site exports from @/components/blog/Slipstream. All text goes through
+    _jsx_text so it always compiles; StatRow/Sources props use json (valid TS)."""
+    out: List[str] = []
+    for b in blocks:
+        t = b.get("type")
+        if t == "answer":
+            out.append(f"{ind}<AnswerFirst>{_jsx_text(b.get('text', ''))}</AnswerFirst>")
+        elif t == "p":
+            out.append(f"{ind}<p>{_jsx_text(b.get('text', ''))}</p>")
+        elif t == "h2":
+            txt = b.get("text", "")
+            out.append(f"{ind}<h2 id={{{_ts_str(_heading_id(txt))}}}>{_jsx_text(txt)}</h2>")
+        elif t == "h3":
+            out.append(f"{ind}<h3>{_jsx_text(b.get('text', ''))}</h3>")
+        elif t == "ul":
+            lis = "".join(f"<li>{_jsx_text(it)}</li>" for it in (b.get("items") or []))
+            out.append(f"{ind}<ul>{lis}</ul>")
+        elif t == "definition":
+            out.append(f"{ind}<EntityDefinition term={{{_ts_str(b.get('term', ''))}}}>"
+                       f"{_jsx_text(b.get('text', ''))}</EntityDefinition>")
+        elif t == "callout":
+            title = b.get("title")
+            ta = f" title={{{_ts_str(title)}}}" if title else ""
+            out.append(f"{ind}<Callout{ta}>{_jsx_text(b.get('text', ''))}</Callout>")
+        elif t == "quote":
+            out.append(f"{ind}<PullQuote>{_jsx_text(b.get('text', ''))}</PullQuote>")
+        elif t == "image":
+            src = str(b.get("src", "")).replace("/blog/", "/img/")
+            cap = f" caption={{{_ts_str(b['caption'])}}}" if b.get("caption") else ""
+            out.append(f"{ind}<InBodyImage src={{{_ts_str(src)}}} alt={{{_ts_str(b.get('alt', ''))}}}{cap} />")
+        elif t == "links":
+            lis = "".join(
+                f"<li><Link href={{{_ts_str(it.get('href', ''))}}}>{_jsx_text(it.get('label', ''))}</Link></li>"
+                for it in (b.get("items") or []))
+            out.append(f"{ind}<ul>{lis}</ul>")
+        elif t == "table":
+            heads = "".join(f"<th>{_jsx_text(h)}</th>" for h in (b.get("headers") or []))
+            rows = "".join("<tr>" + "".join(f"<td>{_jsx_text(c)}</td>" for c in row) + "</tr>"
+                           for row in (b.get("rows") or []))
+            out.append(f'{ind}<div className="table-wrap"><table><thead><tr>{heads}</tr>'
+                       f"</thead><tbody>{rows}</tbody></table></div>")
+        elif t == "stat":
+            item = {"v": b.get("value", ""), "k": b.get("label", "")}
+            if b.get("source"):
+                item["src"] = b["source"]
+            out.append(f"{ind}<StatRow items={{[{json.dumps(item)}]}} />")
+        elif t == "sources":
+            items = [{"label": it.get("label", ""), "url": it.get("href", "")}
+                     for it in (b.get("items") or [])]
+            out.append(f"{ind}<Sources items={{{json.dumps(items)}}} />")
+    return "\n".join(out)
+
+
+def _collect_sources(blocks: List[dict]) -> List[dict]:
+    """PostMeta.sources feeds the JSON-LD citation. Gather every cited source: the
+    dedicated `sources` block plus any `stat` block that carries a source+href."""
+    seen: Dict[str, str] = {}
+    for b in blocks:
+        if b.get("type") == "sources":
+            for it in (b.get("items") or []):
+                if it.get("href"):
+                    seen.setdefault(it["href"], it.get("label") or it["href"])
+        elif b.get("type") == "stat" and b.get("href"):
+            seen.setdefault(b["href"], b.get("source") or b["href"])
+    return [{"label": lbl, "url": url} for url, lbl in seen.items()]
+
+
+def _normalize_faq(faq: Any) -> List[List[str]]:
+    """PostMeta.faq is [question, answer][]. Accept the generator's [[q,a]...] or
+    [{q,a}/{question,answer}...] and normalize to tuples."""
+    out: List[List[str]] = []
+    for item in (faq or []):
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            out.append([str(item[0]), str(item[1])])
+        elif isinstance(item, dict):
+            q = item.get("q") or item.get("question")
+            a = item.get("a") or item.get("answer")
+            if q and a:
+                out.append([str(q), str(a)])
+    return out
+
+
+def _build_post_meta(post: Dict[str, Any], date_str: str, blocks: List[dict]) -> Dict[str, Any]:
+    slug = post["slug"]
+    meta: Dict[str, Any] = {
+        "slug": slug,
+        "title": post["title"],
+        "description": post["description"],
+        "date": date_str,
+        "updated": date_str,
+        "readingMinutes": _reading_minutes(blocks),
+        "hero": f"/img/{slug}-hero.png",
+        "heroAlt": post.get("heroAlt") or post["title"],
+        "category": post.get("category") or "The Compliance Desk",
+        "tags": post.get("tags") or [],
+        "faq": _normalize_faq(post.get("faq")),
+        "sources": _collect_sources(blocks),
+    }
+    return meta
+
+
+def _render_tsx_module(post: Dict[str, Any], meta: Dict[str, Any], blocks: List[dict]) -> str:
+    """The full <slug>.tsx file: Slipstream component imports, the typed meta
+    literal, and the Article component rendering the blocks."""
+    imports = (
+        'import Link from "next/link";\n'
+        "import {\n"
+        "  AnswerFirst,\n  KeyTakeaway,\n  StatRow,\n  PullQuote,\n  Callout,\n"
+        "  EntityDefinition,\n  InBodyImage,\n  Sources,\n"
+        '} from "@/components/blog/Slipstream";\n'
+        'import type { PostMeta } from "@/lib/blog";\n'
+    )
+    meta_literal = "export const meta: PostMeta = " + json.dumps(meta, indent=2) + ";\n"
+    body = _blocks_to_jsx(blocks)
+    article = ("export default function Article() {\n"
+               "  return (\n    <>\n" + body + "\n    </>\n  );\n}\n")
+    return imports + "\n" + meta_literal + "\n" + article
+
+
+def _splice_registry(current: str, slug: str) -> Tuple[str, List[str]]:
+    """Add the new post's import + registry entry to src/lib/blog.ts. Idempotent:
+    refuses if the slug is already registered."""
+    marker = f'from "@/content/posts/{slug}"'
+    if marker in current:
+        return "", [f"slug '{slug}' already registered in blog.ts (idempotent guard)"]
+    if _REGISTRY_ANCHOR not in current:
+        return "", [f"anchor '{_REGISTRY_ANCHOR}' not found in blog.ts (cannot splice safely)"]
+    ident = _js_ident(slug)
+    import_line = f'import {ident}, {{ meta as meta_{ident} }} from "@/content/posts/{slug}";\n'
+    # Insert the import right after the LAST existing content-post import (or, if
+    # none, right before the first `export`), so imports stay grouped at the top.
+    last = current.rfind('from "@/content/posts/')
+    if last >= 0:
+        ins = current.index("\n", last) + 1
+        current = current[:ins] + import_line + current[ins:]
+    else:
+        ei = current.index("\nexport ")
+        current = current[:ei + 1] + import_line + current[ei + 1:]
+    entry = f"  {{ meta: meta_{ident}, Article: {ident} }},\n"
+    idx = current.index(_REGISTRY_ANCHOR)
+    at = current.index("\n", idx) + 1
+    return current[:at] + entry + current[at:], []
+
+
+def assemble_tsx_post(
+    post: Dict[str, Any],
+    date_str: str,
+    cfg: Dict[str, Any],
+    token: str,
+    *,
+    fetch_registry: Optional[Callable[[Dict[str, Any], str], str]] = None,
+) -> Tuple[Dict[str, str], List[str]]:
+    """Return ({posts_path: tsx, registry_path: new_blog_ts}, violations) for the
+    tsx_post format. HOLDS (empty dict + violations) on any block-gate or splice
+    failure, so a bad post never reaches the commit."""
+    slug = post["slug"]
+    blocks = post.get("body") or []
+    # Reuse the exact block gate WD's rail uses.
+    violations = validate_blocks({"slug": slug, "title": post["title"],
+                                  "description": post["description"], "body": blocks})
+    if violations:
+        return {}, violations
+
+    meta = _build_post_meta(post, date_str, blocks)
+    tsx = _render_tsx_module(post, meta, blocks)
+
+    fetch = fetch_registry or (lambda c, t: _default_fetch_file(c["repo"], c["registry_file"], t))
+    current = fetch(cfg, token)
+    new_registry, rv = _splice_registry(current, slug)
+    if rv:
+        return {}, rv
+
+    posts_path = f"{cfg['posts_dir']}/{slug}.tsx"
+    return {posts_path: tsx, cfg["registry_file"]: new_registry}, []
+
+
+def _default_fetch_file(repo: str, path: str, token: str) -> str:
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    r = requests.get(url, headers={"Authorization": f"Bearer {token}",
+                                   "Accept": "application/vnd.github+json"}, timeout=30)
+    if not r.ok:
+        raise RuntimeError(f"cannot read {path} from {repo}: {r.status_code}")
+    return base64.b64decode(r.json()["content"]).decode("utf-8")

@@ -29,7 +29,7 @@ _REQUIRED_FIELDS_TS = ("title", "description", "slug", "body", "image_prompts", 
 # Formats whose body is a STRUCTURED BLOCK ARRAY rather than an MDX string. Blocks
 # are renderer-agnostic: WD serializes them to TS, P&P renders them to Shopify
 # article HTML. Same generation contract, same validate_blocks gate.
-_BLOCK_FORMATS = ("ts_posts_array", "shopify_article")
+_BLOCK_FORMATS = ("ts_posts_array", "shopify_article", "tsx_post")
 
 
 logger = logging.getLogger(__name__)
