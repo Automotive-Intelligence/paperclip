@@ -127,28 +127,27 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/wd_topics.md
   bookd:
-    # DISABLED 2026-08-13 (CMO): this rail is DEAD and was burning generation spend.
-    # bookd.cx migrated to salesdroid/bookd-marketing-site on Vercel (verified live:
-    # Cloudflare DNS -> Vercel origin, x-vercel-id present), and that site renders its
-    # blog as hand-authored TSX (src/content/posts/*.tsx, registered in src/lib/blog.ts).
-    # The engine below still targets Ryan's OLD Cloudflare repo and writes MDX, so every
-    # run generated a post (LLM + fal images) that published NOWHERE the live site reads
-    # (36 topics still queued). Re-enabling is a real rebuild, not a flag flip: repoint to
-    # salesdroid/bookd-marketing-site AND either add an MDX blog route there or make the
-    # engine emit TSX + register it in src/lib/blog.ts. Off until that lands.
-    enabled: false
-    repo: Kingvelazquez013/bookdcx-website   # STALE: Ryan's old Cloudflare repo; no longer serves bookd.cx
+    # LIVE 2026-08-14 (CMO): repointed to the real site + the tsx_post rail.
+    # bookd.cx serves salesdroid/bookd-marketing-site on Vercel (Cloudflare proxies
+    # the .vercel.app origin). Its blog renders per-post TSX modules registered in
+    # src/lib/blog.ts, so the engine now emits ONE .tsx module + splices the registry
+    # (format: tsx_post, services/slipstream_assemble.assemble_tsx_post). Verified a
+    # generated post compiles + prerenders in a real `next build`. auto_merge is ON:
+    # merge_when_green polls the Vercel build (bookd-clarity), same as the MDX brands.
+    enabled: true
+    repo: salesdroid/bookd-marketing-site
+    vercel_project_id: prj_MoGjISD1fG9Hf8YkD5EEp0eofek7   # bookd-clarity (verified linked to this repo)
     domain: bookd.cx
-    auto_merge: false
-    # format omitted => "mdx". The blog was converted from TSX-module-per-post to
-    # MDX in bookdcx-website PR #10 so engine output drops in as one .mdx file.
-    blog_dir: src/content/blog
+    auto_merge: true
+    format: tsx_post
+    posts_dir: src/content/posts          # per-post <slug>.tsx modules
+    registry_file: src/lib/blog.ts        # import + registry entry spliced in per post
     business_key: bookd
     voice: "compliance-first CRM for independent life insurance agents; plain, direct, agent-to-agent; Michael or Ryan may front; every statistic cited to a primary source (state codes, NAIC, FINRA, NIPR); NEVER pricing, NEVER income/earnings/outcome/guarantee claims (insurance compliance); no em-dashes"
-    # Must match src/components/blog/MDXComponents.tsx in bookdcx-website. That
-    # pipeline silently DROPS JSX expression props, so every component here takes
-    # string-literal props only (StatRow is value/label/source/href, never items=[...]).
-    components: ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote", "KeyTakeaway", "StatRow", "InBodyImage"]
+    # These map to the site's src/components/blog/Slipstream.tsx exports. The tsx_post
+    # renderer wraps all text in JS-string expressions, so quotes/braces/angle brackets
+    # in copy can never break the JSX build (StatRow/Sources props use JSON literals).
+    components: ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote", "KeyTakeaway", "StatRow", "InBodyImage", "Sources"]
     money_pages: ["/pricing", "/blog"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bookd_topics.md

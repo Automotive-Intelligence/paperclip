@@ -26,7 +26,7 @@ import yaml
 
 from datetime import timedelta
 
-from services.slipstream_assemble import assemble_mdx, assemble_ts_posts
+from services.slipstream_assemble import assemble_mdx, assemble_ts_posts, assemble_tsx_post
 from services.slipstream_generate import generate_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
@@ -274,10 +274,16 @@ def run_brand(
         # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
         # P&P (shopify_article) has no repo at all and builds a Shopify article draft;
         # every other brand keeps the MDX file. `payload` is what gets published either way.
+        payload = None
+        tsx_files: Optional[Dict[str, str]] = None
         if fmt == "shopify_article":
             payload, violations = assemble_shopify_article(post, date_str, cfg, images)
         elif fmt == "ts_posts_array":
             payload, violations = assemble_ts_posts(post, date_str, cfg, token)
+        elif fmt == "tsx_post":
+            # Book'd: per-post .tsx module + a splice into src/lib/blog.ts. Returns
+            # the files dict directly (two files), not a single payload string.
+            tsx_files, violations = assemble_tsx_post(post, date_str, cfg, token)
         else:
             payload, violations = assemble_mdx(post, date_str)
     except QueueExhausted as e:
@@ -309,11 +315,17 @@ def run_brand(
     # pair. The social pack still flows to _distribute_social via post["social"].
     if fmt == "ts_posts_array":
         files: Dict[str, Any] = {cfg["posts_file"]: payload}
+    elif fmt == "tsx_post":
+        # {src/content/posts/<slug>.tsx: module, src/lib/blog.ts: spliced registry}
+        files = dict(tsx_files or {})
     else:
         files = {f"{cfg['blog_dir']}/{slug}.mdx": payload,
                  f"{cfg['blog_dir']}/{slug}.social.md": _social_md(post)}
+    # tsx_post serves images from /img/ (rewritten in the block JSX + meta.hero);
+    # every other format uses /blog/.
+    img_prefix = "public/img" if fmt == "tsx_post" else "public/blog"
     for name, data in images.items():
-        files[f"public/blog/{slug}-{name}.png"] = data
+        files[f"{img_prefix}/{slug}-{name}.png"] = data
 
     branch = f"slipstream/{slug}-{date_str}"
     try:
