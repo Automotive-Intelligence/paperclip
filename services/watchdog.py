@@ -948,6 +948,10 @@ _RUNBOOKS: Tuple[Tuple[str, str], ...] = (
     ("gh-watch-auth-dead", "The workflow-coverage token lacks actions:read or "
      "expired. Mint a token with repo + actions read scopes, then on paperclip: "
      "railway variables --set GH_ACTIONS_TOKEN=<token>."),
+    ("llm-credits-", "Top up at openrouter.ai/settings/credits (Michael's card). "
+     "Until then every Slipstream blog fire 402-HOLDs silently across all "
+     "brands. After top-up, re-fire overdue brands via POST "
+     "/admin/run-slipstream/<brand_key>."),
 )
 
 
@@ -1093,6 +1097,64 @@ def _check_github_workflows(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+def _check_llm_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """The fuel gauge. On 2026-08-14 the OpenRouter balance hit $0 and every
+    Slipstream brand's generate stage 402'd -- the whole content layer HELD
+    silently for two days until blog-staleness inferred it 29h late. Balance is
+    the ONE number that predicts that outage before it happens, so watch it
+    directly: below warn_floor -> warn (top up soon); below critical_floor ->
+    critical (production is already dead or about to be). A 401 key is ALSO an
+    anomaly, not a skip: an invalid key means production is down the same way.
+    Network errors skip (never false-alarm). Config-gated: llm_credits.enabled."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    lc = cfg.get("llm_credits") or {}
+    if not lc.get("enabled", False):
+        return []
+    key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if not key:
+        return [Anomaly(
+            "llm-credits-unwatchable",
+            "OPENROUTER_API_KEY is not set on this service -- the LLM fuel gauge "
+            "is DARK and the content engines cannot run at all.", "critical")]
+    try:
+        r = requests.get("https://openrouter.ai/api/v1/credits",
+                         headers={"Authorization": f"Bearer {key}"}, timeout=15)
+    except requests.RequestException as e:
+        logger.warning("[watchdog] openrouter credits fetch failed: %s", e)
+        return []
+    if r.status_code == 401:
+        return [Anomaly(
+            "llm-credits-unwatchable",
+            "OpenRouter rejected the API key (401) -- content generation is down "
+            "AND the fuel gauge is dark. Rotate OPENROUTER_API_KEY on Railway.",
+            "critical")]
+    if not r.ok:
+        logger.warning("[watchdog] openrouter credits HTTP %s", r.status_code)
+        return []
+    d = (r.json() or {}).get("data") or {}
+    try:
+        remaining = float(d.get("total_credits")) - float(d.get("total_usage"))
+    except (TypeError, ValueError):
+        logger.warning("[watchdog] openrouter credits unparseable: %r", d)
+        return []
+    critical_floor = float(lc.get("critical_floor") or 1)
+    warn_floor = float(lc.get("warn_floor") or 10)
+    if remaining < critical_floor:
+        return [Anomaly(
+            "llm-credits-exhausted",
+            f"OpenRouter balance is ${remaining:.2f} (< ${critical_floor:.0f}) -- "
+            f"EVERY content engine (Slipstream blogs, all brands) is dead or about "
+            f"to die with silent 402 HOLDs. This is the 2026-08-14 four-brand "
+            f"blackout cause.", "critical")]
+    if remaining < warn_floor:
+        return [Anomaly(
+            "llm-credits-low",
+            f"OpenRouter balance is ${remaining:.2f} (< ${warn_floor:.0f}) -- top "
+            f"up before the content engines start 402-holding silently.", "warn")]
+    return []
+
+
 # Registry of every check the watchdog runs. Extend here as coverage grows.
 _CHECKS = (
     _check_brand_sites,
@@ -1110,6 +1172,7 @@ _CHECKS = (
     _check_alert_rail,
     _check_vercel_deployments,
     _check_github_workflows,
+    _check_llm_credits,
 )
 
 

@@ -146,6 +146,14 @@ github_workflows:
       - analytics.yml
       - backlinks.yml
       - don_heartbeat.yml
+# llm_credits: the fuel gauge. The 2026-08-14 four-brand blog blackout was an
+# exhausted OpenRouter balance ($130.00 bought, $130.19 used) discovered 29h
+# late by staleness inference. Balance predicts that outage BEFORE it happens.
+# 401/missing key = critical (production down AND gauge dark), never a skip.
+llm_credits:
+  enabled: true
+  warn_floor: 10        # dollars; top up soon
+  critical_floor: 1     # dollars; engines are dead or dying
 # auto_remediation: Tier 1 self-healing. Anomalies with a registered SAFE
 # in-process action (services/watchdog_remediation.py: monitor + heartbeat
 # re-runs only -- never money/outbound/auth/content-engine spend) get ONE fix
