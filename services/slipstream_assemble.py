@@ -445,13 +445,15 @@ def assemble_tsx_post(
     failure, so a bad post never reaches the commit."""
     slug = post["slug"]
     blocks = post.get("body") or []
-    # Reuse the exact block gate WD's rail uses.
+    meta = _build_post_meta(post, date_str, blocks)
+    # Reuse the exact block gate WD's rail uses. It requires heroImage set (the
+    # derived hero path), so pass the assembled meta, not a bare stub.
     violations = validate_blocks({"slug": slug, "title": post["title"],
-                                  "description": post["description"], "body": blocks})
+                                  "description": post["description"],
+                                  "heroImage": meta["hero"], "body": blocks})
     if violations:
         return {}, violations
 
-    meta = _build_post_meta(post, date_str, blocks)
     tsx = _render_tsx_module(post, meta, blocks)
 
     fetch = fetch_registry or (lambda c, t: _default_fetch_file(c["repo"], c["registry_file"], t))
