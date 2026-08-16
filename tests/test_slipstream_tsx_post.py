@@ -97,17 +97,27 @@ class TestSplice(unittest.TestCase):
 
 
 class TestAssembleEndToEnd(unittest.TestCase):
+    """These run the REAL validate_blocks gate (no mock) — the mock is exactly what
+    hid the missing-heroImage hold in the first live run."""
     CFG = {"repo": "salesdroid/bookd-marketing-site",
            "posts_dir": "src/content/posts", "registry_file": "src/lib/blog.ts"}
     BLOG = "const registry: PostEntry[] = [\n];\nexport const posts = registry;\n"
+    # A gate-passing body: answer-first, definition, quote, callout, >=2 images.
+    VALID_BODY = [
+        {"type": "answer", "text": "The short answer, lifted by answer engines."},
+        {"type": "definition", "term": "Speed to lead", "text": "how fast you contact a new lead."},
+        {"type": "p", "text": "A paragraph of body copy."},
+        {"type": "callout", "title": "Note", "text": "A highlighted insight."},
+        {"type": "image", "src": "/blog/z-post-a.png", "alt": "first"},
+        {"type": "quote", "text": "A pull quote."},
+        {"type": "image", "src": "/blog/z-post-b.png", "alt": "second"},
+    ]
 
-    def test_returns_the_two_files(self):
-        post = {"slug": "z-post", "title": "T", "description": "D",
-                "body": [{"type": "answer", "text": "hi"}, {"type": "p", "text": "body"}]}
-        with mock.patch("services.slipstream_assemble.validate_blocks", return_value=[]):
-            files, v = assemble_tsx_post(post, "2026-08-14", self.CFG, "tok",
-                                         fetch_registry=lambda c, t: self.BLOG)
-        self.assertEqual(v, [])
+    def test_returns_the_two_files_and_passes_the_real_gate(self):
+        post = {"slug": "z-post", "title": "T", "description": "D", "body": self.VALID_BODY}
+        files, v = assemble_tsx_post(post, "2026-08-14", self.CFG, "tok",
+                                     fetch_registry=lambda c, t: self.BLOG)
+        self.assertEqual(v, [])   # heroImage is derived + passed to the gate
         self.assertIn("src/content/posts/z-post.tsx", files)
         self.assertIn("src/lib/blog.ts", files)
         tsx = files["src/content/posts/z-post.tsx"]
@@ -116,11 +126,11 @@ class TestAssembleEndToEnd(unittest.TestCase):
         self.assertIn('from "@/components/blog/Slipstream"', tsx)
 
     def test_gate_violation_holds_with_no_files(self):
-        with mock.patch("services.slipstream_assemble.validate_blocks", return_value=["bad block"]):
-            files, v = assemble_tsx_post({"slug": "s", "title": "t", "description": "d", "body": []},
-                                         "2026-08-14", self.CFG, "tok", fetch_registry=lambda c, t: "")
+        # Real gate: an empty body violates and must HOLD (no files written).
+        files, v = assemble_tsx_post({"slug": "s", "title": "t", "description": "d", "body": []},
+                                     "2026-08-14", self.CFG, "tok", fetch_registry=lambda c, t: "")
         self.assertEqual(files, {})
-        self.assertEqual(v, ["bad block"])
+        self.assertTrue(v)
 
 
 if __name__ == "__main__":
