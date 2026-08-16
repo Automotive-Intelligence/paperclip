@@ -61,9 +61,12 @@ zernio_accounts:
     facebook: "69c8ac0a6cb7b8cf4caba586"
     instagram: "69c8ac356cb7b8cf4caba743"
   bookd:
-    # linkedin is Ryan Velazquez's PERSONAL profile — consent-gated per file 107:
-    # nothing posts there without Ryan's explicit sign-off on the batch.
-    linkedin: "6a67e90711e357f89d7e48d0"
+    # linkedin (6a67e907...) is Ryan Velazquez's PERSONAL profile (displayName
+    # "Ryan Velazquez"), consent-gated per file 107. GATED IN CODE 2026-08-14: kept
+    # OUT of this map so _distribute_social skips it (no account_id -> skipped),
+    # never a prose-only guard. Book'd blog social reaches Book'd's OWN pages (FB
+    # "Book'd" + IG "book'd"); Ryan's LinkedIn only ever posts with his explicit
+    # sign-off. Re-add the linkedin id here only after that consent process exists.
     facebook: "6a67e85911e357f89d7e4155"
     instagram: "6a67e8e011e357f89d7e4722"
 
