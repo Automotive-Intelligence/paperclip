@@ -172,19 +172,42 @@ max 6, never #fyp #viral #foryou."""
 
 
 def generate_videos(existing_titles: List[str], week_note: str = "") -> List[Dict[str, Any]]:
-    brand_lines = "\n".join(
-        f"- {b['name']}: format={b['format']}; pillar={b['pillar']}; world={b['world']}; voice={b['voice']}"
-        for b in _BRANDS)
-    user = (f"Write ONE script per brand (5 total) for this week's Tuesday shoot.\n"
-            f"Alternate stages week to week; pick awareness or conversion per brand "
-            f"based on what the angle serves best, and SAY which in `stage`.\n"
-            f"{week_note}\n\nBrands:\n{brand_lines}\n\n"
-            f"Angles already shot, do NOT overlap these:\n" +
-            "\n".join(f"- {t}" for t in existing_titles))
-    out = llm_json(_SYSTEM, user)
-    videos = out.get("videos") or []
+    """One call PER BRAND, not one call for all five.
+
+    Asking for five complete scripts (5-part structure + 8 deliverables each) in
+    a single response exhausted the token budget: the model returned
+    stop_reason=max_tokens with no text, four retries running, and the Sunday
+    cron died there every week. Per-brand calls each fit comfortably, and a
+    brand that fails no longer takes the whole sheet down with it.
+    """
+    videos: List[Dict[str, Any]] = []
+    failed: List[str] = []
+    for b in _BRANDS:
+        user = (
+            f"Write ONE script for {b['name']} for this week's Tuesday shoot.\n"
+            f"format={b['format']}; pillar={b['pillar']}; world={b['world']}; "
+            f"voice={b['voice']}\n"
+            f"Pick awareness OR conversion, whichever the angle serves, and say "
+            f"which in `stage`.\n{week_note}\n\n"
+            f"Angles already shot, do NOT overlap these:\n"
+            + "\n".join(f"- {x}" for x in existing_titles)
+            + "\n\nReturn ONLY: {\"videos\":[{ ...one object... }]}"
+        )
+        try:
+            out = llm_json(_SYSTEM, user, max_tokens=6000)
+            got = out.get("videos") or []
+            if got:
+                videos.extend(got[:1])
+            else:
+                failed.append(b["name"])
+        except LLMError as e:
+            logger.warning("[script-engine] %s failed: %s", b["name"], e)
+            failed.append(b["name"])
     if not videos:
-        raise LLMError("generation returned no videos")
+        raise LLMError(f"every brand failed: {', '.join(failed)}")
+    if failed:
+        logger.warning("[script-engine] brands missing from this sheet: %s",
+                       ", ".join(failed))
     return videos
 
 
@@ -242,10 +265,16 @@ def _md_to_html(md: str) -> str:
 def send_scripts_email(subject: str, md_body: str, *, dry_run: bool = False) -> bool:
     key = (os.getenv("RESEND_API_KEY") or "").strip()
     frm = os.getenv("SCRIPT_ENGINE_FROM", "AVO Studio <briefing@mail.automotiveintelligence.io>")
-    to = os.getenv("SCRIPT_ENGINE_TO", "michael@automotiveintelligence.io")
+    # BOTH recipients, matching BRIEFING_RECIPIENTS on the morning-briefing rail
+    # that demonstrably lands. Sending to michael@ alone reported delivered at
+    # Resend while nothing appeared in the mailbox Michael actually reads, so
+    # every shoot sheet since 08-06 went nowhere he could see it.
+    to = [a.strip() for a in os.getenv(
+        "SCRIPT_ENGINE_TO",
+        "michael@automotiveintelligence.io,salesdroid@gmail.com").split(",") if a.strip()]
     if dry_run:
         logger.info("[script-engine] DRY RUN: would email %r (%d chars) to %s",
-                    subject, len(md_body), to)
+                    subject, len(md_body), ", ".join(to))
         return True
     if not key:
         logger.error("[script-engine] RESEND_API_KEY missing; cannot deliver")
@@ -253,7 +282,7 @@ def send_scripts_email(subject: str, md_body: str, *, dry_run: bool = False) -> 
     r = requests.post("https://api.resend.com/emails", timeout=20,
                       headers={"Authorization": f"Bearer {key}",
                                "Content-Type": "application/json"},
-                      json={"from": frm, "to": [to], "subject": subject,
+                      json={"from": frm, "to": to, "subject": subject,
                             "html": _md_to_html(md_body)})
     if r.status_code not in (200, 201):
         logger.error("[script-engine] Resend %s: %s", r.status_code, r.text[:300])
