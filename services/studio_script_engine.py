@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import pathlib
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,6 +55,27 @@ _BOOKD_BANNED_RE = re.compile(r"\b(?:income|earn(?:ings)?|guarantee[ds]?)\b", re
 _ALLOWED_PCTS = {"3%", "3 percent"}  # the take-QC'd Invoca voicemail line, only
 
 _SCRIPT_PARTS = ("hook", "meat", "climax", "comment_ask", "follow_ask")
+
+def _money_pages() -> Dict[str, List[str]]:
+    """Real destinations, read from config/slipstream_brands.yaml rather than
+    duplicated here. The engine used to ask the model for a "destination" while
+    telling it nothing, so every script came back with "link in bio" and the
+    funnel got no traffic it could attribute."""
+    import yaml
+    cfg = yaml.safe_load(
+        (pathlib.Path(__file__).resolve().parent.parent /
+         "config" / "slipstream_brands.yaml").read_text())
+    out = {}
+    for slug, key in (("autointelligence", "avi"), ("aiphoneguy", "aipg"),
+                      ("worshipdigital", "wd"), ("agentempire", "bae"),
+                      ("bookd", "bookd")):
+        b = cfg["brands"].get(slug) or {}
+        dom = b.get("domain", "")
+        out[key] = [f"https://{dom}{p}" for p in (b.get("money_pages") or [])]
+    return out
+
+
+_PHONE = {"aipg": "(817) 670-9689"}   # the ONE tracked rail Meta counts itself
 
 _BRANDS: List[Dict[str, str]] = [
     {"key": "avi", "name": "AvI", "format": "on camera",
@@ -147,6 +169,11 @@ def gate_videos(videos: List[Dict[str, Any]], existing_titles: List[str]) -> Lis
             v.append(f"{label}: banned hashtag (#fyp/#viral/#foryou)")
         if vid.get("brand", "").lower() in ("bookd", "book'd") and _BOOKD_BANNED_RE.search(blob):
             v.append(f"{label}: Book'd compliance language (income/earnings/guarantee)")
+        dest = str(vid.get("destination", ""))
+        if "https://" not in dest and not re.search(r"\d{3}[)\-.\s]\s*\d{3}[-.\s]\d{4}", dest):
+            v.append(f"{label}: destination {dest!r} is not a real URL or tracked "
+                     f"number; 'link in bio' cannot be attributed and the loader "
+                     f"refuses it at schedule time")
         hit = _title_overlap(str(vid.get("title", "")), existing_titles)
         if hit:
             v.append(f"{label}: title overlaps existing script '{hit}' (angle already shot)")
@@ -180,15 +207,31 @@ def generate_videos(existing_titles: List[str], week_note: str = "") -> List[Dic
     cron died there every week. Per-brand calls each fit comfortably, and a
     brand that fails no longer takes the whole sheet down with it.
     """
+    pages = _money_pages()
     videos: List[Dict[str, Any]] = []
     failed: List[str] = []
-    for b in _BRANDS:
+    # The plan pairs AWARENESS with CONVERSION. Left to itself the model wrote
+    # 4 awareness to 1 conversion, which does not serve an MRR north star, so
+    # the stage is ASSIGNED and alternates week to week.
+    week = int(datetime.now(_CENTRAL).strftime("%V"))
+    for idx, b in enumerate(_BRANDS):
+        stage = "conversion" if (idx + week) % 2 == 0 else "awareness"
+        dests = pages.get(b["key"], [])
+        phone = _PHONE.get(b["key"])
         user = (
             f"Write ONE script for {b['name']} for this week's Tuesday shoot.\n"
             f"format={b['format']}; pillar={b['pillar']}; world={b['world']}; "
             f"voice={b['voice']}\n"
-            f"Pick awareness OR conversion, whichever the angle serves, and say "
-            f"which in `stage`.\n{week_note}\n\n"
+            f"STAGE (assigned, do not change): {stage}.\n"
+            f"DESTINATION: you MUST use one of these real URLs verbatim, chosen "
+            f"to fit the stage, and put it in `destination` as a full https:// "
+            f"link: {dests or 'none configured'}.\n"
+            + (f"For a conversion piece the strongest ask is the tracked line "
+               f"{phone}, spoken and on screen; Meta counts that call itself.\n"
+               if phone and stage == "conversion" else "")
+            + f"NEVER write 'link in bio' or invent a page. An untagged "
+              f"destination cannot be attributed and the post will be refused "
+              f"at schedule time.\n{week_note}\n\n"
             f"Angles already shot, do NOT overlap these:\n"
             + "\n".join(f"- {x}" for x in existing_titles)
             + "\n\nReturn ONLY: {\"videos\":[{ ...one object... }]}"

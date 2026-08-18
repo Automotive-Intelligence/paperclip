@@ -142,3 +142,30 @@ def test_render_sheet_carries_all_parts_and_no_em_dash():
                    "On-screen hook", "Post kit"):
         assert marker in md
     assert "—" not in md
+
+
+def _vid_with(dest):
+    return {"brand": "avi", "stage": "awareness", "title": "a fresh angle",
+            "hook": "h", "meat": " ".join(["w"] * 140), "climax": "c",
+            "comment_ask": "q", "follow_ask": "f", "destination": dest}
+
+
+def test_gate_rejects_link_in_bio():
+    out = se.gate_videos([_vid_with("link in bio")], [])
+    assert any("not a real URL" in x for x in out)
+
+
+def test_gate_accepts_a_real_money_page():
+    out = se.gate_videos([_vid_with("https://theaiphoneguy.com/discovery")], [])
+    assert not any("not a real URL" in x for x in out)
+
+
+def test_gate_accepts_the_tracked_phone_line():
+    out = se.gate_videos([_vid_with("(817) 670-9689")], [])
+    assert not any("not a real URL" in x for x in out)
+
+
+def test_money_pages_come_from_the_shared_config():
+    pages = se._money_pages()
+    assert any("theaiphoneguy.com/discovery" in u for u in pages["aipg"])
+    assert all(u.startswith("https://") for v in pages.values() for u in v)
