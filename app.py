@@ -4723,21 +4723,24 @@ def validate_key(authorization: Optional[str] = Header(None)):
     return True
 
 
-def validate_bookd_agent_key(authorization: Optional[str] = Header(None)):
-    """Auth for the Book'd partner-agent port (/bookd/agent/* + /bookd/mcp) ONLY.
+def validate_bookd_agent_key(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Auth for the partner-agent port (/bookd/agent/* + /bookd/mcp) ONLY.
 
-    Deliberately a SEPARATE credential universe from the master API_KEYS: the partner
-    key (env BOOKD_AGENT_KEYS, comma-separated) unlocks nothing else in this app, and
-    master keys do NOT unlock this surface. Scoped grant, independent revocation."""
-    allowed = [k.strip() for k in (os.getenv("BOOKD_AGENT_KEYS") or "").split(",") if k.strip()]
-    if not allowed:
-        raise HTTPException(status_code=503, detail="Book'd agent port is not enabled.")
+    A SEPARATE credential universe from the master API_KEYS: a partner key unlocks
+    nothing else in this app, and master keys do NOT unlock this surface.
+
+    Keys live in Postgres (services/partner_keys), not in env, for one reason: Michael
+    must be able to REVOKE INSTANTLY. A store lookup takes effect on the next request;
+    an env var would need a redeploy. Returns the GRANT (scope, can_act), which is the
+    only source of the caller's access level -- never the request body."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = authorization.split("Bearer ", 1)[1].strip()
-    if not any(hmac.compare_digest(token, k) for k in allowed):
-        raise HTTPException(status_code=403, detail="Invalid Book'd agent key.")
-    return True
+    from services.partner_keys import resolve
+    grant = resolve(token)
+    if not grant:
+        raise HTTPException(status_code=403, detail="Invalid or revoked partner key.")
+    return grant
 
 
 def validate_michael_agent_key(authorization: Optional[str] = Header(None)):
@@ -5966,7 +5969,7 @@ async def run_lead_reconcile_endpoint(
 
 # --------------------------------------------------------------------------- #
 # Book'd partner-agent port (Ryan's Hermes agent <-> AVO, Book'd-walled).
-# Auth = validate_bookd_agent_key (scoped BOOKD_AGENT_KEYS, NEVER master API_KEYS).
+# Auth = validate_bookd_agent_key (store-backed partner keys, NEVER master API_KEYS).
 # Core lives in services/bookd_agent + services/bookd_handoff; MCP front door in
 # services/bookd_mcp. Admin handoff endpoints (master key) sit further below.
 # --------------------------------------------------------------------------- #
@@ -5975,22 +5978,89 @@ async def bookd_agent_message_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
     authorization: Optional[str] = Header(None),
 ):
-    """One conversational turn with the Book'd-walled ops agent (answer-only)."""
-    validate_bookd_agent_key(authorization)
+    """One conversational turn with the partner agent, walled to the key's scope."""
+    grant = validate_bookd_agent_key(authorization)
     from services.bookd_agent import handle_message
     payload = payload or {}
     result = await asyncio.to_thread(
         handle_message, payload.get("conversation_id"),
-        str(payload.get("message") or ""), source="hermes-rest")
+        str(payload.get("message") or ""), source=f"{grant['label']}/rest",
+        scope=grant["scope"], key_id=grant["id"])
     return JSONResponse(content=result)
 
 
 @app.get("/bookd/agent/status")
 async def bookd_agent_status_endpoint(authorization: Optional[str] = Header(None)):
-    """Current Book'd workstream status (read-only, secret-scanned)."""
-    validate_bookd_agent_key(authorization)
+    """Current status for the key's scope (read-only, secret-scanned)."""
+    grant = validate_bookd_agent_key(authorization)
     from services.bookd_agent import status
-    return JSONResponse(content=await asyncio.to_thread(status))
+    return JSONResponse(content=await asyncio.to_thread(status, grant["scope"]))
+
+
+def _require_avo_scope(grant: Dict[str, Any]) -> None:
+    if grant.get("scope") != "avo":
+        raise HTTPException(status_code=403,
+                            detail=f"requires 'avo' scope; this key is scoped to "
+                                   f"{grant.get('scope')!r}")
+
+
+@app.post("/bookd/agent/search")
+async def partner_search_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Search AVO's operating state across every brand and seat ('avo' scope)."""
+    grant = validate_bookd_agent_key(authorization)
+    _require_avo_scope(grant)
+    from services.avo_state import search
+    result = await asyncio.to_thread(
+        search, str((payload or {}).get("query") or ""), grant["scope"])
+    return JSONResponse(content=result)
+
+
+@app.post("/bookd/agent/read")
+async def partner_read_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Read one state file or section, capped per call ('avo' scope)."""
+    grant = validate_bookd_agent_key(authorization)
+    _require_avo_scope(grant)
+    from services.avo_state import read
+    p = payload or {}
+    result = await asyncio.to_thread(
+        read, str(p.get("path") or ""), grant["scope"],
+        section=(p.get("section") or None), offset=int(p.get("offset") or 0))
+    return JSONResponse(content=result)
+
+
+@app.post("/bookd/agent/request-action")
+async def partner_request_action_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Request a real action. No-effect requests are recorded; anything with blast
+    radius is staged for Michael's approval and he is paged."""
+    grant = validate_bookd_agent_key(authorization)
+    _require_avo_scope(grant)
+    if not grant.get("can_act"):
+        raise HTTPException(status_code=403, detail="action channel is off for this key")
+    from services.partner_actions import request_action
+    p = payload or {}
+    result = await asyncio.to_thread(
+        request_action, str(p.get("action") or ""), p.get("params") or {},
+        key_id=grant["id"], requested_by=grant["label"])
+    return JSONResponse(content=result)
+
+
+@app.get("/bookd/agent/action/{request_id}")
+async def partner_action_status_endpoint(
+    request_id: int, authorization: Optional[str] = Header(None),
+):
+    """Poll the verdict on an action request."""
+    validate_bookd_agent_key(authorization)
+    from services.partner_actions import status_for
+    return JSONResponse(content=await asyncio.to_thread(status_for, request_id))
 
 
 @app.post("/bookd/agent/handoff")
@@ -5999,12 +6069,12 @@ async def bookd_agent_handoff_endpoint(
     authorization: Optional[str] = Header(None),
 ):
     """Secure credential handoff: encrypted at rest, Michael approves the install."""
-    validate_bookd_agent_key(authorization)
+    grant = validate_bookd_agent_key(authorization)
     from services.bookd_handoff import stage
     payload = payload or {}
     result = await asyncio.to_thread(
         stage, str(payload.get("key_name") or ""), str(payload.get("value") or ""),
-        "hermes-rest")
+        f"{grant['label']}/rest")
     return JSONResponse(content=result)
 
 
@@ -6012,8 +6082,9 @@ async def bookd_agent_handoff_endpoint(
 async def bookd_mcp_endpoint(
     request: Request, authorization: Optional[str] = Header(None),
 ):
-    """Stateless MCP (Streamable HTTP, JSON responses) over the same walled core."""
-    validate_bookd_agent_key(authorization)
+    """Stateless MCP (Streamable HTTP, JSON responses) over the same walled core.
+    The resolved grant decides which tools the client can see and call."""
+    grant = validate_bookd_agent_key(authorization)
     from services.bookd_mcp import handle_rpc
     try:
         payload = await request.json()
@@ -6023,10 +6094,10 @@ async def bookd_mcp_endpoint(
             "error": {"code": -32700, "message": "parse error"}})
     if isinstance(payload, list):                      # JSON-RPC batch
         responses = [r for r in (await asyncio.gather(
-            *[asyncio.to_thread(handle_rpc, p) for p in payload])) if r is not None]
+            *[asyncio.to_thread(handle_rpc, p, grant) for p in payload])) if r is not None]
         return JSONResponse(content=responses) if responses else JSONResponse(
             status_code=202, content=None)
-    response = await asyncio.to_thread(handle_rpc, payload)
+    response = await asyncio.to_thread(handle_rpc, payload, grant)
     if response is None:                               # notification: acknowledge only
         return JSONResponse(status_code=202, content=None)
     return JSONResponse(content=response)
@@ -6066,6 +6137,98 @@ async def michael_agent_status_endpoint(authorization: Optional[str] = Header(No
     validate_michael_agent_key(authorization)
     from services.michael_agent import status
     return JSONResponse(content=await asyncio.to_thread(status))
+
+
+@app.get("/admin/partner-keys")
+async def admin_partner_keys_list(authorization: Optional[str] = Header(None)):
+    """Every partner key, its scope, and its activity. Hashes are never returned."""
+    validate_key(authorization)
+    from services.partner_keys import list_keys
+    return JSONResponse(content={"keys": await asyncio.to_thread(list_keys)})
+
+
+@app.post("/admin/partner-key-issue")
+async def admin_partner_key_issue(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Mint a partner key (or adopt an existing raw key to change its grant without
+    forcing the partner to reconfigure). The raw value is returned ONCE."""
+    validate_key(authorization)
+    from services.partner_keys import issue
+    p = payload or {}
+    result = await asyncio.to_thread(
+        issue, str(p.get("label") or "partner"), str(p.get("scope") or "bookd"),
+        can_act=bool(p.get("can_act")), raw_key=(p.get("raw_key") or None))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/partner-key-revoke")
+async def admin_partner_key_revoke(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """THE KILL SWITCH. Takes effect on the partner's next request, no redeploy."""
+    validate_key(authorization)
+    from services.partner_keys import revoke
+    p = payload or {}
+    result = await asyncio.to_thread(revoke, int(p.get("id") or 0), str(p.get("reason") or ""))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/partner-key-scope")
+async def admin_partner_key_scope(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Narrow or widen a live key ('avo' <-> 'bookd'), or toggle its action channel,
+    without cutting the partner off entirely."""
+    validate_key(authorization)
+    from services.partner_keys import set_can_act, set_scope
+    p = payload or {}
+    kid = int(p.get("id") or 0)
+    out: Dict[str, Any] = {}
+    if p.get("scope"):
+        out["scope"] = await asyncio.to_thread(set_scope, kid, str(p["scope"]))
+    if "can_act" in p:
+        out["can_act"] = await asyncio.to_thread(set_can_act, kid, bool(p["can_act"]))
+    return JSONResponse(content=out or {"ok": False, "error": "pass scope and/or can_act"})
+
+
+@app.get("/admin/partner-actions")
+async def admin_partner_actions_list(
+    status: Optional[str] = None, authorization: Optional[str] = Header(None),
+):
+    """Action requests from partner agents. Pass ?status=pending for the approval queue."""
+    validate_key(authorization)
+    from services.partner_actions import list_requests
+    return JSONResponse(content={"requests": await asyncio.to_thread(list_requests, status)})
+
+
+@app.post("/admin/partner-action-approve")
+async def admin_partner_action_approve(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Approve a gated action request."""
+    validate_key(authorization)
+    from services.partner_actions import approve
+    p = payload or {}
+    result = await asyncio.to_thread(approve, int(p.get("id") or 0), str(p.get("note") or ""))
+    return JSONResponse(content=result)
+
+
+@app.post("/admin/partner-action-deny")
+async def admin_partner_action_deny(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Deny a gated action request."""
+    validate_key(authorization)
+    from services.partner_actions import deny
+    p = payload or {}
+    result = await asyncio.to_thread(deny, int(p.get("id") or 0), str(p.get("note") or ""))
+    return JSONResponse(content=result)
 
 
 @app.get("/admin/bookd-handoffs")
