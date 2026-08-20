@@ -48,7 +48,7 @@ def _wire(monkey, *, llm=None, cap_used=0):
     monkey.setattr(BA, "_insert_msg", lambda cid, role, content, disposition="", gates_hit="":
                    calls["inserted"].append((role, content, disposition, gates_hit)))
     monkey.setattr(BA, "_history", lambda cid: "partner: earlier question\navo: earlier answer")
-    monkey.setattr(BA, "_system_prompt", lambda: "WALL")
+    monkey.setattr(BA, "_system_prompt", lambda scope="bookd": "WALL")
     monkey.setattr(BA, "_escalate", lambda subj, body:
                    calls["escalated"].append((subj, body)) or True)
     monkey.setattr(BA, "_state_log", lambda cid, src: None)
@@ -165,31 +165,42 @@ def test_mcp_notification_returns_none_and_unknown_method_errors():
 
 def test_mcp_tool_call_dispatches_to_core(monkeypatch):
     monkeypatch.setattr("services.bookd_agent.handle_message",
-                        lambda cid, msg, source: {"conversation_id": "c1",
-                                                  "disposition": "reply", "reply": "hi"})
+                        lambda cid, msg, **kw: {"conversation_id": "c1",
+                                                "disposition": "reply", "reply": "hi"})
     out = BM.handle_rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
                          "params": {"name": "bookd_message",
-                                    "arguments": {"message": "hello"}}})
+                                    "arguments": {"message": "hello"}}},
+                        {"id": 1, "label": "t", "scope": "bookd", "can_act": False})
     payload = json.loads(out["result"]["content"][0]["text"])
     assert payload["reply"] == "hi" and out["result"]["isError"] is False
 
 
 # ---------------------------------------------------------------------------- auth
 def test_bookd_key_auth_is_a_separate_universe(monkeypatch):
+    """Keys resolve through the store (so revocation is instant), and the partner
+    surface and the master surface stay separate credential universes."""
     from fastapi import HTTPException
     import app as APP
-    # surface disabled without the env
-    monkeypatch.delenv("BOOKD_AGENT_KEYS", raising=False)
-    with pytest.raises(HTTPException) as e:
-        APP.validate_bookd_agent_key("Bearer anything")
-    assert e.value.status_code == 503
-    # master-style key is NOT accepted on the bookd surface
-    monkeypatch.setenv("BOOKD_AGENT_KEYS", "ryan-key-123")
+
+    grants = {"ryan-key-123": {"id": 1, "label": "ryan-hermes",
+                               "scope": "avo", "can_act": True}}
+    monkeypatch.setattr("services.partner_keys.resolve", lambda raw: grants.get(raw))
+
+    # a master-style key is NOT a partner key
     with pytest.raises(HTTPException) as e2:
         APP.validate_bookd_agent_key("Bearer master-key-999")
     assert e2.value.status_code == 403
-    # the scoped key IS accepted
-    assert APP.validate_bookd_agent_key("Bearer ryan-key-123") is True
+
+    # the issued key resolves to its GRANT (scope comes from the key, never the request)
+    grant = APP.validate_bookd_agent_key("Bearer ryan-key-123")
+    assert grant["scope"] == "avo" and grant["can_act"] is True
+
+    # revoked/unknown -> resolve() returns None -> denied on the very next request
+    grants.clear()
+    with pytest.raises(HTTPException) as e4:
+        APP.validate_bookd_agent_key("Bearer ryan-key-123")
+    assert e4.value.status_code == 403
+
     # missing/bad header form
     with pytest.raises(HTTPException) as e3:
         APP.validate_bookd_agent_key(None)

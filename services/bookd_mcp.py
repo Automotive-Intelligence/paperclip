@@ -9,7 +9,8 @@ with a URL + bearer key; anything else uses the plain REST endpoints, which shar
 exact same core (services/bookd_agent + services/bookd_handoff).
 
 Methods: initialize, ping, tools/list, tools/call; notifications/* are acknowledged
-with no body. Auth happens in app.py (scoped BOOKD_AGENT_KEYS, never master API_KEYS).
+with no body. Auth happens in app.py (store-backed partner keys, never master API_KEYS);
+the resolved grant decides which tools exist and which are callable.
 """
 from __future__ import annotations
 
@@ -63,6 +64,71 @@ TOOLS = [
 ]
 
 
+# Tools an 'avo'-scope key gets ON TOP of the three above. The corpus is far too large
+# to inject, so reading the operation means searching and reading it on demand.
+AVO_TOOLS = [
+    {
+        "name": "avo_search",
+        "description": (
+            "Search AVO's operating state across every brand and seat. Returns matching "
+            "lines with their file and line number. Start here when you do not know "
+            "which file holds the answer."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Text or regex to find."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "avo_read",
+        "description": (
+            "Read one AVO state file, or one section of it by heading. Large files are "
+            "returned in capped chunks; pass offset to continue."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File name, e.g. revenue_state.md."},
+                "section": {"type": "string", "description": "Optional heading to extract."},
+                "offset": {"type": "integer", "description": "Character offset for paging."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "request_action",
+        "description": (
+            "Request that AVO take a real action. Anything with no external effect is "
+            "recorded and proceeds. Anything with blast radius (spend, sends, deploys, "
+            "secrets, client surfaces, deletions) is staged for Michael's approval and "
+            "he is paged. Use check_action to poll the verdict."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "What you want done, in one clear sentence."},
+                "params": {"type": "object", "description": "Any structured detail."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "check_action",
+        "description": "Check the status and verdict of an action request you submitted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer", "description": "The request id."}},
+            "required": ["id"],
+        },
+    },
+]
+
+
+def tools_for(scope: str) -> list:
+    """The tool list a key's scope unlocks. Scope comes from the key, never the request."""
+    return TOOLS + AVO_TOOLS if scope == "avo" else TOOLS
+
+
 def _result(rpc_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
@@ -76,24 +142,58 @@ def _tool_text(payload: Dict[str, Any], *, is_error: bool = False) -> Dict[str, 
             "isError": is_error}
 
 
-def _call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+def _call_tool(name: str, args: Dict[str, Any], grant: Dict[str, Any]) -> Dict[str, Any]:
     from services.bookd_agent import handle_message, status
     from services.bookd_handoff import stage
+    scope = grant.get("scope", "bookd")
+    key_id = grant.get("id")
+    label = grant.get("label") or "partner"
+
     if name == "bookd_message":
-        out = handle_message(args.get("conversation_id"),
-                             str(args.get("message") or ""), source="hermes-mcp")
+        out = handle_message(args.get("conversation_id"), str(args.get("message") or ""),
+                             source="hermes-mcp", scope=scope, key_id=key_id)
         return _tool_text(out, is_error=out.get("disposition") in ("error", "invalid"))
     if name == "bookd_status":
-        return _tool_text(status())
+        return _tool_text(status(scope))
     if name == "bookd_handoff_secret":
         out = stage(str(args.get("key_name") or ""), str(args.get("value") or ""),
-                    submitted_by="hermes-mcp")
+                    submitted_by=f"{label}/mcp")
         return _tool_text(out, is_error=not out.get("ok"))
+
+    # Scope gate: an 'avo' tool is invisible AND unusable to a 'bookd' key, even if the
+    # caller names it directly (a tool list is a hint, never the enforcement point).
+    if name in {t["name"] for t in AVO_TOOLS}:
+        if scope != "avo":
+            return _tool_text({"error": f"{name} requires 'avo' scope; this key is "
+                                        f"scoped to {scope!r}"}, is_error=True)
+        if name == "avo_search":
+            from services.avo_state import search
+            return _tool_text(search(str(args.get("query") or ""), scope))
+        if name == "avo_read":
+            from services.avo_state import read
+            return _tool_text(read(str(args.get("path") or ""), scope,
+                                   section=(args.get("section") or None),
+                                   offset=int(args.get("offset") or 0)))
+        if name == "request_action":
+            if not grant.get("can_act"):
+                return _tool_text({"error": "this key's action channel is turned off; "
+                                            "ask Michael to enable it"}, is_error=True)
+            from services.partner_actions import request_action
+            return _tool_text(request_action(
+                str(args.get("action") or ""), args.get("params") or {},
+                key_id=key_id, requested_by=label))
+        if name == "check_action":
+            from services.partner_actions import status_for
+            return _tool_text(status_for(int(args.get("id") or 0)))
     return _tool_text({"error": f"unknown tool {name!r}"}, is_error=True)
 
 
-def handle_rpc(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """One JSON-RPC message -> response dict, or None for notifications (HTTP 202)."""
+def handle_rpc(payload: Dict[str, Any],
+               grant: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """One JSON-RPC message -> response dict, or None for notifications (HTTP 202).
+    `grant` is the resolved key (scope, can_act) from app.py; it decides which tools
+    exist and which are callable."""
+    grant = grant or {"scope": "bookd", "can_act": False}
     if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
         return _error(None, -32600, "invalid JSON-RPC 2.0 request")
     method = str(payload.get("method") or "")
@@ -115,13 +215,14 @@ def handle_rpc(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if method == "ping":
         return _result(rpc_id, {})
     if method == "tools/list":
-        return _result(rpc_id, {"tools": TOOLS})
+        return _result(rpc_id, {"tools": tools_for(grant.get("scope", "bookd"))})
     if method == "tools/call":
         params = payload.get("params") or {}
         name = str(params.get("name") or "")
         args = params.get("arguments") or {}
         try:
-            return _result(rpc_id, _call_tool(name, args if isinstance(args, dict) else {}))
+            return _result(rpc_id, _call_tool(name, args if isinstance(args, dict) else {},
+                                              grant))
         except Exception:
             logger.exception("[bookd-mcp] tool %s crashed", name)
             return _result(rpc_id, _tool_text({"error": "internal error"}, is_error=True))
