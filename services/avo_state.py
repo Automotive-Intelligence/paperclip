@@ -153,26 +153,37 @@ def search(query: str, scope: str = "avo", *, limit: int = _MAX_SEARCH_HITS) -> 
     except re.error:
         rx = re.compile(re.escape(q), re.IGNORECASE)
 
+    # Hits are capped PER FILE, not just overall. Files are scanned largest-first, and
+    # without this the biggest file (revenue_state.md, ~300 KB) fills every slot before
+    # the search ever reaches a small but decisive one like bookd_state.md. Breadth
+    # across files beats depth in one when the caller does not know where to look.
+    per_file = max(3, limit // 8)
     hits: List[Dict[str, Any]] = []
     scanned = 0
+    truncated = False
     for f in allowed_files(scope):
-        if scanned >= _MAX_SEARCH_FILES:
-            return {"ok": True, "query": q, "hits": hits, "truncated": True,
-                    "note": (f"scanned the {_MAX_SEARCH_FILES} largest state files and "
-                             "stopped; name a file with avo_read to go deeper")}
+        if scanned >= _MAX_SEARCH_FILES or len(hits) >= limit:
+            truncated = True
+            break
         scanned += 1
         text = _fetch(f["path"])
         if not text:
             continue
+        in_file = 0
         for n, line in enumerate(text.splitlines(), 1):
             if rx.search(line):
                 hits.append({"file": f["path"], "line": n,
                              "text": line.strip()[:_MAX_LINE_CHARS]})
+                in_file += 1
+                if in_file >= per_file:
+                    truncated = True        # more in this file; avo_read it for the rest
+                    break
                 if len(hits) >= limit:
-                    return {"ok": True, "query": q, "hits": hits, "truncated": True,
-                            "note": f"stopped at {limit} matches; narrow the query"}
-    return {"ok": True, "query": q, "hits": hits, "truncated": False,
-            "match_count": len(hits)}
+                    break
+    note = ("some files had more matches than shown; avo_read a file for its full text"
+            if truncated else "")
+    return {"ok": True, "query": q, "hits": hits, "truncated": truncated,
+            "match_count": len(hits), "files_scanned": scanned, "note": note}
 
 
 def read(path: str, scope: str = "avo", *, section: Optional[str] = None,
