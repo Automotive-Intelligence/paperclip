@@ -84,9 +84,11 @@ def test_move_failure_never_sinks_the_sweep():
     arc.assert_called_once()
 
 
-def test_real_config_parses_and_is_salesdroid_scoped():
+def test_real_config_parses_and_reflects_retirement():
+    """Retired 2026-08-16 with the postal rail (owner declined the re-auth).
+    Config must stay parseable with rules intact so re-enabling is a flag flip."""
     cfg = inbox_janitor._load_config()
-    assert cfg.get("enabled") is True
+    assert cfg.get("enabled") is False
     accounts = cfg.get("accounts") or {}
     assert set(accounts) == {"salesdroid"}
     for rule in accounts["salesdroid"]:
