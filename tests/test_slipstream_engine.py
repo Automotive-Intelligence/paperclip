@@ -179,3 +179,63 @@ def test_wd_config_has_accounts_and_automerge_on():
     for brand, acc in accounts.items():
         for platform, aid in acc.items():
             assert aid and isinstance(aid, str), (brand, platform)
+
+
+# --- social distribution must cover the platforms a brand ACTUALLY has -------
+# Book'd (facebook+instagram) and Agent Empire (facebook+instagram+youtube) have
+# NEITHER linkedin nor x. The old two-platform loop silently produced zero jobs
+# for them, so every blog they published reached no social audience at all.
+def _post_with(social):
+    return {"social": social}
+
+
+def _cfg(accounts):
+    return {"business_key": "bookd", "zernio_accounts": accounts}
+
+
+def test_facebook_instagram_brand_still_gets_jobs(monkeypatch):
+    sent = {}
+
+    def _loader(jobs, commit=True):
+        sent["jobs"] = jobs
+        return {"ok": True, "counts": {"scheduled": len(jobs)}}
+
+    monkeypatch.setattr("services.social_load_service.run_social_load", _loader)
+    monkeypatch.setenv("SLIPSTREAM_SOCIAL_DISTRIBUTE", "1")
+    se._distribute_social(
+        _cfg({"facebook": "fb1", "instagram": "ig1"}),
+        _post_with({"linkedin": "li copy", "x": "x copy",
+                    "facebook": "fb copy", "instagram": "ig copy"}),
+        "some-slug", "https://bookd.cx/blog/some-slug")
+    plats = {j["platform"] for j in sent.get("jobs", [])}
+    assert plats == {"facebook", "instagram"}, plats
+
+
+def test_older_post_without_fb_ig_copy_falls_back(monkeypatch):
+    """A post written before the schema change carries only linkedin/x copy;
+    it must still reach a facebook/instagram-only brand."""
+    sent = {}
+    monkeypatch.setattr("services.social_load_service.run_social_load",
+                        lambda jobs, commit=True: sent.update(jobs=jobs) or {"ok": True})
+    monkeypatch.setenv("SLIPSTREAM_SOCIAL_DISTRIBUTE", "1")
+    se._distribute_social(
+        _cfg({"facebook": "fb1", "instagram": "ig1"}),
+        _post_with({"linkedin": "li only", "x": "x only"}),
+        "s", "https://bookd.cx/blog/s")
+    assert {j["platform"] for j in sent.get("jobs", [])} == {"facebook", "instagram"}
+    assert all(j["content"].strip() for j in sent["jobs"])
+
+
+def test_unconnected_platform_is_still_skipped(monkeypatch):
+    """Fail-closed behaviour must survive: no account id, no job, never a None
+    that would fan the post out to every connected account."""
+    sent = {}
+    monkeypatch.setattr("services.social_load_service.run_social_load",
+                        lambda jobs, commit=True: sent.update(jobs=jobs) or {"ok": True})
+    monkeypatch.setenv("SLIPSTREAM_SOCIAL_DISTRIBUTE", "1")
+    se._distribute_social(
+        _cfg({"facebook": "fb1"}),
+        _post_with({"linkedin": "li", "x": "x", "facebook": "fb", "instagram": "ig"}),
+        "s", "https://bookd.cx/blog/s")
+    assert {j["platform"] for j in sent.get("jobs", [])} == {"facebook"}
+    assert all(j["account_id"] for j in sent["jobs"])
