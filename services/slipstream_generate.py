@@ -143,7 +143,10 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         " where {name} matches an image_prompts entry.\n"
         '- "image_prompts": array of 3-4 objects {"name": str, "prompt": str}. The FIRST MUST be'
         " name \"hero\". Each prompt is a cinematic, diagrammatic scene with NO text, logos, or faces.\n"
-        '- "social": {"linkedin": str, "x": str} voice-locked drafts, no em-dashes.\n'
+        '- "social": {"linkedin": str, "x": str, "facebook": str, "instagram": str}\n'
+        '  voice-locked drafts, no em-dashes. ALL FOUR are required: Book\'d and\n'
+        '  Agent Empire have no LinkedIn or X account, so a post without facebook\n'
+        '  and instagram copy reaches nobody at all for those brands.\n'
     )
 
 
@@ -192,7 +195,10 @@ def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
         '- "body": the array of typed blocks described above\n'
         '- "image_prompts": array of 3-4 objects {"name": str, "prompt": str}. The FIRST MUST be'
         " name \"hero\". Each prompt is a cinematic scene with NO text, logos, or faces.\n"
-        '- "social": {"linkedin": str, "x": str} voice-locked drafts, no em-dashes.\n'
+        '- "social": {"linkedin": str, "x": str, "facebook": str, "instagram": str}\n'
+        '  voice-locked drafts, no em-dashes. ALL FOUR are required: Book\'d and\n'
+        '  Agent Empire have no LinkedIn or X account, so a post without facebook\n'
+        '  and instagram copy reaches nobody at all for those brands.\n'
     )
 
 
@@ -213,7 +219,10 @@ def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     prompts = post.get("image_prompts") or []
     if not any((p or {}).get("name") == "hero" for p in prompts):
         raise GenerationError("image_prompts has no 'hero' entry (zero-image = auto-HOLD)")
-    if not isinstance(post.get("social"), dict) or not post["social"].get("x"):
+    sd = post.get("social")
+    if not isinstance(sd, dict) or not any(
+            str(sd.get(k) or "").strip()
+            for k in ("linkedin", "x", "facebook", "instagram")):
         raise GenerationError("social drafts incomplete")
     return post
 
@@ -235,6 +244,9 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     prompts = post.get("image_prompts") or []
     if not any((p or {}).get("name") == "hero" for p in prompts):
         raise GenerationError("image_prompts has no 'hero' entry (zero-image = auto-HOLD)")
-    if not isinstance(post.get("social"), dict) or not post["social"].get("x"):
+    sd = post.get("social")
+    if not isinstance(sd, dict) or not any(
+            str(sd.get(k) or "").strip()
+            for k in ("linkedin", "x", "facebook", "instagram")):
         raise GenerationError("social drafts incomplete")
     return post

@@ -72,8 +72,26 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
         base = datetime.now(timezone.utc) + timedelta(days=1)
         accounts = cfg.get("zernio_accounts") or {}
         jobs = []
-        for i, (platform, text) in enumerate((("linkedin", social.get("linkedin")),
-                                               ("x", social.get("x")))):
+        # ALL connected platforms, not just linkedin/x. Book'd (facebook +
+        # instagram) and Agent Empire (facebook + instagram + youtube) have
+        # NEITHER linkedin nor x, so the old two-platform loop could never build
+        # a single job for them: every blog they published reached no social
+        # audience at all, silently, and only logged "no social drafts".
+        # Fall back across platforms so an older post that only carries
+        # linkedin/x copy still reaches facebook and instagram.
+        def _copy_for(p_):
+            order = {"facebook": ("facebook", "linkedin", "x"),
+                     "instagram": ("instagram", "x", "linkedin"),
+                     "linkedin": ("linkedin", "facebook", "x"),
+                     "x": ("x", "instagram", "linkedin")}[p_]
+            for k in order:
+                v = str(social.get(k) or "").strip()
+                if v:
+                    return v
+            return ""
+
+        for i, platform in enumerate(("linkedin", "x", "facebook", "instagram")):
+            text = _copy_for(platform)
             if not text:
                 continue
             # An unresolved account id MUST NOT be passed through as None: the
