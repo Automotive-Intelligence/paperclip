@@ -36,6 +36,7 @@ _API = f"https://api.github.com/repos/{_REPO}"
 _CACHE_TTL = 180                  # seconds; state moves on commit cadence, not per call
 _MAX_READ_CHARS = 40_000          # per read() call
 _MAX_SEARCH_HITS = 60
+_MAX_SEARCH_FILES = 60            # ceiling on GitHub fetches per uncached search
 _MAX_LINE_CHARS = 300
 
 # Scope -> which files are readable. 'avo' means the whole corpus.
@@ -68,7 +69,11 @@ def _scrub(text: str) -> str:
 
 
 def _list_files() -> List[Dict[str, Any]]:
-    """Every markdown file in the repo root, with size. Cached."""
+    """The ROOT-level markdown files: the seats' operating state. Deliberately not
+    recursive. The repo also holds marketing_deliverables/ (600+ files, ~4 MB of work
+    artifacts); walking those would mean hundreds of GitHub fetches per uncached search,
+    which is both too slow to answer in a conversation and enough to exhaust the API
+    rate limit in a few queries. The operating state is what a partner reads."""
     cached = _cached("__tree__")
     if cached is not None:
         return cached
@@ -76,7 +81,7 @@ def _list_files() -> List[Dict[str, Any]]:
     if not tok:
         return []
     try:
-        r = requests.get(f"{_API}/git/trees/main?recursive=0", timeout=20,
+        r = requests.get(f"{_API}/git/trees/main", timeout=20,
                          headers={"Authorization": f"Bearer {tok}",
                                   "Accept": "application/vnd.github+json"})
         if not r.ok:
@@ -149,7 +154,13 @@ def search(query: str, scope: str = "avo", *, limit: int = _MAX_SEARCH_HITS) -> 
         rx = re.compile(re.escape(q), re.IGNORECASE)
 
     hits: List[Dict[str, Any]] = []
+    scanned = 0
     for f in allowed_files(scope):
+        if scanned >= _MAX_SEARCH_FILES:
+            return {"ok": True, "query": q, "hits": hits, "truncated": True,
+                    "note": (f"scanned the {_MAX_SEARCH_FILES} largest state files and "
+                             "stopped; name a file with avo_read to go deeper")}
+        scanned += 1
         text = _fetch(f["path"])
         if not text:
             continue

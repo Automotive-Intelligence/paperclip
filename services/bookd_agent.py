@@ -242,9 +242,12 @@ def _system_prompt(scope: str = "bookd") -> str:
         try:
             from services.avo_state import index
             idx = index("avo")
-            listing = "\n".join(f"  {f['path']} ({f['kb']} KB)" for f in idx["files"])
+            shown = idx["files"][:40]          # biggest first; keeps the prompt bounded
+            listing = "\n".join(f"  {f['path']} ({f['kb']} KB)" for f in shown)
+            more = len(idx["files"]) - len(shown)
             ctx = (f"{idx['file_count']} state files, {idx['total_kb']} KB total. "
-                   f"Search or read these by name:\n{listing}")
+                   f"Search or read these by name:\n{listing}"
+                   + (f"\n  ...and {more} smaller files (avo_search finds them)" if more > 0 else ""))
         except Exception:
             logger.warning("[partner-port] state index unavailable")
             ctx = "(state index unavailable right now; say so rather than guessing)"
