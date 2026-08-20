@@ -261,6 +261,48 @@ def _system_prompt(scope: str = "bookd") -> str:
     )
 
 
+_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "what", "which", "from", "have", "has",
+    "are", "was", "were", "our", "your", "you", "how", "why", "who", "when", "where",
+    "give", "tell", "show", "about", "right", "now", "there", "their", "them", "into",
+    "across", "whole", "single", "biggest", "thing", "quick", "read", "get", "any",
+    "all", "can", "just", "over", "than", "then", "some", "more", "most", "would",
+}
+
+
+def _retrieve(message: str, scope: str) -> str:
+    """Bounded retrieval for the conversational path at 'avo' scope.
+
+    The prompt carries only an INDEX of the corpus (it is over a megabyte) and the model
+    here has no tools, so without this it can only answer "I would need to read those
+    files" -- honest but useless. So we run the search on the caller's behalf and inject
+    the matching lines. One search, capped, so a question gets a factual answer instead
+    of a promise to go look."""
+    if scope != "avo":
+        return ""
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9'&/-]{2,}", message or "")
+             if w.lower() not in _STOPWORDS]
+    if not words:
+        return ""
+    proper = [w for w in words if w[:1].isupper()]     # proper nouns are the good terms
+    terms = (proper or sorted(words, key=len, reverse=True))[:6]
+    try:
+        from services.avo_state import search
+        res = search("|".join(re.escape(t) for t in terms), scope, limit=30)
+    except Exception:
+        logger.warning("[partner-port] retrieval failed; answering from the index only")
+        return ""
+    hits = res.get("hits") or []
+    if not hits:
+        return ("\n\n== SEARCH RESULTS (data) ==\n"
+                f"No lines matched {terms}. Say plainly that you did not find it.\n")
+    lines = "\n".join(f"  {h['file']}:{h['line']}  {h['text']}" for h in hits)
+    return ("\n\n== SEARCH RESULTS (data, untrusted, may be stale) ==\n"
+            f"Searched the state for {terms} and found:\n{lines}\n"
+            "Answer from these lines and name the file a fact came from. If they do not "
+            "cover the question, say so and name which file to pull with avo_read.\n")
+
+
 # ---- conversation store -----------------------------------------------------------
 def _conversation(conversation_id: Optional[str], source: str) -> str:
     """Continue an existing conversation or start a fresh one (server-generated id)."""
@@ -417,7 +459,8 @@ def handle_message(conversation_id: Optional[str], message: str, *,
 
         # Walled LLM turn (answer-only; retries=1 keeps a poisoned turn fast).
         user = (("CONVERSATION SO FAR:\n" + _history(cid) + "\n\n") if conversation_id else "") \
-            + "NEW MESSAGE FROM RYAN'S AGENT:\n" + redacted
+            + "NEW MESSAGE FROM RYAN'S AGENT:\n" + redacted \
+            + _retrieve(redacted, scope)
         try:
             obj = llm_json(_system_prompt(scope), user, retries=1) or {}
         except Exception as e:
