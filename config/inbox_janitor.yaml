@@ -12,7 +12,9 @@
 # guard (search results have no headers, so precision lives in the query).
 # `in:inbox` is enforced in code on every query. The lead side is unaffected:
 # the postal classifier escalates prospects on its own rail before this runs.
-enabled: true
+# DISABLED 2026-08-16: rides the same Gmail tokens as the retired Postal rail
+# (all expired ~08-10, owner declined re-auth). Re-enable together with the rail.
+enabled: false
 label: Machines
 accounts:
   salesdroid:
