@@ -55,6 +55,11 @@ def _social_distribution_enabled() -> bool:
         "0", "false", "no", "off")
 
 
+def _site_root(live_url: str) -> str:
+    """https://host/blog/slug -> https://host"""
+    return live_url.rsplit("/blog/", 1)[0]
+
+
 def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
     """Best-effort: schedule the social pack via the ONE loader (Zernio for
     own-brands; the same tools/social_load loader every other rail uses -- no new
@@ -111,7 +116,14 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
                 "content": f"{text}\n\n{live_url}", "scheduled_for": when,
                 "content_id": slug, "entry_point": "blog_engine",
                 "account_id": account_id,
-                "media_urls": [f"{live_url.rsplit('/blog/', 1)[0]}/blog/{slug}-hero.png"],
+                # MUST match the img_prefix rule used when the files are
+                # committed: tsx_post serves from /img/, everything else from
+                # /blog/. Hardcoding /blog/ here produced a 404 media URL for
+                # Book'd, and Zernio REJECTS an Instagram post whose media does
+                # not resolve, so every IG post for that brand failed at the API.
+                "media_urls": [f"{_site_root(live_url)}/"
+                               f"{'img' if cfg.get('format') == 'tsx_post' else 'blog'}"
+                               f"/{slug}-hero.png"],
             })
         if not jobs:
             logger.warning("[slipstream] no social drafts to distribute for %s (%s)", brand, slug)
