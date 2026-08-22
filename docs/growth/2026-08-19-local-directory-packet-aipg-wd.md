@@ -10,7 +10,7 @@ Why: the local-flank probe showed AI cites **local directories + review sites** 
 ## Canonical NAP — use IDENTICAL text on every listing (this is the whole point)
 Inconsistent Name/Address/Phone across directories kills local trust signals. Lock one string per brand:
 - **The AI Phone Guy** · Phone: **(817) 670-9689** · Web: **https://theaiphoneguy.com** · Address: `______`
-- **Worship Digital** · Phone: `______` · Web: **https://worshipdigital.co** · Address: `______`
+- **Worship Digital** · Phone: **(817) 662-2473** · Web: **https://worshipdigital.co** · Address: `______`
 
 ⚠️ **Address dependency (same as GBP):** must be the AVO LLC real commercial/home address, **NOT the
 Anytime Mailbox CMRA** — Yelp/BBB/GBP all reject or flag CMRAs. Both brands list as **service-area /

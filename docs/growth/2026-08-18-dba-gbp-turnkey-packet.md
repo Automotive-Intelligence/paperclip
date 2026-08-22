@@ -4,20 +4,23 @@
 the DBAs and claiming the Google Business Profiles is fill-and-submit. Unblocks the AIPG + WD local-win
 play. AVO LLC (parent) is **formed** as of 2026-08-18.
 
-## Inputs still needed from Michael (the only blanks)
-- **AVO LLC exact registered legal name** + **SOS file number** → `__________`
-- **AVO LLC registered address** → `__________`  ⚠️ must be a REAL commercial or home address, **not the
-  Anytime Mailbox McKinney CMRA** (CMRA = automatic GBP suspension).
-- **A phone number for Worship Digital's GBP** → `__________` (AIPG's is known: +1 817-670-9689).
+## Inputs — status (2026-08-19)
+- ✅ **Worship Digital phone → (817) 662-2473** (filled below).
+- ✅ **Automotive Intelligence has its own LLC** → AvI is NOT a DBA under AVO. It claims its GBP under its
+  own entity + address on a separate track, **not blocked** by the AVO address below.
+- ⛔ **AVO LLC legal name + SOS # + registered ADDRESS → still open** ("we haven't done this yet"). The
+  **address is now the single remaining blocker** for AIPG + WD GBP. It must be a REAL commercial or home
+  address, **not the Anytime Mailbox McKinney CMRA** (CMRA = automatic GBP suspension). Simple options:
+  (a) Michael's home address as a hidden service-area address, or (b) a registered-agent / real commercial
+  address. Pick one and the AIPG + WD local track is fully unblocked.
 
 ---
 
 ## Part A — File the DBAs under AVO LLC
 
-**Step 0 — verify Automotive Intelligence first.** Log in to `app.northwestregisteredagent.com` and
-confirm whether AvI already has its own LLC (your notes say "used Northwest for *something*" —
-formation, agent-only, or a name reservation). If AvI has its own entity, leave it standalone. If not,
-add it to the DBA list below.
+**Step 0 — RESOLVED (2026-08-19): Automotive Intelligence has its own LLC.** AvI is NOT a DBA under AVO —
+it stays standalone and claims its GBP directly under its own entity/address (independent track, not
+blocked by the AVO address). Removed from the DBA list below.
 
 **Step 1 — file Assumed Name Certificates (Texas Form 503) with the Secretary of State**, one per brand,
 under AVO LLC. Since 2019 (HB 3609) registered entities file the assumed name **only with the SOS, not
@@ -28,9 +31,11 @@ DBA names to register under AVO LLC:
 - **The AI Phone Guy**
 - **Worship Digital**
 - **Agent Empire**
-- **Automotive Intelligence** *(only if Step 0 shows it has no entity of its own)*
 
-Total: ~$75–100, fileable in a single SOSDirect session.
+*(Automotive Intelligence excluded — it has its own LLC, confirmed 2026-08-19, and files/claims under
+that entity separately.)*
+
+Total: ~$75 for three, fileable in a single SOSDirect session.
 
 **Step 2 — confirm the address.** Before claiming any GBP, make sure AVO LLC's address (or the address
 you'll verify GBP at) is a real commercial/home address, not the CMRA. AIPG and WD are **service-area
@@ -75,7 +80,7 @@ verification.
 - **Primary category:** Marketing agency
 - **Secondary categories:** Website designer; Internet marketing service; Advertising agency; Business management consultant
 - **Website:** https://worshipdigital.co
-- **Phone:** `__________` (need a WD number)
+- **Phone:** (817) 662-2473
 - **Business type:** Service-area business (hide address)
 - **Service areas:** Prosper TX, Frisco TX, Celina TX, McKinney TX, Aubrey TX, Denton TX, Plano TX, Little Elm TX
 - **Hours:** Mon–Fri 9:00 AM – 5:00 PM (or "by appointment")
