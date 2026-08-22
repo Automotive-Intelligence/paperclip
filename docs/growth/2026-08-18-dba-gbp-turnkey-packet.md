@@ -92,6 +92,24 @@ verification.
 
 ---
 
+### Automotive Intelligence — "Automotive Intelligence" (independent track — its own LLC)
+- **Business name:** Automotive Intelligence
+- **Primary category:** Business management consultant
+- **Secondary categories:** Marketing consultant; Software company; Business to business service
+- **Website:** https://automotiveintelligence.io
+- **Phone:** (817) 635-1987  *(verified live on the site 2026-08-19)*
+- **Business type:** Service-area business (serves dealerships across DFW — hide address)
+- **Service areas:** Dallas TX, Fort Worth TX, Arlington TX, Plano TX, Frisco TX, Irving TX, McKinney TX, Denton TX, Grapevine TX, Garland TX
+- **Hours:** Mon–Fri 9:00 AM – 5:00 PM (or by appointment)
+- **Services (add each):** AI readiness assessment, AI integration and orchestration consulting, dealership
+  AI vendor evaluation, DMS and CRM integration, AI BDC and lead follow-up setup, after-hours voice AI
+- **Description (≤750 chars):**
+  > Automotive Intelligence helps car dealerships across DFW adopt AI without the hype, run by people who actually sold cars. Your DMS, CRM, service tools, and marketing systems each hold a piece of the same customer conversation. We connect them so the conversation finishes and the deal, the RO, and the reactivation actually happen. We start with a plain-English diagnostic of where AI can save your store time and money, then help you evaluate vendors and orchestrate the tools you already own. No jargon, no black boxes, no rip-and-replace. Serving dealerships in Dallas, Fort Worth, Arlington, Plano, Frisco, and across the Metroplex. Book a diagnostic to see what is possible.
+- **Note:** AvI's entity is ready (its own LLC), so no DBA filing needed. GBP video verification still needs a
+  real, non-CMRA verification address (same address consideration as AIPG/WD).
+
+---
+
 ## Part C — Michael's hands vs staged
 
 | Step | Who |
