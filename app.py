@@ -3090,6 +3090,14 @@ scheduler.add_job(_cmo_daily_email, CronTrigger(hour=7, minute=0, timezone=CST),
     id="cmo_daily_email_700", name="CMO Daily Email — 7:00 AM CT",
     replace_existing=True, misfire_grace_time=3600)
 
+# AIFB meetup date-bound reminders (T-1d + morning-of SMS to aifb-evt1
+# registrants). No-op unless AIFB_EVENT_DATE makes today a send day; evergreen
+# sequences live in GHL workflows, only calendar-keyed sends live here.
+from services.aifb_reminders import aifb_reminder_tick as _aifb_reminder_tick
+scheduler.add_job(_aifb_reminder_tick, CronTrigger(hour=10, minute=5, timezone=CST),
+    id="aifb_reminder_tick_1005", name="AIFB meetup reminders — 10:05 AM CT",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CMO override reply-handler — sweeps the CMO override inbox (Reply-To of the
 # CMO Daily, default the connected `avi` Gmail) every 15min and files any reply
 # from Michael as a `🏁 CMO OVERRIDE` flag in cmo_state.md (the CMO reads its own
