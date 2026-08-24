@@ -4673,7 +4673,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8646,6 +8646,25 @@ async def get_pit_wall():
     if visual_path.exists():
         return FileResponse(str(visual_path), media_type="text/html")
     return {"error": f"Pit Wall page not found at {visual_path}"}
+
+
+@app.get("/inventory")
+async def get_inventory_page():
+    """Serve the React Pit Wall app for the client-side /inventory route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/api/pitwall/inventory")
+async def api_pitwall_inventory():
+    """Live stack inventory for the dashboard: what is actually scheduled and served
+    right now, plus the hand-written record of what we already decided against. Same
+    source as stack_inventory.md, so the two can never disagree. Auth is inherited from
+    the /api/pitwall/ dashboard prefix."""
+    from services.stack_inventory import snapshot
+    return JSONResponse(content=await asyncio.to_thread(snapshot, app, scheduler))
 
 
 @app.get("/team/{team_id}")
