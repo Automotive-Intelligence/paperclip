@@ -6,6 +6,7 @@ import AgentPage from './pages/AgentPage';
 import InventoryPage from './pages/InventoryPage';
 import OrgPage from './pages/OrgPage';
 import RevenuePage from './pages/RevenuePage';
+import ProspectsPage from './pages/ProspectsPage';
 import DashboardShell from './components/DashboardShell';
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           <Route path="/revenue" element={<RevenuePage />} />
+          <Route path="/prospects" element={<ProspectsPage />} />
           <Route path="/" element={<PitWallPage />} />
           <Route path="/dashboard" element={<PitWallPage />} />
           <Route path="/pit-wall" element={<PitWallPage />} />

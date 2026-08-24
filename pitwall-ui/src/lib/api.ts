@@ -240,6 +240,18 @@ export type RevenueBoard = {
   }>;
 };
 
+export type ProspectFeed = {
+  ok: boolean;
+  days: number;
+  note: string;
+  totals: { created: number; duplicate_skipped: number; failed: number; rows: number };
+  by_agent: Record<string, Record<string, number>>;
+  prospects: Array<{
+    agent: string; brand: string; crm: string; name: string;
+    status: string; when: string; crm_link: string;
+  }>;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -264,6 +276,7 @@ export const api = {
   inventory: () => fetchJson<StackInventory>('/api/pitwall/inventory'),
   seats: () => fetchJson<SeatHealth>('/api/pitwall/seats'),
   revenueBoard: () => fetchJson<RevenueBoard>('/api/pitwall/revenue-board'),
+  prospects: (days = 1) => fetchJson<ProspectFeed>(`/api/pitwall/prospects?days=${days}`),
   opsDashboard: () => fetchJson<PitWallOpsDashboard>('/api/pitwall/ops-dashboard'),
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),

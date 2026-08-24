@@ -18,13 +18,16 @@ const FALLBACK_FLEET: OpsFleet = { rivers: 5, agents: 23 };
 const NAV_ITEMS: NavItem[] = [
   { label: 'Pit Wall', to: '/', icon: 'P' },
   { label: 'Needs Our Hands', to: '/revenue', icon: '$' },
+  { label: 'Prospects', to: '/prospects', icon: 'R' },
   { label: 'Org', to: '/org', icon: 'G' },
   { label: 'Stack Inventory', to: '/inventory', icon: 'I' },
-  { label: 'AI Phone Guy', to: '/team/aiphoneguy', icon: 'P' },
-  { label: 'Worship Digital', to: '/team/callingdigital', icon: 'C' },
-  { label: 'Automotive Intel', to: '/team/autointelligence', icon: 'A' },
+  // brands, alphabetical
   { label: 'Agent Empire', to: '/team/agentempire', icon: 'E' },
-  { label: 'CustomerAdvocate', to: '/team/customeradvocate', icon: 'V' },
+  { label: 'AI Phone Guy', to: '/team/aiphoneguy', icon: 'A' },
+  { label: 'Automotive Intel', to: '/team/autointelligence', icon: 'U' },
+  { label: "Book'd", to: '/team/bookd', icon: 'B' },
+  { label: 'Wend', to: '/team/customeradvocate', icon: 'W' },
+  { label: 'Worship Digital', to: '/team/callingdigital', icon: 'D' },
 ];
 
 export default function DashboardShell({ children }: { children: ReactNode }) {

@@ -825,8 +825,12 @@ BUSINESSES = {
         "agents": ["debra", "wade_ae", "tammy_ae", "sterling"],
     },
     "customeradvocate": {
-        "name": "CustomerAdvocate",
+        "name": "Wend",          # renamed 2026-08-24; key kept so historical rows resolve
         "agents": ["clint", "sherry"],
+    },
+    "bookd": {
+        "name": "Book'd",
+        "agents": [],            # co-owned with Ryan; no CrewAI sales agents of its own
     },
 }
 
@@ -4673,7 +4677,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/prospects", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8673,6 +8677,22 @@ async def get_revenue_page():
     if react_index.exists():
         return FileResponse(str(react_index), media_type="text/html")
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/prospects")
+async def get_prospects_page():
+    """Serve the React Pit Wall app for the client-side /prospects route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/api/pitwall/prospects")
+async def api_pitwall_prospects(days: int = 1):
+    """The names behind the prospect count, with a link into the right CRM."""
+    from services.prospect_feed import recent
+    return JSONResponse(content=await asyncio.to_thread(recent, days))
 
 
 @app.get("/api/pitwall/revenue-board")
