@@ -3413,6 +3413,23 @@ scheduler.add_job(_run_lead_reconcile, CronTrigger(hour=6, minute=40, timezone=C
     id="lead_reconcile_daily", name="AIPG Lead Reconciliation (#7, Railway)",
     replace_existing=True, misfire_grace_time=3600)
 
+
+def _run_stack_inventory():
+    """Regenerate the stack inventory from the LIVE system (running scheduler + served
+    routes + declared deps) and commit it to avo-telemetry. Answers "what do we actually
+    run?" without anyone maintaining it by hand -- a chore would go cold."""
+    from services.stack_inventory import build
+    try:
+        logging.info("[inventory] %s", build(app, scheduler, commit=True))
+    except Exception as e:
+        logging.error("[inventory] build failed: %s", e)
+
+
+scheduler.add_job(_run_stack_inventory, CronTrigger(day_of_week="mon", hour=6, minute=20,
+                                                    timezone=CST),
+    id="stack_inventory_weekly", name="AVO Stack Inventory (regenerate from live)",
+    replace_existing=True, misfire_grace_time=3600)
+
 # CEOs — 8:00, 8:02, 8:04 (once daily — strategic briefing) [AVO wrapped]
 scheduler.add_job(_avo_sched_alex, CronTrigger(hour=8, minute=0, timezone=CST),
     id="alex_daily_briefing", name="Alex Daily Briefing",
@@ -6145,6 +6162,20 @@ async def michael_agent_status_endpoint(authorization: Optional[str] = Header(No
     validate_michael_agent_key(authorization)
     from services.michael_agent import status
     return JSONResponse(content=await asyncio.to_thread(status))
+
+
+@app.post("/admin/build-stack-inventory")
+async def admin_build_stack_inventory(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Regenerate the stack inventory on demand (the weekly cron's manual twin).
+    commit defaults True; pass {"commit": false} for a preview with no write."""
+    validate_key(authorization)
+    from services.stack_inventory import build
+    commit = (payload or {}).get("commit", True)
+    result = await asyncio.to_thread(build, app, scheduler, commit=bool(commit))
+    return JSONResponse(content=result)
 
 
 @app.get("/admin/partner-keys")
