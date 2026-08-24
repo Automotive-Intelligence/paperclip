@@ -197,6 +197,17 @@ export type ClearAlertsResponse = {
   regenerated_at: string;
 };
 
+export type StackInventory = {
+  generated: string;
+  source: string;
+  counts: { jobs: number; routes: number; dependencies: number; services: number };
+  jobs: Array<{ id: string; name: string; trigger: string }>;
+  route_groups: Array<{ prefix: string; count: number }>;
+  services: Array<{ module: string; purpose: string }>;
+  dependencies: string[];
+  decisions: Array<{ thing: string; verdict: string; when: string; why: string }>;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -218,6 +229,7 @@ async function postJson<T>(url: string): Promise<T> {
 
 export const api = {
   telemetry: () => fetchJson<PitWallTelemetry>('/api/pitwall/telemetry'),
+  inventory: () => fetchJson<StackInventory>('/api/pitwall/inventory'),
   opsDashboard: () => fetchJson<PitWallOpsDashboard>('/api/pitwall/ops-dashboard'),
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),

@@ -3,6 +3,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import PitWallPage from './pages/PitWallPage';
 import TeamPage from './pages/TeamPage';
 import AgentPage from './pages/AgentPage';
+import InventoryPage from './pages/InventoryPage';
 import DashboardShell from './components/DashboardShell';
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/" element={<PitWallPage />} />
           <Route path="/dashboard" element={<PitWallPage />} />
           <Route path="/pit-wall" element={<PitWallPage />} />
+          <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/team/:teamId" element={<TeamPage />} />
           <Route path="/team/:teamId/agent/:agentId" element={<AgentPage />} />
         </Routes>

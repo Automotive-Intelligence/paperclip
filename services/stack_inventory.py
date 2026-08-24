@@ -136,6 +136,58 @@ def _preserve_curated(existing: str) -> str:
     return _DEFAULT_CURATED
 
 
+def snapshot(app: Any, scheduler: Any) -> Dict[str, Any]:
+    """The same live facts render() uses, as structured data for the Pit Wall page.
+    One source, two surfaces: the markdown file and the dashboard can never disagree."""
+    deps = _requirements()
+    jobs = _jobs(scheduler)
+    routes = _routes(app)
+    svcs = [s for s in _services() if s["purpose"]]
+    return {
+        "generated": _now_ct(),
+        "counts": {"jobs": len(jobs), "routes": routes["total"],
+                   "dependencies": len(deps), "services": len(svcs)},
+        "jobs": jobs,
+        "route_groups": [{"prefix": g, "count": n} for g, n in routes["groups"].items()],
+        "services": svcs,
+        "dependencies": deps,
+        "decisions": _parse_decisions(),
+        "source": "live paperclip process (running scheduler + served routes)",
+    }
+
+
+def _parse_decisions() -> List[Dict[str, str]]:
+    """Pull the hand-written decision table out of the committed inventory, so the
+    dashboard shows 'what we already decided' next to 'what we run'. Best-effort: an
+    unreadable file yields an empty list rather than breaking the page."""
+    token = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+             or os.getenv("SLIPSTREAM_GH_TOKEN") or "").strip()
+    if not token:
+        return []
+    try:
+        import base64 as _b64
+        import requests
+        r = requests.get(
+            f"https://api.github.com/repos/salesdroid/avo-telemetry/contents/{STATE_PATH}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json"}, timeout=15)
+        if not r.ok:
+            return []
+        text = _b64.b64decode((r.json() or {}).get("content") or "").decode("utf-8", "replace")
+    except Exception:
+        logger.warning("[inventory] could not read committed decisions")
+        return []
+    out: List[Dict[str, str]] = []
+    for line in text.splitlines():
+        if not line.startswith("|") or line.startswith("|---") or "| Thing " in line:
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) >= 4 and cells[1]:
+            out.append({"thing": cells[0], "verdict": cells[1],
+                        "when": cells[2], "why": cells[3]})
+    return out
+
+
 def render(app: Any, scheduler: Any, existing: str = "") -> str:
     deps = _requirements()
     jobs = _jobs(scheduler)

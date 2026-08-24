@@ -17,6 +17,7 @@ const FALLBACK_FLEET: OpsFleet = { rivers: 5, agents: 23 };
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Overview', to: '/', icon: 'O' },
+  { label: 'Stack Inventory', to: '/inventory', icon: 'I' },
   { label: 'AI Phone Guy', to: '/team/aiphoneguy', icon: 'P' },
   { label: 'Worship Digital', to: '/team/callingdigital', icon: 'C' },
   { label: 'Automotive Intel', to: '/team/autointelligence', icon: 'A' },
