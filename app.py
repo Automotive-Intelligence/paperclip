@@ -4673,7 +4673,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8655,6 +8655,24 @@ async def get_inventory_page():
     if react_index.exists():
         return FileResponse(str(react_index), media_type="text/html")
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/org")
+async def get_org_page():
+    """Serve the React Pit Wall app for the client-side /org route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/api/pitwall/seats")
+async def api_pitwall_seats():
+    """Seat coordination health: which seats have gone quiet, and how many flags are
+    waiting on them unread. Derived from seats.yaml + the committed state files, so
+    there is no second roster to drift."""
+    from services.seat_health import seat_health
+    return JSONResponse(content=await asyncio.to_thread(seat_health))
 
 
 @app.get("/api/pitwall/inventory")

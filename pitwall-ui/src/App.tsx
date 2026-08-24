@@ -4,6 +4,7 @@ import PitWallPage from './pages/PitWallPage';
 import TeamPage from './pages/TeamPage';
 import AgentPage from './pages/AgentPage';
 import InventoryPage from './pages/InventoryPage';
+import OrgPage from './pages/OrgPage';
 import DashboardShell from './components/DashboardShell';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/dashboard" element={<PitWallPage />} />
           <Route path="/pit-wall" element={<PitWallPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/org" element={<OrgPage />} />
           <Route path="/team/:teamId" element={<TeamPage />} />
           <Route path="/team/:teamId/agent/:agentId" element={<AgentPage />} />
         </Routes>

@@ -208,6 +208,22 @@ export type StackInventory = {
   decisions: Array<{ thing: string; verdict: string; when: string; why: string }>;
 };
 
+export type SeatHealth = {
+  ok: boolean;
+  error?: string;
+  cold_days: number;
+  totals: { seats: number; cold: number; open_flags: number; unread_flags: number; unrouted_flags: number };
+  seats: Array<{
+    seat: string;
+    owned_file: string;
+    days_since_activity: number | null;
+    cold: boolean;
+    flags_posted_open: number;
+    flags_waiting: number;
+    unread: number;
+  }>;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -230,6 +246,7 @@ async function postJson<T>(url: string): Promise<T> {
 export const api = {
   telemetry: () => fetchJson<PitWallTelemetry>('/api/pitwall/telemetry'),
   inventory: () => fetchJson<StackInventory>('/api/pitwall/inventory'),
+  seats: () => fetchJson<SeatHealth>('/api/pitwall/seats'),
   opsDashboard: () => fetchJson<PitWallOpsDashboard>('/api/pitwall/ops-dashboard'),
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),
