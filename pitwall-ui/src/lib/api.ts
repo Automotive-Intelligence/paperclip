@@ -224,6 +224,22 @@ export type SeatHealth = {
   }>;
 };
 
+export type RevenueBoard = {
+  ok: boolean;
+  count: number;
+  empty_message: string;
+  sources_failed: string[];
+  items: Array<{
+    priority: number;
+    title: string;
+    why_money: string;
+    next_action: string;
+    owner: string;
+    detail: string;
+    where: string;
+  }>;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -247,6 +263,7 @@ export const api = {
   telemetry: () => fetchJson<PitWallTelemetry>('/api/pitwall/telemetry'),
   inventory: () => fetchJson<StackInventory>('/api/pitwall/inventory'),
   seats: () => fetchJson<SeatHealth>('/api/pitwall/seats'),
+  revenueBoard: () => fetchJson<RevenueBoard>('/api/pitwall/revenue-board'),
   opsDashboard: () => fetchJson<PitWallOpsDashboard>('/api/pitwall/ops-dashboard'),
   team: (teamId: string) => fetchJson<TeamDetail>(`/api/pitwall/team/${teamId}`),
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),

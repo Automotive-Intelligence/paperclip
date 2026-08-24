@@ -16,6 +16,7 @@ type NavItem = {
 const FALLBACK_FLEET: OpsFleet = { rivers: 5, agents: 23 };
 
 const NAV_ITEMS: NavItem[] = [
+  { label: 'Needs Our Hands', to: '/revenue', icon: '$' },
   { label: 'Overview', to: '/', icon: 'O' },
   { label: 'Org', to: '/org', icon: 'G' },
   { label: 'Stack Inventory', to: '/inventory', icon: 'I' },

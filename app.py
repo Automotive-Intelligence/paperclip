@@ -4673,7 +4673,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8664,6 +8664,22 @@ async def get_org_page():
     if react_index.exists():
         return FileResponse(str(react_index), media_type="text/html")
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/revenue")
+async def get_revenue_page():
+    """Serve the React Pit Wall app for the client-side /revenue route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/api/pitwall/revenue-board")
+async def api_pitwall_revenue_board():
+    """What needs hands to make money. Actions only, derived from live state."""
+    from services.revenue_board import board
+    return JSONResponse(content=await asyncio.to_thread(board))
 
 
 @app.get("/api/pitwall/seats")
