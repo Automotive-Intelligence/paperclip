@@ -2,10 +2,50 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Dark is the default: the Pit Wall is mostly read at night or in a car.
+   Light is opt-in via .light on <html>. Every colour is defined in BOTH blocks --
+   a token defined in only one theme renders as an invisible element in the other. */
 :root {
+  --pitbg: 10 10 15;
+  --pitcard: 18 18 26;
+  --pitsunk: 0 0 0;
+  --pitborder: 30 30 46;
+  --pitgreen: 0 255 135;
+  --pitamber: 255 184 0;
+  --pitred: 255 51 102;
+  --pittext: 255 255 255;
+  --pitmuted: 136 136 170;
+  --pitfaint: 90 90 120;
+  --pitinvert: 10 10 15;
+
+  --grid-line: rgba(255, 255, 255, 0.03);
+  --glow-a: rgba(0, 255, 135, 0.08);
+  --glow-b: rgba(74, 168, 255, 0.08);
+
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: #0a0a0f;
-  color: #ffffff;
+  color-scheme: dark;
+}
+
+:root.light {
+  --pitbg: 247 248 250;
+  --pitcard: 255 255 255;
+  --pitsunk: 241 243 247;
+  --pitborder: 214 219 227;
+  /* the neon-on-black accents are unreadable on white; these are the same hues
+     pulled down to weights that hold contrast on a light ground */
+  --pitgreen: 0 122 65;
+  --pitamber: 155 105 0;
+  --pitred: 190 25 65;
+  --pittext: 17 20 26;
+  --pitmuted: 92 100 115;
+  --pitfaint: 130 138 152;
+  --pitinvert: 255 255 255;
+
+  --grid-line: rgba(15, 20, 30, 0.04);
+  --glow-a: rgba(0, 150, 90, 0.06);
+  --glow-b: rgba(60, 130, 220, 0.06);
+
+  color-scheme: light;
 }
 
 html,
@@ -16,11 +56,13 @@ body,
 
 body {
   margin: 0;
-  background-color: #0a0a0f;
+  background-color: rgb(var(--pitbg));
+  color: rgb(var(--pittext));
   background-image:
-    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px),
-    radial-gradient(circle at 20% 5%, rgba(0,255,135,0.08), transparent 35%),
-    radial-gradient(circle at 85% 10%, rgba(74,168,255,0.08), transparent 28%);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    radial-gradient(circle at 20% 5%, var(--glow-a), transparent 35%),
+    radial-gradient(circle at 85% 10%, var(--glow-b), transparent 28%);
   background-size: 32px 32px, 32px 32px, auto, auto;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }

@@ -30,9 +30,32 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Worship Digital', to: '/team/callingdigital', icon: 'D' },
 ];
 
+type Theme = 'dark' | 'light';
+
+// Dark stays the default (the Pit Wall is mostly read at night or in a car); light is
+// opt-in and remembered. The class goes on <html>, which is what swaps every --pit*
+// variable at once, so nothing has to know the theme except this component.
+function readTheme(): Theme {
+  try {
+    return localStorage.getItem('pitwall-theme') === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 export default function DashboardShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState<Theme>(readTheme);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    try {
+      localStorage.setItem('pitwall-theme', theme);
+    } catch {
+      // private browsing: the toggle still works for this session
+    }
+  }, [theme]);
   const [fleet, setFleet] = useState<OpsFleet>(FALLBACK_FLEET);
 
   useEffect(() => {
@@ -67,6 +90,16 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <div className="text-[10px] uppercase tracking-wider text-pitmuted">Pit Wall</div>
             </div>
           )}
+          <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+            className="rounded-md border border-pitborder px-2 py-1 text-xs text-pitmuted hover:border-pitgreen/60 hover:text-pittext"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
@@ -75,6 +108,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           >
             {collapsed ? '›' : '‹'}
           </button>
+          </div>
         </div>
         <Menu
           menuItemStyles={{
