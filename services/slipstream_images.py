@@ -44,7 +44,12 @@ def generate_images(
         prompt = spec.get("prompt", "")
         if not name or not prompt:
             continue
-        res = fetch(prompt, business_key, aspect_ratio="16:9", pro=True)
+        # TIER BY VISIBILITY, not by habit. The hero is the image people actually
+        # see (social card, top of post) so it stays on Pro. In-body art is
+        # supporting diagram/screenshot-style work and is ~70% of the volume, so
+        # paying Pro ($0.15) for it was spending the most on the least-seen images.
+        # Flash is ~4x cheaper. Approved as a reversible one-line tier change.
+        res = fetch(prompt, business_key, aspect_ratio="16:9", pro=(name == "hero"))
         if not res.get("ok") or not res.get("urls"):
             if name == "hero":
                 raise ImageError(f"hero image generation failed: {res.get('error')}")

@@ -300,7 +300,14 @@ def run_brand(
         fmt = cfg.get("format", "mdx")
         topic = topic or _next_topic(cfg, token)
         post = generate_post(cfg, topic)
-        images = generate_images(post["image_prompts"], cfg["business_key"])
+        # DO NOT buy images yet. Every image is a paid fal call, and the content gate
+        # below can still HOLD this post -- which used to mean 3-4 images bought and
+        # thrown away on every held run. Only the Shopify path needs images in hand to
+        # assemble (it inlines them into the article body); every other format gates on
+        # text alone, so for those we generate AFTER the gate passes.
+        images: Dict[str, bytes] = {}
+        if cfg.get("format") == "shopify_article":
+            images = generate_images(post["image_prompts"], cfg["business_key"])
         # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
         # P&P (shopify_article) has no repo at all and builds a Shopify article draft;
         # every other brand keeps the MDX file. `payload` is what gets published either way.
@@ -334,6 +341,16 @@ def run_brand(
         return {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
 
     slug = post["slug"]
+
+    # Gate passed, so the post is going out: NOW it is worth paying for images.
+    # (Shopify already generated them above, because it needs them to assemble.)
+    if not images:
+        try:
+            images = generate_images(post["image_prompts"], cfg["business_key"])
+        except Exception as e:
+            logger.exception("[slipstream] %s images failed after a passing gate", brand_key)
+            return {"ok": False, "held": True, "violations": [f"images: {e}"],
+                    "slug": slug, "error": "image generation failed"}
 
     # Shopify brands (P&P) have no repo: publish means "create a DRAFT article via
     # the Admin API". Returns here, BEFORE any GitHub write path, so no branch, no

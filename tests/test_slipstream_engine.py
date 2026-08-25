@@ -239,3 +239,42 @@ def test_unconnected_platform_is_still_skipped(monkeypatch):
         "s", "https://bookd.cx/blog/s")
     assert {j["platform"] for j in sent.get("jobs", [])} == {"facebook"}
     assert all(j["account_id"] for j in sent["jobs"])
+
+
+def test_held_post_never_pays_for_images():
+    """The saving, asserted: a post that fails the content gate must not have bought
+    any fal images. Before this, images were generated before assembly, so every held
+    run threw away 3-4 paid Pro images."""
+    from unittest import mock
+    from services import slipstream_engine as SE
+
+    calls = []
+    with mock.patch.object(SE, "_brand_cfg", return_value={"format": "mdx", "business_key": "avi",
+                                                           "blog_dir": "content/blog"}), \
+         mock.patch.object(SE, "_next_topic", return_value="a topic"), \
+         mock.patch.object(SE, "generate_post", return_value={"slug": "s", "image_prompts": [], "social": {}}), \
+         mock.patch.object(SE, "assemble_mdx", return_value=("body", ["gate violation"])), \
+         mock.patch.object(SE, "generate_images", side_effect=lambda *a, **k: calls.append(1) or {}):
+        res = SE.run_brand("avi", token="t")
+
+    assert res["held"] is True and res["violations"] == ["gate violation"]
+    assert calls == [], "images were generated for a post that never shipped"
+
+
+def test_passing_post_does_buy_images():
+    """The other half: a clean post must still get its images, just later."""
+    from unittest import mock
+    from services import slipstream_engine as SE
+
+    calls = []
+    with mock.patch.object(SE, "_brand_cfg", return_value={"format": "mdx", "business_key": "avi",
+                                                           "blog_dir": "content/blog"}), \
+         mock.patch.object(SE, "_next_topic", return_value="a topic"), \
+         mock.patch.object(SE, "generate_post", return_value={"slug": "s", "title": "T", "image_prompts": [], "social": {}}), \
+         mock.patch.object(SE, "assemble_mdx", return_value=("body", [])), \
+         mock.patch.object(SE, "generate_images", side_effect=lambda *a, **k: calls.append(1) or {"hero": b"x"}), \
+         mock.patch.object(SE, "publish_post", return_value={"ok": True, "pr_url": "u"}), \
+         mock.patch.object(SE, "merge_when_green", return_value={"ok": True, "merged": True}):
+        SE.run_brand("avi", token="t", dry_run=True)
+
+    assert calls == [1], "a passing post must still get its images"
