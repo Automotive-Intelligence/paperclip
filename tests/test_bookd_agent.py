@@ -154,7 +154,12 @@ def test_mcp_initialize_and_tools_list():
     assert init["result"]["serverInfo"]["name"] == "avo-bookd-port"
     tools = BM.handle_rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = {t["name"] for t in tools["result"]["tools"]}
-    assert names == {"bookd_message", "bookd_status", "bookd_handoff_secret"}
+    # The mailbox and the activity feed exist at EVERY scope: staying in sync with what
+    # AVO is doing is not a privilege, it is the point of having a partner port. The
+    # avo-scope-only tools (search/read/act) are asserted separately below.
+    assert names == {"bookd_message", "bookd_status", "bookd_handoff_secret",
+                     "avo_activity", "avo_inbox", "avo_send_note"}
+    assert not names & {"avo_search", "avo_read", "request_action", "check_action"}
 
 
 def test_mcp_notification_returns_none_and_unknown_method_errors():

@@ -6092,6 +6092,43 @@ async def partner_action_status_endpoint(
     return JSONResponse(content=await asyncio.to_thread(status_for, request_id))
 
 
+@app.get("/bookd/agent/activity")
+async def partner_activity_endpoint(
+    since: Optional[str] = None,
+    limit: int = 40,
+    authorization: Optional[str] = Header(None),
+):
+    """What AVO has been doing, newest first, scope-filtered. Poll with `since`."""
+    grant = validate_bookd_agent_key(authorization)
+    from services.partner_feed import activity
+    result = await asyncio.to_thread(activity, since, scope=grant["scope"], limit=limit)
+    return JSONResponse(content=result)
+
+
+@app.get("/bookd/agent/inbox")
+async def partner_inbox_endpoint(authorization: Optional[str] = Header(None)):
+    """Messages Michael left for this partner. Reading marks them read."""
+    grant = validate_bookd_agent_key(authorization)
+    from services.partner_feed import inbox
+    result = await asyncio.to_thread(
+        inbox, scope=grant["scope"], key_id=grant["id"])
+    return JSONResponse(content=result)
+
+
+@app.post("/bookd/agent/note")
+async def partner_note_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Leave a message for Michael. Durable, audited, and it pages him."""
+    grant = validate_bookd_agent_key(authorization)
+    from services.partner_feed import post_note
+    result = await asyncio.to_thread(
+        post_note, str((payload or {}).get("body") or ""), author=grant["label"],
+        direction="from_partner", scope=grant["scope"], key_id=grant["id"])
+    return JSONResponse(content=result)
+
+
 @app.post("/bookd/agent/handoff")
 async def bookd_agent_handoff_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
@@ -6246,6 +6283,30 @@ async def admin_partner_actions_list(
     validate_key(authorization)
     from services.partner_actions import list_requests
     return JSONResponse(content={"requests": await asyncio.to_thread(list_requests, status)})
+
+
+@app.post("/admin/partner-note")
+async def admin_partner_note(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Michael -> partner agent. The note waits in the partner's inbox until its agent
+    polls, so this works whether or not that agent is currently running."""
+    validate_key(authorization)
+    from services.partner_feed import post_note
+    p = payload or {}
+    result = await asyncio.to_thread(
+        post_note, str(p.get("body") or ""), author=str(p.get("author") or "michael"),
+        direction="to_partner", scope=str(p.get("scope") or "bookd"))
+    return JSONResponse(content=result)
+
+
+@app.get("/admin/partner-notes")
+async def admin_partner_notes(limit: int = 50, authorization: Optional[str] = Header(None)):
+    """Both directions of the partner mailbox."""
+    validate_key(authorization)
+    from services.partner_feed import list_notes
+    return JSONResponse(content={"notes": await asyncio.to_thread(list_notes, limit)})
 
 
 @app.post("/admin/partner-action-approve")

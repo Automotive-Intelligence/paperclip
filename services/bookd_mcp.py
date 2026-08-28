@@ -61,6 +61,41 @@ TOOLS = [
             "required": ["key_name", "value"],
         },
     },
+    {
+        "name": "avo_activity",
+        "description": (
+            "What AVO has actually been doing, newest first, read off real records "
+            "(commit history, the action ledger, the mailbox) rather than summarized "
+            "by a model. Poll this to stay current: pass the `cursor` from the previous "
+            "result back as `since` and you get only what is new. If sources_failed is "
+            "non-empty the feed is incomplete, not quiet."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "since": {"type": "string",
+                          "description": "ISO timestamp; defaults to the last 14 days."},
+                "limit": {"type": "integer", "description": "Max items (default 40)."},
+            },
+        },
+    },
+    {
+        "name": "avo_inbox",
+        "description": (
+            "Messages Michael has left for you. Reading them marks them read, so poll "
+            "this on your schedule and surface anything unread to your operator."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "avo_send_note",
+        "description": (
+            "Leave a message for Michael. Durable and it pages him. Use this to tell "
+            "him something; use request_action when you want AVO to DO something."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"body": {"type": "string", "description": "The message."}},
+            "required": ["body"],
+        },
+    },
 ]
 
 
@@ -158,6 +193,19 @@ def _call_tool(name: str, args: Dict[str, Any], grant: Dict[str, Any]) -> Dict[s
     if name == "bookd_handoff_secret":
         out = stage(str(args.get("key_name") or ""), str(args.get("value") or ""),
                     submitted_by=f"{label}/mcp")
+        return _tool_text(out, is_error=not out.get("ok"))
+    if name == "avo_activity":
+        from services.partner_feed import activity
+        return _tool_text(activity(args.get("since") or None, scope=scope,
+                                   limit=int(args.get("limit") or 40)))
+    if name == "avo_inbox":
+        from services.partner_feed import inbox
+        out = inbox(scope=scope, key_id=key_id)
+        return _tool_text(out, is_error=not out.get("ok"))
+    if name == "avo_send_note":
+        from services.partner_feed import post_note
+        out = post_note(str(args.get("body") or ""), author=label,
+                        direction="from_partner", scope=scope, key_id=key_id)
         return _tool_text(out, is_error=not out.get("ok"))
 
     # Scope gate: an 'avo' tool is invisible AND unusable to a 'bookd' key, even if the
