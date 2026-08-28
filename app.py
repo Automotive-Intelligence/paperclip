@@ -6252,7 +6252,14 @@ async def admin_partner_key_revoke(
     validate_key(authorization)
     from services.partner_keys import revoke
     p = payload or {}
-    result = await asyncio.to_thread(revoke, int(p.get("id") or 0), str(p.get("reason") or ""))
+    # Accept either field name. The kill switch should not silently no-op because the
+    # caller wrote the obvious synonym, and revoke() now reports a miss either way.
+    raw_id = p.get("id", p.get("key_id"))
+    if raw_id is None:
+        raise HTTPException(status_code=400, detail="id (or key_id) is required")
+    result = await asyncio.to_thread(revoke, int(raw_id), str(p.get("reason") or ""))
+    if not result.get("ok"):
+        return JSONResponse(content=result, status_code=404)
     return JSONResponse(content=result)
 
 

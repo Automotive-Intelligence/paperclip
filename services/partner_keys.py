@@ -106,13 +106,43 @@ def resolve(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def revoke(key_id: int, reason: str = "") -> Dict[str, Any]:
-    """THE KILL SWITCH. Takes effect on the partner's next request, no deploy."""
+    """THE KILL SWITCH. Takes effect on the partner's next request, no deploy.
+
+    CONFIRMS the row actually changed before reporting success. This previously
+    returned ok:True unconditionally, so revoking a key that did not exist -- a typo'd
+    id, or a caller sending the wrong field name and landing on id=0 -- looked exactly
+    like a successful revocation. On the one control that cuts off a partner's access,
+    "I told you it worked" must mean "I checked that it worked".
+    """
     ensure_table()
-    execute_query(
-        "UPDATE partner_agent_keys SET status='revoked', revoked_at=NOW(), "
-        "revoked_reason=%s WHERE id=%s", (reason[:300], key_id))
-    logger.warning("[partner-keys] REVOKED key #%d (%s)", key_id, reason or "no reason given")
-    return {"ok": True, "id": key_id, "status": "revoked", "reason": reason}
+    try:
+        rows = fetch_all(
+            "UPDATE partner_agent_keys SET status='revoked', revoked_at=NOW(), "
+            "revoked_reason=%s WHERE id=%s AND status <> 'revoked' RETURNING id, label",
+            (reason[:300], key_id))
+    except Exception:
+        logger.exception("[partner-keys] REVOKE FAILED for key #%s", key_id)
+        return {"ok": False, "id": key_id, "error":
+                "revocation could not be written; the key may still be ACTIVE"}
+    if not rows:
+        # Distinguish "already dead" (fine) from "no such key" (the dangerous case).
+        try:
+            existing = fetch_all(
+                "SELECT status FROM partner_agent_keys WHERE id=%s", (key_id,))
+        except Exception:
+            existing = []
+        if existing and existing[0][0] == "revoked":
+            logger.info("[partner-keys] key #%s was already revoked", key_id)
+            return {"ok": True, "id": key_id, "status": "revoked",
+                    "note": "already revoked; nothing to do"}
+        logger.error("[partner-keys] REVOKE MATCHED NO KEY for id=%s -- nothing was "
+                     "revoked", key_id)
+        return {"ok": False, "id": key_id, "error":
+                f"no key with id {key_id}; NOTHING was revoked"}
+    logger.warning("[partner-keys] REVOKED key #%s (%s) -- %s",
+                   rows[0][0], rows[0][1], reason or "no reason given")
+    return {"ok": True, "id": int(rows[0][0]), "label": rows[0][1],
+            "status": "revoked", "reason": reason}
 
 
 def set_scope(key_id: int, scope: str) -> Dict[str, Any]:

@@ -153,3 +153,69 @@ def test_secret_gate_holds_at_avo_scope_but_brand_gate_does_not():
     assert "brand_leak" not in hits2 and "Worship Digital" in reply2
     reply3, hits3 = BA._gate_reply("Worship Digital revenue is up", "bookd")
     assert "brand_leak" in hits3
+
+
+# --------------------------------------------------------------- kill switch
+def test_revoking_a_key_that_does_not_exist_reports_failure():
+    """Regression: revoke() returned ok:True unconditionally, so a typo'd id -- or a
+    caller sending key_id instead of id, landing on id=0 -- looked exactly like a
+    successful revocation while the key stayed ACTIVE. On the control that cuts off a
+    partner, a success claim must mean the row actually changed."""
+    import services.partner_keys as PK
+
+    calls = []
+
+    def fake_fetch_all(sql, params=()):
+        calls.append(sql)
+        s = " ".join(sql.split())
+        if s.startswith("UPDATE partner_agent_keys SET status='revoked'"):
+            return []          # matched no row
+        if s.startswith("SELECT status FROM partner_agent_keys"):
+            return []          # and no such key exists
+        return []
+
+    orig_fetch, orig_ensure = PK.fetch_all, PK.ensure_table
+    PK.fetch_all, PK.ensure_table = fake_fetch_all, lambda: None
+    try:
+        out = PK.revoke(0, "typo")
+        assert out["ok"] is False
+        assert "NOTHING was revoked" in out["error"]
+    finally:
+        PK.fetch_all, PK.ensure_table = orig_fetch, orig_ensure
+
+
+def test_revoking_a_real_key_confirms_the_row_changed():
+    import services.partner_keys as PK
+
+    def fake_fetch_all(sql, params=()):
+        if " ".join(sql.split()).startswith("UPDATE partner_agent_keys SET status='revoked'"):
+            return [(7, "ryan-hermes")]
+        return []
+
+    orig_fetch, orig_ensure = PK.fetch_all, PK.ensure_table
+    PK.fetch_all, PK.ensure_table = fake_fetch_all, lambda: None
+    try:
+        out = PK.revoke(7, "went sideways")
+        assert out["ok"] is True and out["id"] == 7 and out["label"] == "ryan-hermes"
+    finally:
+        PK.fetch_all, PK.ensure_table = orig_fetch, orig_ensure
+
+
+def test_already_revoked_is_success_not_an_error():
+    import services.partner_keys as PK
+
+    def fake_fetch_all(sql, params=()):
+        s = " ".join(sql.split())
+        if s.startswith("UPDATE partner_agent_keys SET status='revoked'"):
+            return []
+        if s.startswith("SELECT status FROM partner_agent_keys"):
+            return [("revoked",)]
+        return []
+
+    orig_fetch, orig_ensure = PK.fetch_all, PK.ensure_table
+    PK.fetch_all, PK.ensure_table = fake_fetch_all, lambda: None
+    try:
+        out = PK.revoke(7, "again")
+        assert out["ok"] is True and "already revoked" in out.get("note", "")
+    finally:
+        PK.fetch_all, PK.ensure_table = orig_fetch, orig_ensure
