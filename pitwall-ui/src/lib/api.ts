@@ -252,6 +252,23 @@ export type ProspectFeed = {
   }>;
 };
 
+export type PartnerComms = {
+  notes: Array<{
+    id: number; direction: string; from: string; body: string;
+    when: string; read: boolean;
+  }>;
+  activity: {
+    ok: boolean; scope: string; since: string; cursor: string; count: number;
+    items: Array<{ when: string; kind: string; who: string; what: string }>;
+    sources_failed: string[]; note: string;
+  };
+  keys: Array<{
+    id: number; label: string; scope: string; status: string; can_act: boolean;
+    created_at: string; last_used_at: string | null; use_count: number;
+    revoked_reason: string | null;
+  }>;
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -260,10 +277,11 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function postJson<T>(url: string): Promise<T> {
+async function postJson<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) {
     throw new Error(`Request failed (${response.status}) for ${url}`);
@@ -282,6 +300,9 @@ export const api = {
   agent: (teamId: string, agentId: string) => fetchJson<AgentDetail>(`/api/pitwall/team/${teamId}/agent/${agentId}`),
   agentLogs: (agentId: string) => fetchJson<AgentLogs>(`/logs/${agentId}/history?limit=20`),
   clearAlerts: () => postJson<ClearAlertsResponse>('/api/pitwall/clear-alerts'),
+  partnerComms: () => fetchJson<PartnerComms>('/api/pitwall/partner-comms'),
+  sendPartnerNote: (body: string) =>
+    postJson<{ ok: boolean; id: number }>('/api/pitwall/partner-note', { body }),
   changelog: (week?: number, year?: number) => {
     const qs = week && year ? `?week=${week}&year=${year}` : '';
     return fetchJson<ChangelogFeed>(`/api/changelogs${qs}`);

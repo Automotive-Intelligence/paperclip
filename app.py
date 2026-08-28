@@ -4677,7 +4677,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/prospects", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/prospects", "/ryan", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8756,6 +8756,15 @@ async def get_prospects_page():
     raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
 
 
+@app.get("/ryan")
+async def get_partner_page():
+    """Serve the React Pit Wall app for the client-side /ryan route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
 @app.get("/api/pitwall/prospects")
 async def api_pitwall_prospects(days: int = 1):
     """The names behind the prospect count, with a link into the right CRM."""
@@ -8768,6 +8777,32 @@ async def api_pitwall_revenue_board():
     """What needs hands to make money. Actions only, derived from live state."""
     from services.revenue_board import board
     return JSONResponse(content=await asyncio.to_thread(board))
+
+
+@app.get("/api/pitwall/partner-comms")
+async def api_pitwall_partner_comms():
+    """The partner channel in one view: the mailbox both directions, what the partner
+    agent has been doing, and whether its key is live. Behind dashboard auth like the
+    rest of /api/pitwall, so Michael reads it in the Pit Wall instead of curling."""
+    from services.partner_feed import list_notes, activity
+    from services.partner_keys import list_keys
+    notes, feed, keys = await asyncio.gather(
+        asyncio.to_thread(list_notes, 40),
+        asyncio.to_thread(activity, None, scope="avo", limit=25),
+        asyncio.to_thread(list_keys),
+    )
+    return JSONResponse(content={"notes": notes, "activity": feed, "keys": keys})
+
+
+@app.post("/api/pitwall/partner-note")
+async def api_pitwall_partner_note(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Send a note to the partner agent from the Pit Wall."""
+    from services.partner_feed import post_note
+    p = payload or {}
+    result = await asyncio.to_thread(
+        post_note, str(p.get("body") or ""), author="michael",
+        direction="to_partner", scope=str(p.get("scope") or "bookd"))
+    return JSONResponse(content=result, status_code=200 if result.get("ok") else 400)
 
 
 @app.get("/api/pitwall/seats")

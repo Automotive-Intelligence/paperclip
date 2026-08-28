@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Pit Wall', to: '/', icon: 'P' },
   { label: 'Needs Our Hands', to: '/revenue', icon: '$' },
   { label: 'Prospects', to: '/prospects', icon: 'R' },
+  { label: 'Ryan', to: '/ryan', icon: 'Y' },
   { label: 'Org', to: '/org', icon: 'G' },
   { label: 'Stack Inventory', to: '/inventory', icon: 'I' },
   // brands, alphabetical

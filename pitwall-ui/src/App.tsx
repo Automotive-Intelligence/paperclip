@@ -7,6 +7,7 @@ import InventoryPage from './pages/InventoryPage';
 import OrgPage from './pages/OrgPage';
 import RevenuePage from './pages/RevenuePage';
 import ProspectsPage from './pages/ProspectsPage';
+import PartnerPage from './pages/PartnerPage';
 import DashboardShell from './components/DashboardShell';
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
         <Routes location={location} key={location.pathname}>
           <Route path="/revenue" element={<RevenuePage />} />
           <Route path="/prospects" element={<ProspectsPage />} />
+          <Route path="/ryan" element={<PartnerPage />} />
           <Route path="/" element={<PitWallPage />} />
           <Route path="/dashboard" element={<PitWallPage />} />
           <Route path="/pit-wall" element={<PitWallPage />} />

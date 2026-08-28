@@ -12,7 +12,6 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { Link } from 'react-router-dom';
 import { api, CostPanel, OpsAgentHealth, PitWallOpsDashboard, PitWallTelemetry } from '../lib/api';
 import StatusDot from '../components/StatusDot';
 import ChangelogSection from '../components/ChangelogSection';
