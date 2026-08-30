@@ -5921,6 +5921,24 @@ async def run_aipg_no_call_close_endpoint(
     return JSONResponse(content=result)
 
 
+@app.post("/admin/run-spend-email")
+async def run_spend_email_endpoint(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    authorization: Optional[str] = Header(None),
+):
+    """Fire the daily AI-spend email on demand (same code path as the 07:55 CT
+    cron). Body optional: {"day": "YYYY-MM-DD"} to roll up a specific UTC day
+    (default: yesterday). Added 2026-08-30 so a metering fix can be verified
+    the same hour instead of waiting for tomorrow's cron."""
+    validate_key(authorization)
+    from datetime import date as _date
+    from services.spend_email import send_daily_spend_email
+    payload = payload or {}
+    day = _date.fromisoformat(payload["day"]) if payload.get("day") else None
+    sent = await asyncio.to_thread(send_daily_spend_email, day)
+    return JSONResponse(content={"ok": bool(sent), "sent": bool(sent)})
+
+
 @app.post("/admin/run-inbox-janitor")
 async def run_inbox_janitor_endpoint(
     payload: Optional[Dict[str, Any]] = Body(default=None),
