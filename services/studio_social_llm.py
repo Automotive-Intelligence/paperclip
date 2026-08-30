@@ -51,7 +51,24 @@ def _post_messages(body: Dict[str, Any], timeout: int = 180) -> Dict[str, Any]:
     )
     if not r.ok:
         raise LLMError(f"LLM {r.status_code}: {r.text[:300]}")
-    return r.json()
+    j = r.json()
+    # Meter it: this direct Messages call never reached llm_spend_ledger until
+    # 2026-08-30 (the email read $0 against real Anthropic burn). Never raises.
+    try:
+        from services.llm_ledger import record_usage
+        u = (j or {}).get("usage") or {}
+        record_usage(
+            (j or {}).get("model") or body.get("model") or _MODEL,
+            input_tokens=int(u.get("input_tokens") or 0),
+            output_tokens=int(u.get("output_tokens") or 0),
+            cache_creation_tokens=int(u.get("cache_creation_input_tokens") or 0),
+            cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
+            persona="studio-social", surface="studio-social",
+            request_id=(j or {}).get("id"),
+        )
+    except Exception:
+        pass
+    return j
 
 
 def _content_text(resp: Dict[str, Any]) -> str:
