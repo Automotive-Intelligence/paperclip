@@ -236,3 +236,105 @@ def daily_totals(day: Optional[date] = None) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("[llm_ledger] daily_totals failed: %s", e)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-30: metering truth. The ledger was built (#88) to capture spend at
+# the SDK/LiteLLM call site, but every real spender since then (Slipstream ->
+# OpenRouter, Studio social -> Anthropic Messages, fal images) calls its
+# provider with raw requests and never touched this table -- so the daily
+# email read "$0.00, 0 calls" for weeks against real spend. Two fixes live
+# here: a recorder for OpenAI-style (OpenRouter) responses so the direct call
+# sites can write rows, and provider-level ground truth (OpenRouter's own
+# cumulative usage counter, snapshotted daily) that is correct no matter which
+# code path spent the money.
+# ---------------------------------------------------------------------------
+
+
+def record_openrouter_response(
+    j: Any,
+    *,
+    model: str,
+    persona: Optional[str] = None,
+    surface: Optional[str] = None,
+    brand: Optional[str] = None,
+) -> Optional[float]:
+    """Record one OpenAI-style chat completion (OpenRouter) response. Uses the
+    provider's own `usage.cost` when present (request with usage.include=true),
+    else prices prompt/completion tokens via the map. Never raises."""
+    try:
+        usage = (j or {}).get("usage") or {}
+        cost = usage.get("cost")
+        return record_usage(
+            (j or {}).get("model") or model,
+            input_tokens=int(usage.get("prompt_tokens") or 0),
+            output_tokens=int(usage.get("completion_tokens") or 0),
+            persona=persona, surface=surface, brand=brand,
+            request_id=(j or {}).get("id"),
+            cost_usd_override=float(cost) if cost is not None else None,
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("[llm_ledger] openrouter record failed: %s", e)
+        return None
+
+
+_SNAPSHOT_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS provider_spend_snapshots (
+    id           BIGSERIAL PRIMARY KEY,
+    ts           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    provider     TEXT NOT NULL,
+    total_usage  NUMERIC(14, 6) NOT NULL,
+    balance      NUMERIC(14, 6)
+);
+"""
+
+
+def openrouter_usage() -> Optional[Dict[str, float]]:
+    """{'total_usage': cumulative USD spent, 'balance': remaining USD} from
+    OpenRouter's credits endpoint, or None if unreadable. Provider ground truth:
+    counts every OpenRouter call regardless of which code path made it."""
+    import os
+    import requests
+    key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        r = requests.get("https://openrouter.ai/api/v1/credits",
+                         headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        if not r.ok:
+            return None
+        d = (r.json() or {}).get("data") or {}
+        total, used = float(d["total_credits"]), float(d["total_usage"])
+        return {"total_usage": used, "balance": total - used}
+    except Exception as e:
+        logger.warning("[llm_ledger] openrouter usage fetch failed: %s", e)
+        return None
+
+
+def snapshot_provider(provider: str, total_usage: float, balance: Optional[float]) -> None:
+    """Append today's cumulative-usage reading. Never raises."""
+    try:
+        execute_query(_SNAPSHOT_TABLE_SQL)
+        execute_query(
+            "INSERT INTO provider_spend_snapshots (provider, total_usage, balance) "
+            "VALUES (%s, %s, %s)", (provider, total_usage, balance))
+    except Exception as e:
+        logger.warning("[llm_ledger] snapshot write failed: %s", e)
+
+
+def provider_delta(provider: str, current_total: float, min_age_hours: float = 20) -> Optional[Dict[str, Any]]:
+    """USD spent since the newest snapshot at least `min_age_hours` old (so a
+    same-morning re-run does not report a near-zero delta). None until a
+    baseline exists."""
+    try:
+        rows = fetch_all(
+            "SELECT total_usage, ts FROM provider_spend_snapshots WHERE provider = %s "
+            "AND ts <= NOW() - (%s * INTERVAL '1 hour') ORDER BY ts DESC LIMIT 1",
+            (provider, min_age_hours))
+    except Exception as e:
+        logger.warning("[llm_ledger] snapshot read failed: %s", e)
+        return None
+    if not rows:
+        return None
+    prior, ts = float(rows[0][0]), rows[0][1]
+    return {"spent_usd": max(0.0, current_total - prior), "since": ts}

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from services.llm_ledger import daily_totals
+from services.llm_ledger import daily_totals, openrouter_usage, provider_delta, snapshot_provider
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,53 @@ def _rows_html(rows, label_key: str) -> str:
         f"</tr>"
         for r in rows
     )
+
+
+def _gap_banner(totals: dict) -> str:
+    """FAIL CLOSED: zero ledger rows is a metering gap until proven otherwise.
+    For weeks the meter said "$0.00" while engines burned real money because no
+    live call site wrote rows; a silent zero must never read as a quiet day."""
+    if int(totals.get("calls") or 0) > 0:
+        return ""
+    return (
+        "<div style='margin:10px 0;padding:10px 12px;border-left:4px solid #c00;"
+        "background:#fff4f4;font-size:13px;'>"
+        "<b>Ledger recorded 0 calls.</b> Treat this as a <b>metering gap</b>, not a quiet day, "
+        "unless no engine ran: only instrumented call sites write rows. Compare against the "
+        "OpenRouter provider line below, which is true regardless of code path.</div>"
+    )
+
+
+def _provider_section(orx: dict | None) -> str:
+    """OpenRouter ground truth: what the provider says we spent since the last
+    daily snapshot, plus remaining balance. Independent of the ledger."""
+    if not orx:
+        return ("<div style='color:#999;font-size:12px;margin:8px 0;'>OpenRouter provider "
+                "counter unavailable this run.</div>")
+    delta = orx.get("delta")
+    if delta is None:
+        spent = "baseline captured today; daily delta starts tomorrow"
+    else:
+        spent = f"${delta['spent_usd']:.2f} since {delta['since'].strftime('%Y-%m-%d %H:%M')} UTC"
+    return (
+        "<h3 style='margin:22px 0 6px;'>OpenRouter (provider truth)</h3>"
+        f"<div style='font-size:13px;'>Spent: <b>{spent}</b> &middot; Balance: "
+        f"<b>${orx['balance']:.2f}</b> &middot; Lifetime usage: ${orx['total_usage']:.2f}</div>"
+    )
+
+
+def _openrouter_truth() -> dict | None:
+    """Snapshot the provider counter and compute yesterday's delta. Never raises."""
+    try:
+        u = openrouter_usage()
+        if not u:
+            return None
+        delta = provider_delta("openrouter", u["total_usage"])
+        snapshot_provider("openrouter", u["total_usage"], u.get("balance"))
+        return {**u, "delta": delta}
+    except Exception as e:
+        logger.warning("[spend_email] openrouter truth failed: %s", e)
+        return None
 
 
 def _build_html(totals: dict) -> str:
@@ -61,18 +108,33 @@ def _build_html(totals: dict) -> str:
 <html><body style="font-family:-apple-system,Helvetica,Arial,sans-serif;color:#222;max-width:680px;margin:0 auto;padding:20px;">
 <h2 style="margin:0 0 4px;">💸 AI spend — {totals['day']}</h2>
 <div style="font-size:28px;font-weight:700;margin:6px 0 2px;">${totals['total_usd']:.2f}</div>
-<div style="color:#666;font-size:13px;">{totals['calls']} API call(s) across all agents + personas</div>
+<div style="color:#666;font-size:13px;">{totals['calls']} ledger-recorded API call(s)</div>
+{_gap_banner(totals)}
+{_provider_section(totals.get("openrouter"))}
 {section("By persona", totals["by_persona"], "persona")}
 {section("By model", totals["by_model"], "model")}
 {client_section}
 <hr style="margin-top:28px;border:none;border-top:1px solid #ddd;">
 <div style="color:#888;font-size:11px;">
-Source: <code>llm_spend_ledger</code> (per-call ledger). Cross-check totals against
-Anthropic Console → Usage &amp; Cost. Per-client rows populate as client-facing
-agents are instrumented or run under per-client API keys.
+Sources: <code>llm_spend_ledger</code> (per-call rows from instrumented call sites:
+slipstream, studio-social, persona/litellm) + OpenRouter's own cumulative usage counter
+(provider truth for every OpenRouter call, any code path). NOT metered: fal image/video
+spend and Anthropic calls made outside paperclip (cloud routines, the GitHub triage agent).
+Cross-check Anthropic Console → Usage for those.
 </div>
 </body></html>
 """
+
+
+def _subject(totals: dict) -> str:
+    """Headline the provider delta when the ledger is empty, so the subject
+    line can never read "$0.00" over real spend."""
+    orx = totals.get("openrouter") or {}
+    delta = orx.get("delta")
+    orx_part = f" · OpenRouter ${delta['spent_usd']:.2f}" if delta else ""
+    if int(totals.get("calls") or 0) == 0:
+        return f"💸 AI spend {totals['day']}: ledger EMPTY (metering gap){orx_part}"
+    return f"💸 AI spend {totals['day']}: ${totals['total_usd']:.2f} ({totals['calls']} calls){orx_part}"
 
 
 def send_daily_spend_email(day=None) -> bool:
@@ -80,6 +142,7 @@ def send_daily_spend_email(day=None) -> bool:
     if day is None:
         day = (datetime.now(timezone.utc) - timedelta(days=1)).date()
     totals = daily_totals(day)
+    totals["openrouter"] = _openrouter_truth()
 
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     if not api_key:
@@ -87,7 +150,7 @@ def send_daily_spend_email(day=None) -> bool:
                        totals["total_usd"])
         return False
 
-    subject = f"💸 AI spend {totals['day']}: ${totals['total_usd']:.2f} ({totals['calls']} calls)"
+    subject = _subject(totals)
     try:
         r = requests.post(
             RESEND_URL,

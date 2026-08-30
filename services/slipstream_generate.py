@@ -54,12 +54,23 @@ def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
+            # Ask OpenRouter to return its own per-call cost so the spend
+            # ledger records provider truth, not a pricing-map estimate.
+            "usage": {"include": True},
         },
         timeout=180,
     )
     if not r.ok:
         raise GenerationError(f"LLM {r.status_code}: {r.text[:300]}")
     j = r.json()
+    # Meter it. This engine is the fleet's largest LLM spender and, until
+    # 2026-08-30, wrote nothing to the ledger -- the daily spend email read
+    # "$0.00" against real burn. Never lets a ledger failure break a post.
+    try:
+        from services.llm_ledger import record_openrouter_response
+        record_openrouter_response(j, model=_MODEL, persona="slipstream", surface="slipstream")
+    except Exception:
+        pass
     choice = (j.get("choices") or [{}])[0]
     text = ((choice.get("message") or {}).get("content") or "").strip()
     if not text:
