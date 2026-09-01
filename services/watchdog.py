@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import base64
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -1237,6 +1238,77 @@ def _check_elevation_gate_absence(cfg: Optional[dict] = None) -> List[Anomaly]:
     return out
 
 
+def _check_anthropic_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """The OTHER fuel tank, which nothing was watching.
+
+    _check_llm_credits watches OpenRouter. But 11 services route through
+    services/studio_social_llm.llm_json, which posts to api.anthropic.com with
+    ANTHROPIC_API_KEY -- a completely separate balance. On 2026-09-01 OpenRouter had
+    ~$30 left and read green while Anthropic sat at $0, and the entire Anthropic layer
+    was dead: the Book'd partner port answered Ryan "Temporary failure on our side" for
+    every message, the SDR gates, Sonar's classifier, the Don ad gate, the studio gates
+    and Slipstream's generate stage all failed, and nothing alarmed. A fuel gauge
+    pointed at the wrong tank is worse than no gauge, because it reads full.
+
+    Anthropic publishes no balance endpoint, so this probes: a 1-token Messages call,
+    which costs a fraction of a cent when funded and nothing at all when it is not.
+    Network errors skip (never false-alarm); an exhausted balance or a rejected key is
+    critical, because in both cases production is already down.
+    Config: anthropic_credits.enabled (default TRUE -- a gauge you must remember to
+    switch on is the failure mode this whole check exists to document).
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    ac = cfg.get("anthropic_credits") or {}
+    if not ac.get("enabled", True):
+        return []
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        return [Anomaly(
+            "anthropic-credits-unwatchable",
+            "ANTHROPIC_API_KEY is not set -- every service on the Anthropic seam "
+            "(the partner port, SDR gates, Sonar, Slipstream generate) cannot run.",
+            "critical")]
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages", timeout=20,
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": os.getenv("ANTHROPIC_PROBE_MODEL", "claude-haiku-4-5-20251001"),
+                  "max_tokens": 1, "messages": [{"role": "user", "content": "ok"}]})
+    except requests.RequestException as e:
+        logger.warning("[watchdog] anthropic probe failed: %s", e)
+        return []
+
+    if r.ok:
+        return []
+    body = ""
+    try:
+        body = json.dumps(r.json())
+    except Exception:
+        body = (r.text or "")[:300]
+    low = body.lower()
+    if "credit balance is too low" in low or "insufficient" in low:
+        return [Anomaly(
+            "anthropic-credits-exhausted",
+            "Anthropic credit balance is EXHAUSTED. Every service on that seam is down "
+            "right now and failing quietly: the Book'd partner port answers Ryan "
+            "'temporary failure', SDR/Sonar/Don gates and Slipstream generate all fail. "
+            "Top up the Anthropic account.", "critical")]
+    if r.status_code in (401, 403):
+        return [Anomaly(
+            "anthropic-key-rejected",
+            f"Anthropic rejected ANTHROPIC_API_KEY ({r.status_code}) -- the whole "
+            f"Anthropic seam is down. Rotate the key on Railway.", "critical")]
+    if r.status_code == 429:
+        return []          # rate limit is transient, not an outage
+    logger.warning("[watchdog] anthropic probe returned %s: %s", r.status_code, body[:200])
+    return [Anomaly(
+        "anthropic-probe-failed",
+        f"Anthropic probe returned HTTP {r.status_code}; the LLM seam may be degraded.",
+        "warn")]
+
+
 _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
@@ -1255,6 +1327,7 @@ _CHECKS = (
     _check_vercel_deployments,
     _check_github_workflows,
     _check_llm_credits,
+    _check_anthropic_credits,
     _check_search_credits,
 )
 

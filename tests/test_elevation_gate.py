@@ -264,3 +264,73 @@ def test_sweep_marks_truncation_so_a_cap_never_reads_as_coverage(monkeypatch):
     assert out["truncated"] is True
     assert out["reviewed"] == EG._SWEEP_MAX
     assert out["candidates"] == len(paths)
+
+
+# ------------------------------------------------- the other fuel tank
+def _fake_requests(status, payload, monkeypatch, W):
+    import types
+
+    class R:
+        ok = status == 200
+        status_code = status
+        text = str(payload)
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(W, "requests", types.SimpleNamespace(
+        post=lambda *a, **k: R(), get=lambda *a, **k: R(), RequestException=Exception))
+
+
+def test_anthropic_exhaustion_is_critical(monkeypatch):
+    """The gauge was pointed at OpenRouter while Anthropic sat at $0 and 11 services
+    were dead, including Ryan's port. A gauge on the wrong tank reads full."""
+    import services.watchdog as W
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _fake_requests(400, {"error": {"message": "Your credit balance is too low"}},
+                   monkeypatch, W)
+    out = W._check_anthropic_credits({"anthropic_credits": {"enabled": True}})
+    assert [a.fingerprint for a in out] == ["anthropic-credits-exhausted"]
+    assert out[0].severity == "critical"
+
+
+def test_anthropic_rejected_key_is_critical(monkeypatch):
+    import services.watchdog as W
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _fake_requests(401, {"error": {"message": "invalid x-api-key"}}, monkeypatch, W)
+    out = W._check_anthropic_credits({})
+    assert [a.fingerprint for a in out] == ["anthropic-key-rejected"]
+
+
+def test_anthropic_healthy_is_quiet(monkeypatch):
+    import services.watchdog as W
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _fake_requests(200, {"content": []}, monkeypatch, W)
+    assert W._check_anthropic_credits({}) == []
+
+
+def test_anthropic_rate_limit_is_not_an_outage(monkeypatch):
+    import services.watchdog as W
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    _fake_requests(429, {"error": {"message": "rate limited"}}, monkeypatch, W)
+    assert W._check_anthropic_credits({}) == []
+
+
+def test_missing_anthropic_key_is_critical(monkeypatch):
+    import services.watchdog as W
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    out = W._check_anthropic_credits({})
+    assert [a.fingerprint for a in out] == ["anthropic-credits-unwatchable"]
+
+
+def test_anthropic_check_defaults_to_enabled():
+    """Config-gated OFF by default is how a gauge quietly never runs."""
+    import services.watchdog as W
+    import inspect
+    src = inspect.getsource(W._check_anthropic_credits)
+    assert 'ac.get("enabled", True)' in src
+
+
+def test_anthropic_check_is_registered():
+    import services.watchdog as W
+    assert W._check_anthropic_credits in W._CHECKS
