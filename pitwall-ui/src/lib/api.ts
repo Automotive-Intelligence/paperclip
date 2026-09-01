@@ -269,6 +269,25 @@ export type PartnerComms = {
   }>;
 };
 
+export type ElevationReview = {
+  id: number; title: string; kind: string; source: string; verdict: string;
+  reasons: string[];
+  analysis: {
+    strongest_version?: string; why_not?: string; reason?: string;
+    moat?: { present: boolean; built_or_assumed: string; what: string };
+  };
+  when: string; cleared: boolean; cleared_by: string | null;
+};
+
+export type ElevationFeed = {
+  open_holds: ElevationReview[];
+  recent: ElevationReview[];
+  stats: {
+    reviews: number; holds: number; open_holds: number;
+    hold_rate: number | null; last_run_age_seconds: number | null;
+  };
+};
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!response.ok) {
@@ -301,6 +320,9 @@ export const api = {
   agentLogs: (agentId: string) => fetchJson<AgentLogs>(`/logs/${agentId}/history?limit=20`),
   clearAlerts: () => postJson<ClearAlertsResponse>('/api/pitwall/clear-alerts'),
   partnerComms: () => fetchJson<PartnerComms>('/api/pitwall/partner-comms'),
+  elevation: () => fetchJson<ElevationFeed>('/api/pitwall/elevation'),
+  clearElevationHold: (id: number) =>
+    postJson<{ ok: boolean }>('/api/pitwall/elevation-clear', { id }),
   sendPartnerNote: (body: string) =>
     postJson<{ ok: boolean; id: number }>('/api/pitwall/partner-note', { body }),
   changelog: (week?: number, year?: number) => {

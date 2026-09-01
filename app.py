@@ -3407,6 +3407,23 @@ scheduler.add_job(_run_lead_canary, CronTrigger(minute=23, timezone=CST),
     replace_existing=True, misfire_grace_time=1800)
 
 
+def _run_elevation_sweep():
+    """Review plan-shaped deliverables committed in the last day that were never
+    gated. gate() is the blocking primitive, but no single writer exists to block at,
+    so this sweep is the net that keeps "nobody called the gate" from being a silent
+    pass. The watchdog alarms if this stops running."""
+    from services.elevation_gate import sweep
+    try:
+        logging.info("[elevation] %s", sweep(26))
+    except Exception as e:
+        logging.error("[elevation] sweep failed: %s", e)
+
+
+scheduler.add_job(_run_elevation_sweep, CronTrigger(hour=7, minute=10, timezone=CST),
+    id="elevation_sweep_daily", name="Elevation Gate Sweep (Railway)",
+    replace_existing=True, misfire_grace_time=3600)
+
+
 def _run_lead_reconcile():
     """Funnel standard #7: daily reconciliation. Pull GHL's own count of website-lead
     contacts and diff against lead_store (system of record); alert on any delta or an
@@ -4682,7 +4699,7 @@ if pitwall_assets_mount.exists():
 # Railway) and are read at request time. If either is unset, the gate fails
 # CLOSED for these human paths only (returns 401) and never crashes the app.
 
-_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/prospects", "/ryan", "/api/changelogs", "/api/cockpit"}
+_DASH_AUTH_EXACT = {"/", "/dashboard", "/pit-wall", "/inventory", "/org", "/revenue", "/prospects", "/ryan", "/elevation", "/api/changelogs", "/api/cockpit"}
 _DASH_AUTH_PREFIXES = ("/team/", "/assets/", "/pitwall-static/", "/api/pitwall/", "/logs/")
 _DASH_AUTH_REALM = "AVO Pit Wall"
 
@@ -8826,6 +8843,61 @@ async def api_pitwall_partner_note(payload: Optional[Dict[str, Any]] = Body(defa
         post_note, str(p.get("body") or ""), author="michael",
         direction="to_partner", scope=str(p.get("scope") or "bookd"))
     return JSONResponse(content=result, status_code=200 if result.get("ok") else 400)
+
+
+@app.get("/elevation")
+async def get_elevation_page():
+    """Serve the React Pit Wall app for the client-side /elevation route."""
+    react_index = Path(__file__).parent / "static" / "pitwall-react" / "index.html"
+    if react_index.exists():
+        return FileResponse(str(react_index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Pit Wall React build not found.")
+
+
+@app.get("/api/pitwall/elevation")
+async def api_pitwall_elevation():
+    """The elevation gate's record: open HOLDs first, then recent verdicts and rates.
+    A HOLD that only exists in a log is a HOLD nobody reads, so it surfaces here."""
+    from services.elevation_gate import recent, open_holds, stats
+    holds, rows, st = await asyncio.gather(
+        asyncio.to_thread(open_holds, 25),
+        asyncio.to_thread(recent, 30),
+        asyncio.to_thread(stats),
+    )
+    return JSONResponse(content={"open_holds": holds, "recent": rows, "stats": st})
+
+
+@app.post("/api/pitwall/elevation-clear")
+async def api_pitwall_elevation_clear(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Michael overriding a HOLD. Recorded, because an untracked override is
+    indistinguishable from a gate that never fired."""
+    from services.elevation_gate import clear
+    p = payload or {}
+    result = await asyncio.to_thread(
+        clear, int(p.get("id") or 0), "michael", str(p.get("note") or ""))
+    return JSONResponse(content=result, status_code=200 if result.get("ok") else 400)
+
+
+@app.post("/admin/run-elevation-sweep")
+async def admin_run_elevation_sweep(hours: int = 26,
+                                    authorization: Optional[str] = Header(None)):
+    """Run the sweep now."""
+    validate_key(authorization)
+    from services.elevation_gate import sweep
+    return JSONResponse(content=await asyncio.to_thread(sweep, hours))
+
+
+@app.post("/admin/elevation-review")
+async def admin_elevation_review(payload: Optional[Dict[str, Any]] = Body(default=None),
+                                 authorization: Optional[str] = Header(None)):
+    """Run one artifact through the gate on demand."""
+    validate_key(authorization)
+    from services.elevation_gate import review
+    p = payload or {}
+    result = await asyncio.to_thread(
+        review, str(p.get("text") or ""), title=str(p.get("title") or "untitled"),
+        kind=str(p.get("kind") or "plan"), source="admin")
+    return JSONResponse(content=result)
 
 
 @app.get("/api/pitwall/seats")

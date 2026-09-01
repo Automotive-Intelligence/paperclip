@@ -8,6 +8,7 @@ import OrgPage from './pages/OrgPage';
 import RevenuePage from './pages/RevenuePage';
 import ProspectsPage from './pages/ProspectsPage';
 import PartnerPage from './pages/PartnerPage';
+import ElevationPage from './pages/ElevationPage';
 import DashboardShell from './components/DashboardShell';
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/revenue" element={<RevenuePage />} />
           <Route path="/prospects" element={<ProspectsPage />} />
           <Route path="/ryan" element={<PartnerPage />} />
+          <Route path="/elevation" element={<ElevationPage />} />
           <Route path="/" element={<PitWallPage />} />
           <Route path="/dashboard" element={<PitWallPage />} />
           <Route path="/pit-wall" element={<PitWallPage />} />

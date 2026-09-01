@@ -1189,6 +1189,54 @@ def _check_search_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
 
 
 # Registry of every check the watchdog runs. Extend here as coverage grows.
+def _check_elevation_gate_absence(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """The elevation gate must not be able to go quiet.
+
+    Scrutineering, the previous quality gate here, last logged 2026-06-28 and nobody
+    noticed for two months, because nothing watched for its silence. A quality gate
+    fails in exactly the way this system keeps rediscovering: it stops running, no
+    error is produced, and unreviewed work sails through looking identical to reviewed
+    work. So the gate's own ABSENCE is an alarm, and a growing pile of uncleared HOLDs
+    is a second one (a HOLD nobody reads is a gate nobody has).
+    Config: monitors.elevation_gate_max_age_hours (default 30; 0 disables).
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mon = cfg.get("monitors") or {}
+    raw = mon.get("elevation_gate_max_age_hours")
+    max_h = int(raw) if raw is not None else 30
+    if max_h <= 0:
+        return []
+    try:
+        from services.elevation_gate import last_run_age_seconds, open_holds
+        age_s = last_run_age_seconds()
+        holds = open_holds(50)
+    except Exception as e:
+        logger.warning("[watchdog] elevation gate read failed, skipping: %s", e)
+        return []
+
+    out: List[Anomaly] = []
+    if age_s is None:
+        return [Anomaly("elevation-gate-never-ran",
+                        "The elevation gate has never run. Nothing is checking whether "
+                        "work clears the bar, which is the state it was built to end.",
+                        "warn")]
+    age_h = age_s / 3600
+    if age_h > max_h:
+        out.append(Anomaly(
+            "elevation-gate-silent",
+            f"Elevation gate last ran {int(age_h)}h ago (> {max_h}h). Quality gates die "
+            f"quietly: work is shipping unreviewed right now and looks the same as "
+            f"work that passed.", "critical"))
+    stale = [h for h in holds if h["verdict"] != "SHIP"]
+    if len(stale) >= 5:
+        out.append(Anomaly(
+            "elevation-holds-piling-up",
+            f"{len(stale)} elevation HOLDs are uncleared. A HOLD nobody reads is not a "
+            f"gate, it is a queue.", "warn"))
+    return out
+
+
 _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
@@ -1202,6 +1250,7 @@ _CHECKS = (
     _check_postal_auth,
     _check_service_heartbeats,
     _check_lead_funnel_absence,
+    _check_elevation_gate_absence,
     _check_alert_rail,
     _check_vercel_deployments,
     _check_github_workflows,
