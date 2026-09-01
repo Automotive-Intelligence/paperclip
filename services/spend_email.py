@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from services.llm_ledger import daily_totals, openrouter_usage, provider_delta, snapshot_provider
+from services.llm_ledger import daily_totals, openrouter_usage, provider_delta, snapshot_provider, tavily_usage
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,23 @@ def _provider_section(orx: dict | None) -> str:
     )
 
 
+def _tavily_section(tv: dict | None) -> str:
+    """Tavily search credits: plan burn + paygo exposure. Provider truth for the
+    prospect-enrichment pipeline's search spend."""
+    if not tv:
+        return ""
+    cap = tv.get("paygo_limit")
+    cap_txt = (f"capped at {cap}" if cap is not None else
+               "<b style='color:#c00;'>UNCAPPED</b> -- set a paygo limit in the Tavily dashboard")
+    pct = (100.0 * tv["plan_usage"] / tv["plan_limit"]) if tv.get("plan_limit") else 0
+    return (
+        "<h3 style='margin:22px 0 6px;'>Tavily search credits (provider truth)</h3>"
+        f"<div style='font-size:13px;'>Plan: <b>{tv['plan_usage']}/{tv['plan_limit']}</b> "
+        f"({pct:.0f}%) &middot; Paygo used this period: <b>{tv['paygo_usage']}</b> &middot; "
+        f"Paygo {cap_txt}</div>"
+    )
+
+
 def _openrouter_truth() -> dict | None:
     """Snapshot the provider counter and compute yesterday's delta. Never raises."""
     try:
@@ -111,6 +128,7 @@ def _build_html(totals: dict) -> str:
 <div style="color:#666;font-size:13px;">{totals['calls']} ledger-recorded API call(s)</div>
 {_gap_banner(totals)}
 {_provider_section(totals.get("openrouter"))}
+{_tavily_section(totals.get("tavily"))}
 {section("By persona", totals["by_persona"], "persona")}
 {section("By model", totals["by_model"], "model")}
 {client_section}
@@ -143,6 +161,10 @@ def send_daily_spend_email(day=None) -> bool:
         day = (datetime.now(timezone.utc) - timedelta(days=1)).date()
     totals = daily_totals(day)
     totals["openrouter"] = _openrouter_truth()
+    try:
+        totals["tavily"] = tavily_usage()
+    except Exception:
+        totals["tavily"] = None
 
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     if not api_key:

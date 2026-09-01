@@ -338,3 +338,30 @@ def provider_delta(provider: str, current_total: float, min_age_hours: float = 2
         return None
     prior, ts = float(rows[0][0]), rows[0][1]
     return {"spent_usd": max(0.0, current_total - prior), "since": ts}
+
+
+def tavily_usage() -> Optional[Dict[str, Any]]:
+    """Tavily search-credit truth from api.tavily.com/usage: plan usage/limit,
+    paygo usage, and whether paygo is CAPPED. Discovered 2026-08-31: August
+    closed at 4,920/4,000 credits and paygo (enabled, uncapped) silently billed
+    its first $7.76 overage -- nothing metered it. None if unreadable."""
+    import os
+    import requests
+    key = (os.environ.get("TAVILY_API_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        r = requests.get("https://api.tavily.com/usage",
+                         headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        if not r.ok:
+            return None
+        acct = (r.json() or {}).get("account") or {}
+        return {
+            "plan_usage": int(acct.get("plan_usage") or 0),
+            "plan_limit": int(acct.get("plan_limit") or 0),
+            "paygo_usage": int(acct.get("paygo_usage") or 0),
+            "paygo_limit": acct.get("paygo_limit"),  # None = UNCAPPED billing
+        }
+    except Exception as e:
+        logger.warning("[llm_ledger] tavily usage fetch failed: %s", e)
+        return None
