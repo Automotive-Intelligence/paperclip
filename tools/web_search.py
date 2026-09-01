@@ -24,6 +24,10 @@ def web_search_tool(query: str) -> str:
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return "ERROR: TAVILY_API_KEY environment variable is not set."
+    from services.tavily_guard import check_budget
+    allowed, reason = check_budget()
+    if not allowed:
+        return f"ERROR: Tavily search budget reached ({reason}). No search performed."
     try:
         client = TavilyClient(api_key=api_key)
         response = client.search(query, max_results=5, search_depth="advanced")

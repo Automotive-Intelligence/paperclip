@@ -127,6 +127,11 @@ def _tavily_search(query: str) -> str:
     api_key = (os.environ.get("TAVILY_API_KEY") or "").strip()
     if not api_key:
         return ""
+    from services.tavily_guard import check_budget
+    allowed, reason = check_budget()
+    if not allowed:
+        logging.warning(f"[Enricher] Tavily search budget reached ({reason}); skipping.")
+        return ""
     try:
         from tavily import TavilyClient
         client = TavilyClient(api_key=api_key)
