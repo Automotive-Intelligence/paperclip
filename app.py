@@ -1481,8 +1481,13 @@ def _execute_sales_pipeline(agent_name: str, raw_output: str, business_key: str)
                 "raw_preview": raw_preview,
             }
 
-        # ── Contact enrichment: fill gaps in email/phone/name via web search ──
-        prospects = enrich_prospects(prospects, only_missing_email=False)
+        # ── Contact enrichment: fill gaps via web search ──
+        # 2026-08-31 (Michael): enrich ONLY prospects missing an email. The old
+        # only_missing_email=False enriched EVERY parsed prospect (~160 Tavily
+        # searches/day, 4,920/4,000 August credits, paygo overage billed) while
+        # the pipeline's output wasn't passing the SDR gate downstream -- paying
+        # to polish rejects. Flip back only after gate-pass rate recovers.
+        prospects = enrich_prospects(prospects, only_missing_email=True)
 
         # ── Tech stack enrichment: score AI-readiness via Bloomberry (Ryan only) ──
         if agent_name == "ryan_data" and bloomberry_ready():
