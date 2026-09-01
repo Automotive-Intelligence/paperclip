@@ -51,3 +51,22 @@ def test_watchdog_skip_when_disabled_or_unreadable():
 
 def test_registered_in_checks():
     assert watchdog._check_search_credits in watchdog._CHECKS
+
+
+def test_zernio_section_shows_period_spend_and_runrate():
+    z = {"plan": "Usage-Based", "period_usd": 12.4, "x_usd": 0.2, "connected_accounts": 13}
+    html = E._zernio_section(z)
+    assert "$12.40" in html and "13 connected accounts" in html and "/mo run-rate" in html
+
+
+def test_zernio_section_empty_when_unreadable():
+    assert E._zernio_section(None) == ""
+
+
+def test_tavily_section_dollarizes_daily_delta():
+    from datetime import datetime, timezone
+    tv = _tv(plan=200, paygo=0)
+    tv.update({"delta_credits": 172, "delta_usd": 1.29,
+               "since": datetime(2026, 8, 30, 13, 0, tzinfo=timezone.utc)})
+    html = E._tavily_section(tv)
+    assert "172" in html and "$1.29" in html
