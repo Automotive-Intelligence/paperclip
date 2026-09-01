@@ -365,3 +365,32 @@ def tavily_usage() -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning("[llm_ledger] tavily usage fetch failed: %s", e)
         return None
+
+
+def zernio_spend() -> Optional[Dict[str, Any]]:
+    """Zernio billing truth from zernio.com/api/v1/usage. Decoded 2026-08-31:
+    the 07-29 usage-based migration bills ~$0.01 per connected account per HOUR
+    (~$7.40/account/month) -- August closed at $92.20 for ~13 mostly-idle
+    accounts vs ~$15/mo on the old plan. None if unreadable."""
+    import os
+    import requests
+    key = (os.environ.get("ZERNIO_API_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        r = requests.get("https://zernio.com/api/v1/usage",
+                         headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        if not r.ok:
+            return None
+        d = r.json() or {}
+        spend = d.get("spend") or {}
+        usage = d.get("usage") or {}
+        return {
+            "plan": d.get("planName"),
+            "period_usd": float(spend.get("currentPeriodCents") or 0) / 100.0,
+            "x_usd": float(spend.get("xSpendCents") or 0) / 100.0,
+            "connected_accounts": usage.get("connectedAccounts"),
+        }
+    except Exception as e:
+        logger.warning("[llm_ledger] zernio usage fetch failed: %s", e)
+        return None

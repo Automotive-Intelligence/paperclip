@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from services.llm_ledger import daily_totals, openrouter_usage, provider_delta, snapshot_provider, tavily_usage
+from services.llm_ledger import daily_totals, openrouter_usage, provider_delta, snapshot_provider, tavily_usage, zernio_spend
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +81,58 @@ def _tavily_section(tv: dict | None) -> str:
     cap_txt = (f"capped at {cap}" if cap is not None else
                "<b style='color:#c00;'>UNCAPPED</b> -- set a paygo limit in the Tavily dashboard")
     pct = (100.0 * tv["plan_usage"] / tv["plan_limit"]) if tv.get("plan_limit") else 0
+    day_line = ""
+    if tv.get("delta_usd") is not None:
+        day_line = (f"Searches since {tv['since'].strftime('%m-%d %H:%M')} UTC: "
+                    f"<b>{tv['delta_credits']}</b> (&asymp; ${tv['delta_usd']:.2f}) &middot; ")
     return (
         "<h3 style='margin:22px 0 6px;'>Tavily search credits (provider truth)</h3>"
-        f"<div style='font-size:13px;'>Plan: <b>{tv['plan_usage']}/{tv['plan_limit']}</b> "
+        f"<div style='font-size:13px;'>{day_line}Plan: <b>{tv['plan_usage']}/{tv['plan_limit']}</b> "
         f"({pct:.0f}%) &middot; Paygo used this period: <b>{tv['paygo_usage']}</b> &middot; "
         f"Paygo {cap_txt}</div>"
     )
+
+
+# Tavily unit economics: Project plan $30/4,000 credits = $7.50/1k; paygo bills
+# $8/1k. Blended-at-plan-rate is close enough for a daily dollar figure.
+_TAVILY_USD_PER_CREDIT = 0.0075
+_ZERNIO_USD_PER_ACCT_MONTH = 7.44  # ~$0.01/account-hour, decoded from the Aug receipt
+
+
+def _zernio_section(z: dict | None) -> str:
+    """Zernio: billed per connected account per HOUR since the 07-29 migration.
+    The lever is DISCONNECTING idle accounts, so the run-rate math is the point."""
+    if not z:
+        return ""
+    n = z.get("connected_accounts")
+    rate = (f" &middot; ~{n} connected accounts &asymp; "
+            f"<b>${n * _ZERNIO_USD_PER_ACCT_MONTH:.0f}/mo run-rate</b> "
+            f"(each disconnect saves ~${_ZERNIO_USD_PER_ACCT_MONTH:.2f}/mo)") if n else ""
+    return (
+        "<h3 style='margin:22px 0 6px;'>Zernio (provider truth)</h3>"
+        f"<div style='font-size:13px;'>This period: <b>${z['period_usd']:.2f}</b> "
+        f"(plan: {z.get('plan')}; X API ${z['x_usd']:.2f}){rate}. August closed at $92.20 "
+        f"-- billing is per connected account-hour; idle connections cost the same as active ones.</div>"
+    )
+
+
+def _tavily_truth() -> dict | None:
+    """Tavily usage + a snapshot-based daily credit delta, dollarized."""
+    try:
+        tv = tavily_usage()
+        if not tv:
+            return None
+        total = tv["plan_usage"] + tv["paygo_usage"]
+        delta = provider_delta("tavily-credits", float(total))
+        snapshot_provider("tavily-credits", float(total), None)
+        if delta is not None:
+            tv["delta_credits"] = int(delta["spent_usd"])  # field reuse: raw counter delta
+            tv["delta_usd"] = delta["spent_usd"] * _TAVILY_USD_PER_CREDIT
+            tv["since"] = delta["since"]
+        return tv
+    except Exception as e:
+        logger.warning("[spend_email] tavily truth failed: %s", e)
+        return None
 
 
 def _openrouter_truth() -> dict | None:
@@ -129,6 +175,7 @@ def _build_html(totals: dict) -> str:
 {_gap_banner(totals)}
 {_provider_section(totals.get("openrouter"))}
 {_tavily_section(totals.get("tavily"))}
+{_zernio_section(totals.get("zernio"))}
 {section("By persona", totals["by_persona"], "persona")}
 {section("By model", totals["by_model"], "model")}
 {client_section}
@@ -161,10 +208,11 @@ def send_daily_spend_email(day=None) -> bool:
         day = (datetime.now(timezone.utc) - timedelta(days=1)).date()
     totals = daily_totals(day)
     totals["openrouter"] = _openrouter_truth()
+    totals["tavily"] = _tavily_truth()
     try:
-        totals["tavily"] = tavily_usage()
+        totals["zernio"] = zernio_spend()
     except Exception:
-        totals["tavily"] = None
+        totals["zernio"] = None
 
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     if not api_key:
