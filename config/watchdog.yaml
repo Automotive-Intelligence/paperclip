@@ -181,3 +181,9 @@ acknowledged:
       SDR desk is in shadow mode by design (sends stay Michael-gated), so the
       agent send rail showing 0 emails while prospects fill is EXPECTED. Resurfaces
       2026-10-01; remove this ack at SDR go-live so the check guards the live rail.
+# search_credits: Tavily fuel gauge (2026-08-31: August closed 4920/4000, paygo
+# uncapped billed $7.76 silently). Warns at warn_pct of the plan; runbook points
+# at the paygo cap + the enrichment consumer.
+search_credits:
+  enabled: true
+  warn_pct: 90

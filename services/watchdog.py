@@ -948,6 +948,10 @@ _RUNBOOKS: Tuple[Tuple[str, str], ...] = (
     ("gh-watch-auth-dead", "The workflow-coverage token lacks actions:read or "
      "expired. Mint a token with repo + actions read scopes, then on paperclip: "
      "railway variables --set GH_ACTIONS_TOKEN=<token>."),
+    ("search-credits-", "Tavily credits running hot. Set/verify a paygo limit "
+     "in the Tavily dashboard (app.tavily.com -> billing); if the burn is "
+     "unwanted, the consumer is contact enrichment in _execute_sales_pipeline "
+     "(tools/contact_enricher.py) -- a Revenue-lane volume decision."),
     ("llm-credits-", "Top up at openrouter.ai/settings/credits (Michael's card). "
      "Until then every Slipstream blog fire 402-HOLDs silently across all "
      "brands. After top-up, re-fire overdue brands via POST "
@@ -1155,6 +1159,35 @@ def _check_llm_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
     return []
 
 
+def _check_search_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Tavily fuel gauge (2026-08-31: August closed 23% over plan and uncapped
+    paygo silently billed the overage -- nothing watched it). Warns when plan
+    usage crosses warn_pct; the human text carries the paygo-cap state because
+    an uncapped paygo turns any runaway into an unbounded bill. Unreadable API
+    -> skip (never false-alarm); missing key -> skip (not configured)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    sc = cfg.get("search_credits") or {}
+    if not sc.get("enabled", False):
+        return []
+    from services.llm_ledger import tavily_usage
+    tv = tavily_usage()
+    if not tv or not tv.get("plan_limit"):
+        return []
+    warn_pct = float(sc.get("warn_pct") or 90)
+    pct = 100.0 * tv["plan_usage"] / tv["plan_limit"]
+    if pct < warn_pct:
+        return []
+    cap = tv.get("paygo_limit")
+    cap_txt = ("uncapped -- overage bills without ceiling" if cap is None
+               else f"capped at {cap}")
+    return [Anomaly(
+        "search-credits-high",
+        f"Tavily plan usage {tv['plan_usage']}/{tv['plan_limit']} ({pct:.0f}%, "
+        f">= {warn_pct:.0f}%); paygo {cap_txt}. The prospect-enrichment pipeline "
+        f"is the main consumer.", "warn")]
+
+
 # Registry of every check the watchdog runs. Extend here as coverage grows.
 _CHECKS = (
     _check_brand_sites,
@@ -1173,6 +1206,7 @@ _CHECKS = (
     _check_vercel_deployments,
     _check_github_workflows,
     _check_llm_credits,
+    _check_search_credits,
 )
 
 
