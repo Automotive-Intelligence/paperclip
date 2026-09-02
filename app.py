@@ -2129,7 +2129,22 @@ def _run_tyler_crew():
     return str(result)
 
 
+def _prospecting_crews_enabled() -> bool:
+    """Kill switch for Tyler/Marcus/Ryan Data (2026-09-01, Sales Desk 30-day
+    accountability review). Found: ~50% of Tyler's parsed output was LLM
+    hallucination (fake phone numbers, placeholder names) despite explicit
+    anti-fabrication prompting; the 91 real prospects Marcus/Ryan Data DID
+    produce all sat untouched at stage NEW, never reviewed. "Pause the three
+    crews now." Fails CLOSED -- unset or anything but "1" means paused, same
+    discipline as SDR_FIRST_TOUCH_ENABLED. Resume only once a real data-
+    scrubbing verification pass exists (Michael has no time to hand-review)."""
+    return os.getenv("PROSPECTING_CREWS_ENABLED", "").strip() == "1"
+
+
 def run_tyler_prospecting():
+    if not _prospecting_crews_enabled():
+        return {"agent": "tyler", "status": "paused",
+                "reason": "PROSPECTING_CREWS_ENABLED != 1 (Sales Desk pause, 2026-09-01)"}
     max_icp_attempts = 3
     for attempt in range(1, max_icp_attempts + 1):
         try:
@@ -2340,6 +2355,9 @@ def run_marcus_prospecting(vertical_override: str | None = None):
     to force Marcus onto a specific vertical for this run, bypassing weekday rotation.
     Used by the /admin/run-now endpoint to sweep multiple verticals in one session.
     """
+    if not _prospecting_crews_enabled():
+        return {"agent": "marcus", "status": "paused",
+                "reason": "PROSPECTING_CREWS_ENABLED != 1 (Sales Desk pause, 2026-09-01)"}
     max_icp_attempts = 3
     for attempt in range(1, max_icp_attempts + 1):
         try:
@@ -2436,6 +2454,9 @@ def _run_ryan_data_crew():
 
 
 def run_ryan_data_prospecting():
+    if not _prospecting_crews_enabled():
+        return {"agent": "ryan_data", "status": "paused",
+                "reason": "PROSPECTING_CREWS_ENABLED != 1 (Sales Desk pause, 2026-09-01)"}
     max_icp_attempts = 3
     for attempt in range(1, max_icp_attempts + 1):
         try:
