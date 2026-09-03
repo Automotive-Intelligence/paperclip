@@ -59,7 +59,7 @@ brands:
     business_key: worshipdigital
     zernio_profile: "Calling Digital"   # WD routes through the legacy Calling Digital profile
     enabled: true
-    posts_per_run: 3   # SLOWED 2026-08-19 (Michael): was 7 (daily). 3 = Mon/Wed/Fri.
+    posts_per_run: 3   # SLOWED 2026-09-03 (Michael): was 7 (daily). 3 = Mon/Wed/Fri.
     platforms: ["facebook", "linkedin", "instagram", "x"]
     voice: "full-service SMB marketing agency for the 380 corridor; practical, results-first; NOT faith-centered"
     themes_note: "SMB marketing: reporting clarity, stop-boosting-random-posts, local lead gen. Not churchy."
@@ -73,7 +73,7 @@ brands:
     business_key: agentempire
     zernio_profile: "Agent Empire"
     enabled: true          # OAuth landed 2026-07-20 (FB + IG + YouTube connected); was zero-account
-    posts_per_run: 3   # SLOWED 2026-08-19 (Michael): was 7 (daily). 3 = Mon/Wed/Fri.
+    posts_per_run: 3   # SLOWED 2026-09-03 (Michael): was 7 (daily). 3 = Mon/Wed/Fri.
     platforms: ["facebook", "instagram"]   # connected text platforms; LinkedIn/X not connected, YouTube is not a text post
     voice: "builder field-notes, honest, plain; B2C for people building agent businesses; ledger-only numbers"
     # COMPLIANCE: no income/earnings/outcome claims (same discipline as Book'd); no "22 agents / 5 rivers / 3 CRMs" jargon in outward copy -- translate to builder value.
