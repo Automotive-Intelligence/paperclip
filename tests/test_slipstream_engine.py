@@ -278,3 +278,51 @@ def test_passing_post_does_buy_images():
         SE.run_brand("avi", token="t", dry_run=True)
 
     assert calls == [1], "a passing post must still get its images"
+
+
+# ---------------------------------------------------------------- cadence
+# Before this, the MWF cron published EVERY enabled brand on all three runs and
+# the only volume controls were "enabled: true" and "enabled: false". Slowing a
+# brand meant silencing it, which would also have killed the social rail riding
+# on its blog publishes.
+from datetime import date as _d          # noqa: E402
+from services.slipstream_engine import due_today  # noqa: E402
+
+_MON, _TUE, _WED, _THU, _FRI, _SAT = (_d(2026, 8, 24), _d(2026, 8, 25), _d(2026, 8, 26),
+                                      _d(2026, 8, 27), _d(2026, 8, 28), _d(2026, 8, 29))
+
+
+def test_mwf_is_still_three_days_a_week():
+    assert [due_today("mwf", x) for x in (_MON, _TUE, _WED, _THU, _FRI, _SAT)] == \
+           [True, False, True, False, True, False]
+
+
+def test_weekly_publishes_monday_only():
+    assert [due_today("weekly", x) for x in (_MON, _WED, _FRI)] == [True, False, False]
+
+
+def test_biweekly_skips_odd_iso_weeks_and_fires_on_even():
+    assert _MON.isocalendar()[1] % 2 == 1 and due_today("biweekly", _MON) is False
+    nxt = _d(2026, 8, 31)                      # ISO week 36, even
+    assert nxt.isocalendar()[1] % 2 == 0 and due_today("biweekly", nxt) is True
+
+
+def test_off_never_runs_on_the_cron():
+    assert not any(due_today("off", x) for x in (_MON, _WED, _FRI))
+
+
+def test_missing_or_unknown_cadence_keeps_the_old_mwf_behaviour():
+    # A brand with no cadence key must not silently change volume.
+    assert due_today(None, _WED) and due_today("", _WED) and due_today("nonsense", _WED)
+    assert not due_today("mwf", _TUE)
+
+
+def test_the_three_slowed_brands_are_weekly_and_the_rest_untouched():
+    import yaml, pathlib
+    c = yaml.safe_load(pathlib.Path("config/slipstream_brands.yaml").read_text())
+    b = c["brands"]
+    for k in ("worshipdigital", "bookd", "agentempire"):
+        assert b[k]["cadence"] == "weekly", k
+        assert b[k]["enabled"] is True, f"{k} must stay enabled, just slower"
+    for k in ("autointelligence", "aiphoneguy", "paperandpurpose"):
+        assert "cadence" not in b[k] or b[k]["cadence"] == "mwf", k

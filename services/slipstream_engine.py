@@ -166,6 +166,32 @@ def _brand_cfg(brand_key: str) -> dict:
     return merged
 
 
+def due_today(cadence: str, today=None) -> bool:
+    """Should a brand publish on this run?
+
+    The MWF job published EVERY enabled brand on every Mon/Wed/Fri, so the only
+    volume controls were "on" and "off". Michael asked to slow WD, Book'd and
+    Agent Empire without silencing them, which needs a middle setting.
+
+      mwf      3x/week, Mon+Wed+Fri (the default, unchanged)
+      weekly   1x/week, Mondays only
+      biweekly 1x/fortnight, Mondays of even ISO weeks
+      off      never on the cron; run_brand still works by hand
+    """
+    from zoneinfo import ZoneInfo
+    d = today or datetime.now(ZoneInfo("America/Chicago")).date()
+    c = (cadence or "mwf").strip().lower()
+    if c == "off":
+        return False
+    if c == "mwf":
+        return d.weekday() in (0, 2, 4)
+    if c == "weekly":
+        return d.weekday() == 0
+    if c == "biweekly":
+        return d.weekday() == 0 and d.isocalendar()[1] % 2 == 0
+    return d.weekday() in (0, 2, 4)      # unknown value behaves like the default
+
+
 def _next_topic(cfg: dict, token: str) -> str:
     """Read the brand's queue via GitHub REST and return the first unchecked topic."""
     # NOT cfg.get("queue_repo", cfg["repo"]): a .get default is evaluated

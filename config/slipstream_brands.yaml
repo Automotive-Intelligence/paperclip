@@ -99,6 +99,9 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/aipg_topics.md
   agentempire:
+    # SLOWED 2026-08-19 (Michael): was publishing 3x/week on the MWF cron.
+    # weekly = Mondays only. Set back to mwf to restore 3x/week.
+    cadence: weekly
     repo: salesdroid/buildagentempire
     vercel_project_id: prj_mhJYWyIm1arV3RQhQIlbmfvYG6ot
     domain: buildagentempire.com
@@ -111,6 +114,9 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bae_topics.md
   worshipdigital:
+    # SLOWED 2026-08-19 (Michael): was publishing 3x/week on the MWF cron.
+    # weekly = Mondays only. Set back to mwf to restore 3x/week.
+    cadence: weekly
     repo: salesdroid/worship-digital        # NOTE: worship-digital, NOT worship-digital-site
     vercel_project_id: prj_6IuzlVBshSxrAeIny3Q6CiJJxSm5   # unused while auto_merge:false, wired for when it flips
     domain: worshipdigital.co
@@ -130,6 +136,9 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/wd_topics.md
   bookd:
+    # SLOWED 2026-08-19 (Michael): was publishing 3x/week on the MWF cron.
+    # weekly = Mondays only. Set back to mwf to restore 3x/week.
+    cadence: weekly
     # LIVE 2026-08-14 (CMO): repointed to the real site + the tsx_post rail.
     # bookd.cx serves salesdroid/bookd-marketing-site on Vercel (Cloudflare proxies
     # the .vercel.app origin). Its blog renders per-post TSX modules registered in

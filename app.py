@@ -3214,9 +3214,17 @@ def _run_slipstream_mwf():
     """Railway Slipstream engine: one full-Slipstream post per ENABLED brand,
     auto-published on a green Vercel build. Replaces the laptop blog engine,
     brand by brand (config/slipstream_brands.yaml enabled flag)."""
-    from services.slipstream_engine import run_brand, _load_cfg
+    from services.slipstream_engine import run_brand, _load_cfg, due_today
     for brand_key, bcfg in (_load_cfg().get("brands") or {}).items():
         if not bcfg.get("enabled"):
+            continue
+        # Per-brand CADENCE. Before this, every enabled brand published on all
+        # three MWF runs and the only controls were on and off. Slower brands
+        # set cadence: weekly / biweekly / off in slipstream_brands.yaml.
+        cadence = bcfg.get("cadence", "mwf")
+        if not due_today(cadence):
+            logging.info("[slipstream] %s skipped: cadence=%s, not due today",
+                         brand_key, cadence)
             continue
         try:
             result = run_brand(brand_key)
