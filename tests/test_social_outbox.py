@@ -126,3 +126,10 @@ def test_blog_engine_export_skips_the_loader():
     # tsx_post serves hero images from /img/, not /blog/ -- a wrong path here is a
     # dead image link in a pack he is posting by hand.
     assert all("/img/my-slug-hero.png" in i["image_url"] for i in items)
+
+
+def test_the_pack_wrapper_itself_carries_no_em_dash():
+    # The no-em-dash rule covers everything Michael reads, not only post copy.
+    # The first version of this renderer put one in every heading.
+    md = so.render_pack("Agent Empire", "week of 2026-09-07", _items())
+    assert "—" not in md and "–" not in md

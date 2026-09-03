@@ -52,11 +52,11 @@ def _put(path: str, raw: bytes, message: str, token: str) -> None:
 def render_pack(brand_display: str, label: str, items: List[Dict[str, Any]]) -> str:
     """Paste-ready markdown. One block per post per platform, in posting order,
     each carrying its suggested time, its image, and nothing else to decode."""
-    out = [f"# {brand_display} — social pack, {label}", "",
+    out = [f"# {brand_display}: social pack, {label}", "",
            "Posted BY HAND. Nothing here was sent to Zernio.",
            "Copy the block, attach the named image, post in the window shown.", ""]
     for n, it in enumerate(sorted(items, key=lambda x: (x.get("when") or "", x.get("platform", ""))), 1):
-        out.append(f"## {n}. {it.get('platform', '?').upper()} — {it.get('when') or 'any time'}")
+        out.append(f"## {n}. {it.get('platform', '?').upper()}  |  {it.get('when') or 'any time'}")
         img = it.get("image_file") or it.get("image_url")
         out.append(f"Image: {img}" if img else "Image: none (text only)")
         out.append("")
