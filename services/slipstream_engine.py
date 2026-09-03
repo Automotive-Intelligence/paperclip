@@ -128,6 +128,24 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
         if not jobs:
             logger.warning("[slipstream] no social drafts to distribute for %s (%s)", brand, slug)
             return {"ok": False, "note": "no social drafts"}
+        # MANUAL brands (social_mode: export) never touch Zernio. The pack goes
+        # to the outbox for Michael to post by hand; returning before the loader
+        # is what actually saves the money.
+        if str(cfg.get("social_mode") or "zernio").lower() == "export":
+            from services.social_outbox import export
+            tok = os.environ.get("SLIPSTREAM_GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+            if not tok:
+                logger.error("[slipstream] %s is export-mode but no GH token; pack NOT written "
+                             "for %s -- these posts would be silently lost", brand, slug)
+                return {"ok": False, "error": "export mode: no github token"}
+            items = [{"platform": j["platform"], "when": j["scheduled_for"].replace("T", " "),
+                      "text": j["content"], "image_url": (j.get("media_urls") or [None])[0]}
+                     for j in jobs]
+            r = export(brand, cfg.get("display_name", brand),
+                       f"{datetime.now(timezone.utc):%Y-%m-%d}-{slug}", items, tok)
+            logger.info("[slipstream] %s EXPORTED %d post(s) to %s (manual posting, "
+                        "no zernio)", brand, r["posts"], r["folder"])
+            return {"ok": True, "exported": True, **r}
         result = run_social_load(jobs, commit=True)
         if result.get("ok"):
             logger.info("[slipstream] social scheduled for %s (%s): counts=%s",

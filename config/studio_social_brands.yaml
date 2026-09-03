@@ -55,6 +55,10 @@ brands:
       - "see how it works / book a discovery call at https://theaiphoneguy.com/discovery"
       - "get in touch at https://theaiphoneguy.com/contact"
   worship_digital:
+    # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
+    # posted BY HAND. export = produce + gate as usual, then write a paste-ready
+    # pack to social_outbox/ and make ZERO Zernio calls. Set back to zernio to automate.
+    social_mode: export
     display_name: "Worship Digital"
     business_key: worshipdigital
     zernio_profile: "Calling Digital"   # WD routes through the legacy Calling Digital profile
@@ -69,6 +73,10 @@ brands:
     allowed_ctas:
       - "request a free marketing review at https://worshipdigital.co"
   agent_empire:
+    # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
+    # posted BY HAND. export = produce + gate as usual, then write a paste-ready
+    # pack to social_outbox/ and make ZERO Zernio calls. Set back to zernio to automate.
+    social_mode: export
     display_name: "Agent Empire"
     business_key: agentempire
     zernio_profile: "Agent Empire"

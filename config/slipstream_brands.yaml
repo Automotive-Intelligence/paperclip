@@ -99,6 +99,10 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/aipg_topics.md
   agentempire:
+    # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
+    # posted BY HAND. export = produce + gate as usual, then write a paste-ready
+    # pack to social_outbox/ and make ZERO Zernio calls. Set back to zernio to automate.
+    social_mode: export
     # SLOWED 2026-09-03 (Michael): was publishing 3x/week on the MWF cron.
     # weekly = Mondays only. Set back to mwf to restore 3x/week.
     cadence: weekly
@@ -114,6 +118,10 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bae_topics.md
   worshipdigital:
+    # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
+    # posted BY HAND. export = produce + gate as usual, then write a paste-ready
+    # pack to social_outbox/ and make ZERO Zernio calls. Set back to zernio to automate.
+    social_mode: export
     # SLOWED 2026-09-03 (Michael): was publishing 3x/week on the MWF cron.
     # weekly = Mondays only. Set back to mwf to restore 3x/week.
     cadence: weekly
@@ -136,6 +144,10 @@ brands:
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/wd_topics.md
   bookd:
+    # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
+    # posted BY HAND. export = produce + gate as usual, then write a paste-ready
+    # pack to social_outbox/ and make ZERO Zernio calls. Set back to zernio to automate.
+    social_mode: export
     # SLOWED 2026-09-03 (Michael): was publishing 3x/week on the MWF cron.
     # weekly = Mondays only. Set back to mwf to restore 3x/week.
     cadence: weekly

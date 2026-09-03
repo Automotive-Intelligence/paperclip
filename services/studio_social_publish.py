@@ -120,3 +120,40 @@ def build_jobs(
                 "account_id": aid, "media_urls": media,
             })
     return jobs, skips
+
+
+def build_export_items(
+    brand_cfg: Dict[str, Any],
+    posts: List[Dict[str, Any]],
+    week_monday: str,
+    stagger: Dict[str, Dict[str, str]],
+) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str, str]]]:
+    """Same day/time grid as build_jobs, for brands Michael posts BY HAND.
+
+    Two deliberate differences from build_jobs, both because no Zernio account is
+    involved: a platform with no connected account is still exported (he can post
+    from any login he has), and a missing stagger slot falls back to the file-103
+    default rather than dropping the post. The X length guard is KEPT: an over-
+    length post is just as broken pasted in by hand as it is via the API.
+    """
+    display = brand_cfg["display_name"].lower()
+    grid = stagger.get(display, {})
+    offsets = week_day_offsets(len(posts))
+    items: List[Dict[str, Any]] = []
+    skips: List[Tuple[str, str, str]] = []
+    from datetime import date, timedelta
+    y, m, d = (int(x) for x in week_monday.split("-"))
+    monday = date(y, m, d)
+    for i, post in enumerate(posts):
+        day = (monday + timedelta(days=offsets[i % len(offsets)])).isoformat()
+        for conf_plat, text in post["platforms"].items():
+            zplat = _PLATFORM_TO_ZERNIO.get(conf_plat, conf_plat)
+            if zplat == "twitter" and not x_within_limit(text):
+                skips.append((post["key"], conf_plat,
+                              f"X over {_X_LIMIT} (t.co-counted {tco_length(text)})"))
+                continue
+            hhmm = grid.get(zplat) or "09:00"
+            items.append({"key": post["key"], "platform": conf_plat, "text": text,
+                          "when": f"{day} {hhmm} CT",
+                          "image_file": f"{post['key']}.png"})
+    return items, skips

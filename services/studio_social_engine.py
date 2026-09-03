@@ -201,6 +201,26 @@ def schedule_brand(brand_cfg: dict, produced: Dict[str, Any], week_monday: str,
     """Upload each kept post's reviewed image, resolve the brand's Zernio accounts,
     build jobs (stagger + X-280 guard), and hand them to the ONE loader."""
     from tools.studio_publish import STAGGER
+    # MANUAL brands (social_mode: export) short-circuit BEFORE account resolution
+    # and before _upload_media. Those two calls are the Zernio spend; a pack that
+    # still uploaded its images would bill exactly the same while looking free.
+    if str(brand_cfg.get("social_mode") or "zernio").lower() == "export":
+        from services.studio_social_publish import build_export_items
+        from services.social_outbox import export
+        import os as _os
+        items, skips = build_export_items(brand_cfg, produced["kept"], week_monday, STAGGER)
+        if not items:
+            return {"scheduled": [], "skips": skips, "held": True,
+                    "reason": "export mode: no postable items"}
+        tok = _os.environ.get("SLIPSTREAM_GH_TOKEN") or _os.environ.get("GITHUB_TOKEN") or ""
+        if not tok:
+            return {"scheduled": [], "skips": skips, "held": True,
+                    "reason": "export mode: no github token, pack NOT written"}
+        images = {f"{k}.png": png for k, png in (produced.get("media_bytes") or {}).items()}
+        r = export(brand_cfg["business_key"], brand_cfg["display_name"],
+                   f"week-of-{week_monday}", items, tok, images=images)
+        return {"scheduled": [], "skips": skips, "held": False, "ok": True,
+                "exported": True, "outbox": r["folder"], "counts": {"exported": len(items)}}
     accounts = resolve_accounts(profiles, accts, brand_cfg["zernio_profile"])
     if not accounts:
         return {"scheduled": [], "skips": [], "held": True,
@@ -329,7 +349,10 @@ def run_week(*, brands: Optional[List[str]] = None, commit: bool = False,
             logger.exception("[studio-social] %s schedule failed", bkey)
             sched = {"held": True, "reason": f"schedule error: {e}", "scheduled": [], "skips": []}
         per_brand[bkey] = {"cfg": bcfg, **produced, **sched}
-        if not sched.get("held") and sched.get("scheduled"):
+        # An exported brand produced real output even though it scheduled nothing.
+        # Without this the verify step reads a full export-only run as "nothing
+        # shipped" and refuses to stage the batch.
+        if not sched.get("held") and (sched.get("scheduled") or sched.get("exported")):
             scheduled_any = True
 
     batch_md = _batch_md(week_monday, per_brand)
