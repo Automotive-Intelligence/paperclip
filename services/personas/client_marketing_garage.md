@@ -20,6 +20,6 @@ Post-MSA delivery for active CD/WD clients — primarily Paper & Purpose (Miriam
 - Buffer push via `~/paperclip/scripts/pp_push_social_ideas.py`.
 
 ## Brand asset library
-`~/Documents/GitHub/paperclip/assets/pp_images/` — full brand kit + photoshoot + 4 logo variants.
+`~/paperclip/assets/pp_images/` — full brand kit + photoshoot + 4 logo variants.
 
 Deliberate. Compliance + voice gates matter more than speed.

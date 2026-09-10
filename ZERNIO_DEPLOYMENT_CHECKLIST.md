@@ -95,7 +95,7 @@ For **Automotive Intelligence** profile:
 
 ### 2.5 Verify Setup Locally
 ```bash
-cd /Users/michaelrodriguez/Documents/GitHub/paperclip
+cd /Users/michaelrodriguez/paperclip
 
 # Run verification script
 python3 verify_zernio_setup.py

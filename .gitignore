@@ -84,3 +84,9 @@ Avo/
 !tests/test_watchdog_*.py
 # CMO Daily reality-report + override handler tests must be tracked (feature deliverable)
 !tests/test_cmo_*.py
+
+# Paper & Purpose client brand kit: 48MB of photos, rescued from the old
+# ~/Documents/GitHub clone 2026-09-09. Local-only by design, mirrored in
+# Higgsfield via assets/pp_images/MANIFEST.json. Do not bloat the repo with it.
+assets/pp_images/
+assets/*.pdf
