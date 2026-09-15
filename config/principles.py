@@ -286,6 +286,48 @@ _OPERATING_FOUNDATION: str = (
 )
 
 
+def _now_block() -> str:
+    """The current date and time, computed AT CALL TIME.
+
+    Deliberately not a module-level constant. This process runs continuously on
+    Railway for days at a stretch, so a timestamp captured at import would freeze
+    at the deploy time, and every scheduled job would then reason from a date that
+    drifts further wrong the longer the service stays up. That is the same silent
+    staleness the rest of this system is built to catch.
+
+    Without this, a seat has no way to know today's date and infers one from its
+    training data or from whatever dates happen to appear in a state file. Both
+    are wrong, and neither announces that it is wrong.
+
+    Imports are local on purpose: this module is otherwise a pure constants file
+    with no imports, and it is loaded into ~20 agent modules. The fallback must not
+    depend on a logger for the same reason -- a failure here would break every
+    agent prompt in the org, so it degrades to an honest message instead.
+    """
+    try:
+        import os
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo(os.getenv("APP_TIMEZONE", "America/Chicago")))
+        stamp = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+        return (
+            "RIGHT NOW\n"
+            "=========\n"
+            f"The current date and time is {stamp}.\n"
+            "This is the real clock. Do not infer today's date from your training data\n"
+            "or from dates you find in state files, which may be months stale. When you\n"
+            "write a date anywhere use this one, and prefer absolute dates over\n"
+            '"yesterday" or "last week" so the next reader is not misled.\n'
+        )
+    except Exception:
+        return (
+            "RIGHT NOW\n"
+            "=========\n"
+            "The current date could NOT be determined. Say so rather than guessing,\n"
+            "and do not state a date as fact in any output.\n"
+        )
+
+
 def foundation_header() -> str:
     """Return the prompt-ready servant-leader foundation for persona prompts.
 
@@ -305,6 +347,7 @@ def foundation_header() -> str:
     single composition point — extend it here rather than editing call sites.
     """
     return (
+        f"{_now_block()}\n"
         f"{_OPERATING_FOUNDATION}\n\n"
         f"WHY WE EXIST\n"
         f"============\n"
