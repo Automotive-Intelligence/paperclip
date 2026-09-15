@@ -3504,7 +3504,14 @@ scheduler.add_job(_avo_sched_michael_meta, CronTrigger(hour=8, minute=4, timezon
 # All 3 agents run every window so RevOps has fresh pipeline by morning
 SALES_HOURS = [0, 4, 8, 10, 12, 14, 16]
 
-for hour in SALES_HOURS:
+# Do not schedule what is switched off. The Sales Desk pause (2026-09-01) set
+# PROSPECTING_CREWS_ENABLED != 1, so these three crews returned {"status":
+# "paused"} on every fire -- 147 runs/week whose entire output was a report
+# that they were disabled (2026-09-15 agent-output triage). Registering the
+# jobs anyway made a paused system look busy on every dashboard. When the Desk
+# unpauses, set PROSPECTING_CREWS_ENABLED=1 and the jobs register themselves
+# on the next deploy.
+for hour in (SALES_HOURS if _prospecting_crews_enabled() else []):
     scheduler.add_job(
         _avo_sched_tyler,
         CronTrigger(hour=hour, minute=30, timezone=CST),

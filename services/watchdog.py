@@ -1309,6 +1309,49 @@ def _check_anthropic_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
         "warn")]
 
 
+def _check_agent_output(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """Agents that RUN but never PRODUCE. Activity was always measured here;
+    output never was, so ~315 of 867 weekly runs emitted nothing usable before
+    anyone noticed (2026-09-15 triage): agents reporting they are paused 49x a
+    week, agents whose whole output is a completion stamp, agents failing the
+    same gate every run. A scheduled job that cannot produce is worse than a
+    missing one, because it looks alive on every dashboard.
+    Config: monitors.agent_output_days (default 7; 0 disables)."""
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mon = cfg.get("monitors") or {}
+    raw = mon.get("agent_output_days")
+    days = int(raw) if raw is not None else 7
+    if days <= 0:
+        return []
+    try:
+        from services.agent_output_audit import audit
+        results = audit(days)
+    except Exception as e:  # never false-alarm on a DB blip
+        logger.warning("[watchdog] agent output audit failed, skipping: %s", e)
+        return []
+    out: List[Anomaly] = []
+    dead = [r for r in results if r["verdict"] in ("PAUSED", "FAILING", "IDLE")]
+    if dead:
+        wasted = sum(r["runs"] for r in dead)
+        names = ", ".join(f"{r['agent']}({r['verdict'].lower()},{r['runs']})" for r in dead[:8])
+        out.append(Anomaly(
+            "agent-produces-nothing",
+            f"{len(dead)} scheduled agents produced nothing usable in {days}d "
+            f"({wasted} wasted runs): {names}. Unregister the job or fix the agent; "
+            f"a job that only logs that it is paused should not be scheduled.",
+            "warn"))
+    garbled = [r for r in results if r["verdict"] == "GARBLED"]
+    if garbled:
+        names = ", ".join(f"{r['agent']}({r['real']}/{r['runs']})" for r in garbled[:8])
+        out.append(Anomaly(
+            "agent-output-degraded",
+            f"{len(garbled)} agents emit wrong-language, stale-dated or unfilled-template "
+            f"output on most runs: {names}. Model or prompt drift.",
+            "warn"))
+    return out
+
+
 _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
@@ -1324,6 +1367,7 @@ _CHECKS = (
     _check_lead_funnel_absence,
     _check_elevation_gate_absence,
     _check_alert_rail,
+    _check_agent_output,
     _check_vercel_deployments,
     _check_github_workflows,
     _check_llm_credits,
