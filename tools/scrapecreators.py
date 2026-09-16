@@ -1,23 +1,31 @@
-"""tools/keyapi.py — KeyAPI social intelligence tools for Marcus.
+"""tools/scrapecreators.py - ScrapeCreators social intelligence tools for Marcus.
 
-Wraps KeyAPI's REST API (https://api.keyapi.ai/v1) so Marcus can autonomously
-research influencers, competitor brands, and audience signals across TikTok,
-Instagram, Facebook, and YouTube during a CrewAI run.
+Wraps the ScrapeCreators REST API (https://api.scrapecreators.com) so Marcus can
+autonomously research influencers, competitor brands, and audience signals across
+TikTok, Instagram, Facebook, and YouTube during a CrewAI run.
 
-Auth: Authorization: Bearer <KEYAPI_API_KEY>
-Cost: ~1 credit per call — see https://www.keyapi.ai for current pricing.
+Replaces tools/keyapi.py. KeyAPI repriced to a $189/mo minimum in September 2026
+against an actual burn of roughly 20,000 credits per quarter. ScrapeCreators is
+pure pay-as-you-go ($47 per 25,000 credits, credits never expire, cached responses
+are free), so the same six tools cost materially less with no monthly floor.
 
-Tools exposed (each is a CrewAI @tool):
+Auth: x-api-key: <SCRAPECREATORS_API_KEY>
+Cost: 1 credit per call on these endpoints. Every response carries
+`credits_remaining`, which this wrapper surfaces in the tool output so runaway
+burn is visible in the Crew transcript rather than only on a dashboard.
+
+Tools exposed (each is a CrewAI @tool), signature-compatible with the keyapi
+versions they replace:
   - research_tiktok_creator(handle)
-  - search_tiktok_creators(keyword, max_results=10)
+  - search_tiktok_creators(keyword, region="US", offset="0")
   - research_instagram_creator(handle)
-  - search_instagram_creators(keyword, max_results=10)
+  - search_instagram_creators(keyword)
   - research_youtube_channel(channel_handle_or_url)
   - research_facebook_page(page_url)
 
 Per-process credit budget: the wrapper enforces a soft cap via the
-KEYAPI_MAX_CALLS_PER_PROCESS env var (default 50) so a runaway Crew can't
-drain the account. Calls beyond the cap return an error string.
+SCRAPECREATORS_MAX_CALLS_PER_PROCESS env var (default 50) so a runaway Crew
+cannot drain the account. Calls beyond the cap return an error string.
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from typing import Any
 
@@ -33,20 +42,24 @@ from crewai.tools import tool
 
 logger = logging.getLogger(__name__)
 
-KEYAPI_BASE_URL = "https://api.keyapi.ai/v1"
+SCRAPECREATORS_BASE_URL = "https://api.scrapecreators.com"
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_CALLS = 50
+
+# Envelope keys ScrapeCreators wraps every payload in. Stripped before summarizing
+# so the LLM sees the actual record and not bookkeeping fields.
+_ENVELOPE_KEYS = {"success", "credits_remaining", "credits_charged"}
 
 _call_count = 0
 _call_lock = threading.Lock()
 
 
 def _get_api_key() -> str | None:
-    return (os.environ.get("KEYAPI_API_KEY") or "").strip() or None
+    return (os.environ.get("SCRAPECREATORS_API_KEY") or "").strip() or None
 
 
 def _max_calls() -> int:
-    raw = os.environ.get("KEYAPI_MAX_CALLS_PER_PROCESS", "").strip()
+    raw = os.environ.get("SCRAPECREATORS_MAX_CALLS_PER_PROCESS", "").strip()
     try:
         n = int(raw) if raw else DEFAULT_MAX_CALLS
         return max(1, n)
@@ -60,69 +73,131 @@ def _check_and_increment_budget() -> str | None:
     with _call_lock:
         if _call_count >= _max_calls():
             return (
-                f"ERROR: KeyAPI per-process call budget exceeded "
-                f"({_call_count}/{_max_calls()}). Raise KEYAPI_MAX_CALLS_PER_PROCESS "
-                f"or restart the worker if this was an intentional research run."
+                f"ERROR: ScrapeCreators per-process call budget exceeded "
+                f"({_call_count}/{_max_calls()}). Raise "
+                f"SCRAPECREATORS_MAX_CALLS_PER_PROCESS or restart the worker if "
+                f"this was an intentional research run."
             )
         _call_count += 1
         return None
 
 
-def _keyapi_get(path: str, params: dict[str, Any]) -> dict[str, Any] | str:
-    """Low-level GET to api.keyapi.ai. Returns parsed JSON dict on success,
-    or a human-readable error string on failure (suitable for returning to
-    the LLM directly). Never raises."""
+def _sc_get(path: str, params: dict[str, Any]) -> dict[str, Any] | str:
+    """Low-level GET to api.scrapecreators.com. Returns the parsed JSON dict on
+    success, or a human-readable error string on failure (suitable for returning
+    to the LLM directly). Never raises."""
     api_key = _get_api_key()
     if not api_key:
-        return "ERROR: KEYAPI_API_KEY environment variable is not set."
+        return "ERROR: SCRAPECREATORS_API_KEY environment variable is not set."
 
     over_budget = _check_and_increment_budget()
     if over_budget:
         return over_budget
 
-    url = f"{KEYAPI_BASE_URL}{path}"
-    headers = {"Authorization": f"Bearer {api_key}"}
+    url = f"{SCRAPECREATORS_BASE_URL}{path}"
+    headers = {"x-api-key": api_key}
 
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
     except requests.exceptions.Timeout:
-        return f"ERROR: KeyAPI timeout on {path} (>{DEFAULT_TIMEOUT}s)"
+        return f"ERROR: ScrapeCreators timeout on {path} (>{DEFAULT_TIMEOUT}s)"
     except requests.exceptions.RequestException as e:
-        return f"ERROR: KeyAPI request failed on {path}: {type(e).__name__}: {e}"
+        return f"ERROR: ScrapeCreators request failed on {path}: {type(e).__name__}: {e}"
 
-    if resp.status_code == 401:
-        return "ERROR: KeyAPI rejected the API key (401). Verify KEYAPI_API_KEY is valid."
+    if resp.status_code in (401, 403):
+        return (
+            f"ERROR: ScrapeCreators rejected the API key ({resp.status_code}). "
+            "Verify SCRAPECREATORS_API_KEY is valid."
+        )
     if resp.status_code == 402:
-        return "ERROR: KeyAPI account out of credits (402). Top up at https://keyapi.ai/app/dashboard."
+        return (
+            "ERROR: ScrapeCreators account out of credits (402). "
+            "Top up at https://scrapecreators.com."
+        )
     if resp.status_code == 429:
-        return "ERROR: KeyAPI rate limit hit (429). Slow down or upgrade tier."
+        return "ERROR: ScrapeCreators rate limit hit (429). Slow down and retry."
     if resp.status_code >= 400:
-        return f"ERROR: KeyAPI returned HTTP {resp.status_code} on {path}: {resp.text[:300]}"
+        return (
+            f"ERROR: ScrapeCreators returned HTTP {resp.status_code} on {path}: "
+            f"{resp.text[:300]}"
+        )
 
     try:
         body = resp.json()
     except ValueError:
-        return f"ERROR: KeyAPI returned non-JSON on {path}: {resp.text[:300]}"
+        return f"ERROR: ScrapeCreators returned non-JSON on {path}: {resp.text[:300]}"
 
-    api_code = body.get("code")
-    if api_code not in (0, None):
-        msg = body.get("message", "unknown error")
-        return f"ERROR: KeyAPI logical error on {path} (code={api_code}): {msg}"
+    if not isinstance(body, dict):
+        return f"ERROR: ScrapeCreators returned unexpected payload on {path}: {str(body)[:300]}"
+
+    # The API returns HTTP 200 with success=false for "account doesn't exist"
+    # style misses. Fail loudly so the agent does not read an empty dict as a
+    # real result.
+    if body.get("success") is False:
+        msg = body.get("message") or body.get("error") or "unknown error"
+        return f"ERROR: ScrapeCreators could not fulfil {path}: {msg}"
+
+    # Some endpoints return success=true with a "not found" message and no data.
+    msg = str(body.get("message") or "")
+    if msg and re.search(r"doesn'?t exist|not found|no results", msg, re.I):
+        return f"ERROR: ScrapeCreators found nothing for {path}: {msg}"
 
     return body
 
 
 def _summarize(payload: dict[str, Any] | str, label: str) -> str:
-    """Render the result as a tight, LLM-friendly string. Avoids dumping huge
-    raw JSON blobs that blow context. If the call failed, returns the error
-    string verbatim."""
+    """Render the result as a tight, LLM-friendly string. Strips the response
+    envelope, avoids dumping huge raw JSON blobs that blow context, and appends
+    the remaining credit balance so burn stays visible in the run transcript.
+    If the call failed, returns the error string verbatim."""
     if isinstance(payload, str):
         return payload
-    data = payload.get("data") or {}
-    summary = json.dumps(data, indent=2, default=str)
+
+    remaining = payload.get("credits_remaining")
+    charged = payload.get("credits_charged")
+
+    # Prefer a nested "data" object when present (Instagram), else use every
+    # non-envelope key (TikTok, YouTube, Facebook, the search endpoints).
+    inner = payload.get("data")
+    if not isinstance(inner, dict) or not inner:
+        inner = {k: v for k, v in payload.items() if k not in _ENVELOPE_KEYS}
+
+    summary = json.dumps(inner, indent=2, default=str)
     if len(summary) > 8000:
         summary = summary[:8000] + "\n\n[...truncated for context budget...]"
-    return f"{label}\n\n{summary}"
+
+    footer = ""
+    if remaining is not None:
+        footer = f"\n\n[ScrapeCreators: {charged or 0} credit(s) charged, {remaining} remaining]"
+
+    return f"{label}\n\n{summary}{footer}"
+
+
+def _youtube_identifier(raw: str) -> str:
+    """Normalize a YouTube handle or URL down to what the API accepts.
+
+    The /v1/youtube/channel endpoint takes a bare handle and concatenates
+    anything URL-shaped onto its own base, producing a bogus lookup. So pull the
+    @handle or the UC... channel id out of a URL before sending it.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("http"):
+        m = re.search(r"/(@[A-Za-z0-9._\-]+)", raw)
+        if m:
+            return m.group(1)
+        m = re.search(r"/channel/(UC[A-Za-z0-9_\-]+)", raw)
+        if m:
+            return m.group(1)
+        # Legacy /c/Name or /user/Name forms.
+        m = re.search(r"/(?:c|user)/([A-Za-z0-9._\-]+)", raw)
+        if m:
+            return "@" + m.group(1)
+        return raw
+    if raw.startswith("UC"):
+        return raw
+    return raw if raw.startswith("@") else "@" + raw.lstrip("@")
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +220,7 @@ def research_tiktok_creator(handle: str) -> str:
     handle = (handle or "").strip().lstrip("@")
     if not handle:
         return "ERROR: handle is required (TikTok username without @)."
-    result = _keyapi_get("/tiktok/influencer/detail", {"unique_id": handle})
+    result = _sc_get("/v1/tiktok/profile", {"handle": handle})
     return _summarize(result, f"TIKTOK CREATOR PROFILE: @{handle}")
 
 
@@ -169,10 +244,10 @@ def search_tiktok_creators(keyword: str, region: str = "US", offset: str = "0") 
     if not keyword:
         return "ERROR: keyword is required."
     region = (region or "US").strip().upper() or "US"
-    result = _keyapi_get(
-        "/tiktok/influencer/search",
-        {"keyword": keyword, "region": region, "offset": offset or "0"},
-    )
+    params: dict[str, Any] = {"query": keyword, "region": region}
+    if offset and str(offset) != "0":
+        params["cursor"] = offset
+    result = _sc_get("/v1/tiktok/search/users", params)
     return _summarize(result, f"TIKTOK CREATOR SEARCH: keyword={keyword!r} region={region}")
 
 
@@ -195,7 +270,7 @@ def research_instagram_creator(handle: str) -> str:
     handle = (handle or "").strip().lstrip("@")
     if not handle:
         return "ERROR: handle is required (Instagram username without @)."
-    result = _keyapi_get("/instagram/fetch_user_info", {"username": handle})
+    result = _sc_get("/v1/instagram/profile", {"handle": handle})
     return _summarize(result, f"INSTAGRAM USER PROFILE: @{handle}")
 
 
@@ -205,7 +280,6 @@ def search_instagram_creators(keyword: str) -> str:
 
     Use this to find potential influencers or brand pages in a niche when you
     don't know specific handles. Pair with research_instagram_creator for deep dives.
-    Costs 2 credits per call.
 
     Args:
         keyword: Search term (e.g., 'faith journaling').
@@ -215,7 +289,7 @@ def search_instagram_creators(keyword: str) -> str:
     keyword = (keyword or "").strip()
     if not keyword:
         return "ERROR: keyword is required."
-    result = _keyapi_get("/instagram/search_users", {"query": keyword})
+    result = _sc_get("/v1/instagram/search/profiles", {"query": keyword})
     return _summarize(result, f"INSTAGRAM USER SEARCH: keyword={keyword!r}")
 
 
@@ -227,10 +301,9 @@ def search_instagram_creators(keyword: str) -> str:
 def research_youtube_channel(channel_handle_or_url: str) -> str:
     """Look up details for a YouTube channel by handle (e.g. '@WellWateredWomen')
     or full channel URL. Returns subscriber count, view count, description,
-    and join date.
+    verification status, and channel id.
 
-    Two-step lookup under the hood: first resolves the handle/URL to a channel ID,
-    then fetches the channel description. Costs ~2 credits per call.
+    Single call, unlike the two-step resolve the previous provider needed.
 
     Args:
         channel_handle_or_url: '@channelhandle', 'https://youtube.com/@handle', or
@@ -241,23 +314,11 @@ def research_youtube_channel(channel_handle_or_url: str) -> str:
     raw = (channel_handle_or_url or "").strip()
     if not raw:
         return "ERROR: channel handle or URL is required."
-
-    if raw.startswith("http"):
-        id_lookup = _keyapi_get("/youtube/get_channel_id_from_url", {"url": raw})
-    else:
-        handle = raw.lstrip("@")
-        id_lookup = _keyapi_get("/youtube/get_channel_id", {"channel_name": handle})
-
-    if isinstance(id_lookup, str):
-        return id_lookup
-
-    data = id_lookup.get("data") or {}
-    channel_id = data.get("channel_id") or data.get("id")
-    if not channel_id:
-        return f"ERROR: could not resolve channel id from {raw!r}; raw response: {json.dumps(data)[:300]}"
-
-    result = _keyapi_get("/youtube/get_channel_description", {"channel_id": channel_id})
-    return _summarize(result, f"YOUTUBE CHANNEL: {raw} (channel_id={channel_id})")
+    identifier = _youtube_identifier(raw)
+    if not identifier:
+        return f"ERROR: could not parse a YouTube handle or channel id from {raw!r}."
+    result = _sc_get("/v1/youtube/channel", {"handle": identifier})
+    return _summarize(result, f"YOUTUBE CHANNEL: {raw} (lookup={identifier})")
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +329,8 @@ def research_youtube_channel(channel_handle_or_url: str) -> str:
 def research_facebook_page(page_url: str) -> str:
     """Look up details for a public Facebook page or profile by URL.
 
-    Returns page name, follower/likes counts, category, and other public profile data.
-    Useful for sizing a competitor brand's FB presence.
+    Returns page name, follower/likes counts, category, page id, creation date,
+    and whether the page is currently running ads.
 
     Args:
         page_url: Full Facebook URL (e.g., 'https://www.facebook.com/wellwateredwomen').
@@ -281,7 +342,7 @@ def research_facebook_page(page_url: str) -> str:
         return "ERROR: page_url is required."
     if not url.startswith("http"):
         url = "https://www.facebook.com/" + url.lstrip("/")
-    result = _keyapi_get("/facebook/profile_details_url", {"url": url})
+    result = _sc_get("/v1/facebook/profile", {"url": url})
     return _summarize(result, f"FACEBOOK PAGE: {url}")
 
 
@@ -289,17 +350,17 @@ def research_facebook_page(page_url: str) -> str:
 # Convenience: status / call-count probe (NOT a CrewAI tool)
 # ---------------------------------------------------------------------------
 
-def keyapi_status() -> dict[str, Any]:
-    """Lightweight observability — used by /admin or /bridge endpoints if needed."""
+def scrapecreators_status() -> dict[str, Any]:
+    """Lightweight observability - used by /admin or /bridge endpoints if needed."""
     return {
         "configured": bool(_get_api_key()),
         "calls_this_process": _call_count,
         "max_calls_per_process": _max_calls(),
-        "base_url": KEYAPI_BASE_URL,
+        "base_url": SCRAPECREATORS_BASE_URL,
     }
 
 
-KEYAPI_TOOLS = [
+SCRAPECREATORS_TOOLS = [
     research_tiktok_creator,
     search_tiktok_creators,
     research_instagram_creator,
