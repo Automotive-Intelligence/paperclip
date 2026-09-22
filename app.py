@@ -3173,6 +3173,18 @@ scheduler.add_job(_wd_dmarc_weekly, CronTrigger(day_of_week="sun", hour=8, minut
     id="wd_dmarc_monitor_weekly", name="WD DMARC Monitor — Weekly Sunday",
     replace_existing=True, misfire_grace_time=3600)
 
+# P&P blog -> Klaviyo email rail — weekdays, :20 past each hour 9 AM to 3 PM CT.
+# Miriam publishes on Shopify (Tuesdays 9:00 AM); this finds any post published
+# today, builds the branded email from the post itself, schedules the Klaviyo
+# send for publish+30min (never sooner than now+10), stamps the article with the
+# campaign id so it can never double-send, and posts the preview/cancel link to
+# #client-marketing-garage. Replaces the human relay that sent the 09-22 email at
+# 12:16 instead of 9:30. Kill switch: PP_BLOG_EMAIL_RAIL_ENABLED=0.
+from services.pp_blog_email_rail import run_hourly as _pp_blog_email_rail
+scheduler.add_job(_pp_blog_email_rail, CronTrigger(day_of_week="mon-fri", hour="9-15", minute=20, timezone=CST),
+    id="pp_blog_email_rail", name="P&P Blog Email Rail — weekdays hourly 9-3 CT",
+    replace_existing=True, misfire_grace_time=1800)
+
 # AVO Watchdog — hourly infrastructure sweep. Replaces the local launchd
 # job at ~/.local/bin/avo-watchdog.sh (which can't fire while the Mac
 # sleeps). Checks brand-site HTTP health + avo-telemetry commit freshness,
@@ -4360,6 +4372,9 @@ logging.info(f"[Scheduler] One-time test scheduled for {test_time}")
 
 
 RUN_NOW_SCOPES = {
+    "pp_blog_email": [
+        ("pp_blog_email_rail", _pp_blog_email_rail),
+    ],
     "ceo": [
         ("alex_daily_briefing", run_alex_daily_briefing),
         ("dek_daily_briefing", run_dek_daily_briefing),
