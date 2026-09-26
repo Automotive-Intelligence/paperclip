@@ -718,6 +718,7 @@ _DIGEST_TRACKED_FILES = [
     "revenue_state.md", "client_situations.md", "content_pipeline.md",
     "brand_rules.md", "sales_pipeline.md", "client_campaigns.md",
     "cmo_state.md", "infrastructure_state.md", "strategic_calls.md",
+    "wend_state.md",  # WEND Build seat, registered 2026-08-23 (driver build)
 ]
 _DIGEST_AGE_THRESHOLD_HOURS = 24
 
