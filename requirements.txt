@@ -8,7 +8,7 @@ apscheduler>=3.10.4
 pytz
 requests
 groq
-litellm
+litellm>=1.83.0  # CVE-2026-35030 fixed in 1.83.0
 python-dotenv>=1.0.0
 Pillow
 hubspot-api-client>=8.2.0

@@ -49,6 +49,7 @@ from config.principles import SYSTEM_IDENTITY, evaluate_action_morally
 from services.database import execute_query, fetch_all
 from services.http_client import request_with_retry
 from services.errors import DatabaseError
+from services.crew_guard import checked_kickoff
 from services.artifact import create_artifact, Artifact, ARTIFACT_TYPES, ARTIFACT_STATUSES
 from services.approval_queue import (
     queue_artifact, get_pending, get_escalated, get_artifact_record,
@@ -1954,7 +1955,7 @@ def run_alex_daily_briefing():
             agent=alex,
         )
         crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "alex")
         guarded_output = _enforce_ceo_operating_brief("alex", str(result))
         persist_log("alex", "briefing", guarded_output)
         logging.info("[Scheduler] Alex briefing complete.")
@@ -1993,7 +1994,7 @@ def run_dek_daily_briefing():
             agent=dek,
         )
         crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "dek")
         guarded_output = _enforce_ceo_operating_brief("dek", str(result))
         persist_log("dek", "briefing", guarded_output)
         logging.info("[Scheduler] Dek briefing complete.")
@@ -2032,7 +2033,7 @@ def run_michael_meta_daily_briefing():
             agent=michael_meta,
         )
         crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "michael_meta")
         guarded_output = _enforce_ceo_operating_brief("michael_meta", str(result))
         persist_log("michael_meta", "briefing", guarded_output)
         logging.info("[Scheduler] Michael Meta briefing complete.")
@@ -2125,7 +2126,7 @@ def _run_tyler_crew():
         agent=tyler,
     )
     crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = checked_kickoff(crew, "tyler")
     return str(result)
 
 
@@ -2344,7 +2345,7 @@ def _run_marcus_crew(vertical_override: str | None = None):
         agent=marcus,
     )
     crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = checked_kickoff(crew, "marcus")
     return str(result)
 
 
@@ -2449,7 +2450,7 @@ def _run_ryan_data_crew():
         agent=ryan_data,
     )
     crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = checked_kickoff(crew, "ryan_data")
     return str(result)
 
 
@@ -2504,7 +2505,7 @@ def run_zoe_content():
             agent=zoe,
         )
         crew = Crew(agents=[zoe], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "zoe")
         raw_output = str(result)
         persist_log("zoe", "content", raw_output)
         logging.info("[Scheduler] Zoe content complete.")
@@ -2706,7 +2707,7 @@ def run_sofia_content():
             agent=sofia,
         )
         crew = Crew(agents=[sofia], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "sofia")
         raw_output = str(result)
         persist_log("sofia", "content", raw_output)
         logging.info("[Scheduler] Sofia content complete.")
@@ -2742,7 +2743,7 @@ def run_chase_content():
             agent=chase,
         )
         crew = Crew(agents=[chase], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "chase")
         raw_output = str(result)
         persist_log("chase", "content", raw_output)
         logging.info("[Scheduler] Chase content complete.")
@@ -2834,7 +2835,7 @@ def run_jennifer_retention():
             agent=jennifer,
         )
         crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "jennifer")
         raw_output = str(result)
         persist_log("jennifer", "retention", raw_output)
         logging.info("[Scheduler] Jennifer retention complete.")
@@ -2868,7 +2869,7 @@ def run_carlos_retention():
             agent=carlos,
         )
         crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "carlos")
         raw_output = str(result)
         persist_log("carlos", "retention", raw_output)
         logging.info("[Scheduler] Carlos retention complete.")
@@ -2901,7 +2902,7 @@ def run_nova_intelligence():
             agent=nova,
         )
         crew = Crew(agents=[nova], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "nova")
         persist_log("nova", "intelligence", str(result))
         logging.info("[Scheduler] Nova intelligence complete.")
     except Exception as e:
@@ -2928,7 +2929,7 @@ def run_atlas_intel():
             agent=atlas,
         )
         crew = Crew(agents=[atlas], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "atlas")
         persist_log("atlas", "intel", str(result))
         logging.info("[Scheduler] Atlas intel complete.")
     except Exception as e:
@@ -2954,7 +2955,7 @@ def run_phoenix_delivery():
             agent=phoenix,
         )
         crew = Crew(agents=[phoenix], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = checked_kickoff(crew, "phoenix")
         persist_log("phoenix", "delivery", str(result))
         logging.info("[Scheduler] Phoenix delivery complete.")
     except Exception as e:
@@ -3703,7 +3704,7 @@ def _run_revops_crew(agent_name: str, agent_symbol, workspace_label: str, contac
         expected_output="Per-contact scoring decisions + run summary (>=200 chars).",
     )
     crew = Crew(agents=[agent_symbol], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = checked_kickoff(crew, agent_name)
     return str(result)
 
 

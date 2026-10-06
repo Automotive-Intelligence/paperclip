@@ -19,6 +19,21 @@ import sys
 from crewai import LLM
 from config.runtime import resolve_llm_model_and_key
 
+# crewai 1.10.1 prompts for trace viewing on first run in a fresh filesystem, and
+# every Railway deploy is one. Opt out unless explicitly turned on.
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
+
+# Per-call LLM timeout. Without one a hung provider call blocks a scheduler
+# worker indefinitely.
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+
+# Spread into every Agent(...). crewai's default max_iter is 25 ReAct steps,
+# which lets a looping agent burn tokens long after it stopped making progress.
+AGENT_LIMITS = {
+    "max_iter": int(os.getenv("AGENT_MAX_ITER", "10")),
+    "max_retry_limit": int(os.getenv("AGENT_MAX_RETRY_LIMIT", "1")),
+}
+
 def _ensure_spend_tracking():
     """Attach the LiteLLM -> llm_spend_ledger callback (idempotent, non-fatal)."""
     try:
@@ -46,6 +61,7 @@ def get_llm():
         provider="litellm",
         api_key=api_key,
         max_tokens=4000,
+        timeout=LLM_TIMEOUT_SECONDS,
     )
 
 
@@ -66,4 +82,5 @@ def get_llm_research():
         provider="litellm",
         api_key=api_key,
         max_tokens=4000,
+        timeout=LLM_TIMEOUT_SECONDS,
     )
