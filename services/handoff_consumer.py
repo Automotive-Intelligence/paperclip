@@ -302,6 +302,8 @@ def execute_handoff_via_agent(handoff: Dict[str, Any]) -> str:
 
 def _execute_one(agent_name: str, handoff: Dict[str, Any]) -> str:
     from crewai import Crew, Process, Task
+
+    from services.crew_guard import checked_kickoff
     from app import persist_log  # type: ignore
 
     agent_obj = _resolve_agent(agent_name)
@@ -326,7 +328,7 @@ def _execute_one(agent_name: str, handoff: Dict[str, Any]) -> str:
         memory=False,
         verbose=False,
     )
-    result = crew.kickoff()
+    result = checked_kickoff(crew, agent_name)
     raw_output = str(result)
     persist_log(agent_name, "cockpit_handoff", raw_output)
     return raw_output

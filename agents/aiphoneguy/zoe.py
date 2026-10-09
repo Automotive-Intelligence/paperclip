@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm
+from config.llm import AGENT_LIMITS, get_llm
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.marketing_tools import MARKETING_TOOLS
 from tools.web_search import web_search_tool
@@ -47,6 +47,7 @@ zoe = Agent(
         "brand-alchemist | inbound-magnet"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
+    **AGENT_LIMITS,
     memory=False,
     tools=[web_search_tool, *MARKETING_TOOLS],
     verbose=True
