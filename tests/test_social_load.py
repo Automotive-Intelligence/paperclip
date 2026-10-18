@@ -170,10 +170,12 @@ def _fake_rails(existing_zernio=None, existing_buffer=None, fetch=None, upload=N
     def zernio_list():
         return existing_zernio or []
 
-    def zernio_publish(content, platforms, account_ids, scheduled_for, media_urls, timezone):
+    def zernio_publish(content, platforms, account_ids, scheduled_for, media_urls, timezone,
+                       platform_specific_data=None):
         calls["publish"].append(dict(content=content, platforms=platforms,
                                      account_ids=account_ids, scheduled_for=scheduled_for,
-                                     media_urls=media_urls, timezone=timezone))
+                                     media_urls=media_urls, timezone=timezone,
+                                     platform_specific_data=platform_specific_data))
         return {"_id": f"zp{len(calls['publish'])}", "status": "scheduled"}
 
     def buffer_list(channel_id):
@@ -303,6 +305,25 @@ class TestLoadJobs(unittest.TestCase):
         res2 = load_jobs([self._job(brand="bookd", platform="facebook", account_id="bk1")],
                          commit=False, rails=rails)
         self.assertEqual(res2[0]["action"], "dry-run")
+
+    def test_gbp_call_to_action_passes_through_with_utm(self):
+        # GBP body text is not tappable; the callToAction button is the post's
+        # only link surface, so it must reach Zernio AND carry the same UTM
+        # params a content link would (the registry utm_campaign join needs it).
+        from tools.social_load import load_jobs
+        rails, calls = _fake_rails()
+        psd = {"callToAction": {"type": "LEARN_MORE",
+                                "url": "https://theaiphoneguy.com/blog/x"}}
+        job = self._job(brand="aipg", platform="googlebusiness", account_id="gb1",
+                        content="No links in body.", platform_specific_data=psd)
+        res = load_jobs([job], commit=True, rails=rails)
+        self.assertEqual(res[0]["action"], "scheduled")
+        sent = calls["publish"][0]["platform_specific_data"]
+        self.assertEqual(sent["callToAction"]["type"], "LEARN_MORE")
+        self.assertIn("utm_source=googlebusiness", sent["callToAction"]["url"])
+        self.assertIn("utm_campaign=aipg_c9", sent["callToAction"]["url"])
+        # the job's own dict must not be mutated by the tagging
+        self.assertEqual(psd["callToAction"]["url"], "https://theaiphoneguy.com/blog/x")
 
 
 class TestMediaRehost(unittest.TestCase):
@@ -484,7 +505,11 @@ def test_strip_links_untouched_when_no_url():
     assert strip_links_for_no_tap("No links here. DM me.") == "No links here. DM me."
 
 
-def test_loader_strips_ig_but_tags_facebook(monkeypatch):
+def test_loader_strips_ig_but_tags_facebook(monkeypatch, tmp_path):
+    # commit=True writes registry rows; without this override they land in the
+    # REAL social_registry.jsonl (it happened: fake avi/acct1 rows found there
+    # on 2026-09-15, 09-16 and 10-17, purged 2026-10-17).
+    monkeypatch.setenv("SOCIAL_REGISTRY_PATH", str(tmp_path / "r.jsonl"))
     from tools.social_load import PostJob, load_jobs
     captured = {}
 

@@ -396,6 +396,7 @@ def publish_to_zernio(
     media_urls: Optional[List[str]] = None,
     publish_now: bool = False,
     timezone: str = "America/Chicago",
+    platform_specific_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Publish or schedule a post to one or more social platforms via Zernio.
@@ -478,6 +479,18 @@ def publish_to_zernio(
             f"No accounts found for platforms: {normalized_platforms}",
             details={"platforms": normalized_platforms},
         )
+
+    # Platform-specific payload (e.g. googlebusiness callToAction/topicType).
+    # The caller targets ONE platform when using this; applying one platform's
+    # fields to a mixed-platform post is a caller bug, so refuse it loudly.
+    if platform_specific_data:
+        if len(set(normalized_platforms)) > 1:
+            raise ValueError(
+                "platform_specific_data requires a single platform per call; "
+                f"got {normalized_platforms}"
+            )
+        for pc in platform_config:
+            pc["platformSpecificData"] = platform_specific_data
 
     # Build request
     post_data = {

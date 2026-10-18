@@ -342,6 +342,7 @@ class PostJob:
     media_urls: List[str] = field(default_factory=list)
     account_id: Optional[str] = None      # zernio account; resolved by the caller
     business_key: str = ""                # buffer lane (e.g. "paperandpurpose")
+    platform_specific_data: Optional[dict] = None  # e.g. googlebusiness callToAction
 
 
 def _real_rails() -> Dict[str, Any]:
@@ -465,10 +466,21 @@ def load_jobs(jobs: List["PostJob"], commit: bool = False, allow_stack: bool = F
                                 "detail": {"reason": "media_unreachable", "url": e.url,
                                            "content_id": e.content_id, "message": str(e)}})
                 continue
+            # GBP (and friends): the callToAction button is the post's only
+            # tappable surface, so UTM-tag its URL exactly like a content link
+            # would be — the registry row's utm_campaign join depends on it.
+            psd = job.platform_specific_data
+            if psd and isinstance(psd.get("callToAction"), dict) and psd["callToAction"].get("url"):
+                psd = json.loads(json.dumps(psd))
+                psd["callToAction"]["url"] = add_utm(
+                    psd["callToAction"]["url"], job.platform, brand,
+                    job.content_id, job.entry_point, str(i))
+            extra = {"platform_specific_data": psd} if psd else {}
             res = r["zernio_publish"](content=content, platforms=[job.platform],
                                       account_ids=[job.account_id] if job.account_id else None,
                                       scheduled_for=job.scheduled_for,
-                                      media_urls=media_urls or None, timezone=job.tz)
+                                      media_urls=media_urls or None, timezone=job.tz,
+                                      **extra)
             append_registry({"brand": brand, "rail": "zernio", "platform": job.platform,
                              "account_id": job.account_id, "post_id": res.get("_id"),
                              "scheduled_for": job.scheduled_for, "tz": job.tz,
