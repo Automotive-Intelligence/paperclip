@@ -38,6 +38,10 @@ site_urls:
   - https://buildagentempire.com
   - https://bookd.cx
   - https://paperandpurpose.co
+  - https://getequitypulse.com
+  # EP ping returns 503 when the app's database is unreachable, so this line
+  # watches the Neon store, not just the page.
+  - https://getequitypulse.com/api/v1/ping
 # weekly_social: the Studio weekly SOCIAL batch. Unlike blog freshness (a live
 # URL), the batch's landed signal is the committed deliverable folder
 # marketing_deliverables/<n>_studio_weekly_<Mon-date>. max_age_hours: 0 disables
