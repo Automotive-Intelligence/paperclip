@@ -1,0 +1,75 @@
+persona: twinning_gm
+display_name: "TWinning Desk — GM Scorecard"
+f1_analog: "Team Principal (single-car entry)"
+scope: |
+  Pilot of a per-brand GM scorecard, modeled on the Isenberg AI-rollup framework
+  (profit margin, human-minutes-per-job, draft-correction rate, client
+  retention, key-people retention) reviewed 2026-09-28. TWinning/ChevyPlug is
+  the pilot brand: Michael's own dealership desk, the Rep Dashboard
+  (rep.automotiveintelligence.io, Neon DB), and the desk-1 agent stack
+  (Mastermind Desk, customer intelligence ledger). This is a functional
+  seat scorecard's brand-shaped sibling, not a replacement for cmo/cro/bt —
+  see services/persona_scorecards/README.md for the roster this sits beside.
+
+cron_cadence: weekly
+wake_times_cdt: ["08:00"]
+adversarial_review: required
+escalation_email_red: michael@automotiveintelligence.io
+
+kpis:
+  - name: earned_vs_target
+    display: "Monthly commission earned vs target (profit-margin analog for a comp-based seat)"
+    source: rep_dashboard_neon           # TBD-with-Michael — Rep Dashboard's Neon DB (dashboard/web, Drizzle) already tracks Earned vs the monthly target and unit tiers; needs a read-only query wired here, not a new source.
+    target: null                          # BASELINE — set once a full month has run through Rep Dashboard (live since 2026-09-26).
+    target_unit: "$ earned / $ target"
+    threshold_yellow: null
+    threshold_red: null
+    cadence: weekly
+    levers:
+      - "surface the month tracker's tier gap in the weekly brief"
+      - "flag stalled vouchers (unmatched / needs_review) blocking a thank-you send"
+
+  - name: human_minutes_per_job
+    display: "Human minutes spent per voucher/deal touch (leverage gained from the desk agents)"
+    source: null                          # NO SOURCE YET — nothing on the desk or Rep Dashboard timestamps human working time today; would need explicit instrumentation (e.g. voucher-upload-to-review-complete elapsed time) before this KPI can populate.
+    target: null                          # TBD-with-Michael — needs the instrumentation decision first.
+    target_unit: "minutes/job"
+    threshold_yellow: null
+    threshold_red: null
+    cadence: weekly
+    levers:
+      - "instrument Rep Dashboard's review flow with a started_at/completed_at pair (build task, not yet scoped)"
+
+  - name: draft_correction_rate
+    display: "Rate of agent-drafted actions a human corrects before/after send"
+    source: null                          # NO SOURCE YET — TWinning's desk sends (thank-yous, engagement touches) are largely autonomous once INTEL_ACT/engagement rules fire; there is no structured draft-then-human-edit ledger analogous to content_review_logs. Closest existing signal is needs_review/unmatched voucher counts and the desk's soft-warning log, neither of which is a correction rate.
+    target: null                          # TBD-with-Michael — decide whether this KPI applies to TWinning's send model at all, or should track something else (e.g. needs_review rate) instead.
+    target_unit: "%"
+    threshold_yellow: null
+    threshold_red: null
+    cadence: weekly
+    levers:
+      - "if built: halt the offending send pattern, flag to B&T for a rule/prompt fix"
+
+  - name: client_retention
+    display: "Repeat / referral rate among delivered customers"
+    source: customer_events_ledger        # TBD-with-Michael — desk-1's customer_events table (pipeline/profile.ts) plus DriveCentric CRM stage has the raw signal (reply channel, hot, referral asks); no retention rollup query exists yet.
+    target: null                          # BASELINE — measure a quarter before locking a target.
+    target_unit: "% repeat/referral"
+    threshold_yellow: null
+    threshold_red: null
+    cadence: weekly
+    levers:
+      - "surface cold/dark-email customers from the intel ledger for a manual follow-up"
+
+  - name: key_people_retention
+    display: "Rep/GM continuity (not yet applicable — TWinning is currently single-rep)"
+    source: null                          # NOT APPLICABLE YET — TWinning today is Michael as the sole rep; Sales-2 split-deal cases exist but there is no second GM-equivalent to track retention of. Revisit when the multi-rep pilot (noted in project_rep_dashboard) launches.
+    target: null
+    target_unit: "n/a"
+    threshold_yellow: null
+    threshold_red: null
+    cadence: weekly
+    levers: []
+
+token_budget_daily_usd: 1      # matches the runaway-tripwire convention used by other scorecards; revisit once this seat actually wakes.
