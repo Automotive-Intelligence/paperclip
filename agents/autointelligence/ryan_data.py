@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm_research
+from config.llm import AGENT_LIMITS, get_llm_research
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
@@ -90,6 +90,7 @@ ryan_data = Agent(
         "PERSONALITY TAGS: research-machine | trigger-hunter | challenger | auto-industry-expert | qualifier"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm_research(),
+    **AGENT_LIMITS,
     memory=False,
     tools=[web_search_tool],
     verbose=True

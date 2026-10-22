@@ -40,6 +40,8 @@ def _kickoff(agent_symbol, description: str, expected_output: str) -> str:
     """
     from crewai import Crew, Task, Process
 
+    from services.crew_guard import checked_kickoff
+
     task = Task(
         description=description,
         expected_output=expected_output,
@@ -52,7 +54,7 @@ def _kickoff(agent_symbol, description: str, expected_output: str) -> str:
         memory=False,
         verbose=False,
     )
-    return str(crew.kickoff())
+    return str(checked_kickoff(crew, getattr(agent_symbol, "role", "bookd")))
 
 
 # ── Marshall — CEO (weekly) ──────────────────────────────────────────────────
