@@ -43,7 +43,7 @@ EXPECTED_AGENTS = [
     # from routing; namespace reserved for Customer Advocate NOVA).
     "atlas", "phoenix",
     # RevOps (interval-based, run multiple times per day)
-    "randy", "brenda", "darrell",
+    "randy", "brenda",  # darrell unscheduled 2026-10-21 (AvI outbound off)
     # Agent Empire (daily only — wade_ae and debra are weekly Monday)
     "tammy_ae", "sterling",
     # CustomerAdvocate

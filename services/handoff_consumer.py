@@ -287,6 +287,7 @@ def execute_handoff_via_agent(handoff: Dict[str, Any]) -> str:
     # Local imports keep this module importable in contexts that don't need
     # CrewAI (tests, /handoffs/stale endpoint, etc).
     from crewai import Crew, Process, Task
+    from services.crew_runner import kickoff_fresh
 
     # Lazy import persist_log to avoid pulling app.py at module-load.
     from app import persist_log  # type: ignore
@@ -302,6 +303,7 @@ def execute_handoff_via_agent(handoff: Dict[str, Any]) -> str:
 
 def _execute_one(agent_name: str, handoff: Dict[str, Any]) -> str:
     from crewai import Crew, Process, Task
+    from services.crew_runner import kickoff_fresh
     from app import persist_log  # type: ignore
 
     agent_obj = _resolve_agent(agent_name)
@@ -326,7 +328,7 @@ def _execute_one(agent_name: str, handoff: Dict[str, Any]) -> str:
         memory=False,
         verbose=False,
     )
-    result = crew.kickoff()
+    result = kickoff_fresh(crew)
     raw_output = str(result)
     persist_log(agent_name, "cockpit_handoff", raw_output)
     return raw_output

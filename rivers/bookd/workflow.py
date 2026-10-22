@@ -39,6 +39,7 @@ def _kickoff(agent_symbol, description: str, expected_output: str) -> str:
     runtime is unavailable (e.g. lightweight test contexts).
     """
     from crewai import Crew, Task, Process
+    from services.crew_runner import kickoff_fresh
 
     task = Task(
         description=description,
@@ -52,7 +53,7 @@ def _kickoff(agent_symbol, description: str, expected_output: str) -> str:
         memory=False,
         verbose=False,
     )
-    return str(crew.kickoff())
+    return str(kickoff_fresh(crew))
 
 
 # ── Marshall — CEO (weekly) ──────────────────────────────────────────────────
