@@ -66,6 +66,7 @@ from services.social_pipeline import run_zernio_social_pipeline, prepare_social_
 
 try:
     from crewai import Crew, Task, Process
+    from services.crew_runner import kickoff_fresh
     _CREWAI_OK = True
 except ImportError as _crewai_err:
     logging.warning(f"[CrewAI] import failed — CrewAI-powered jobs disabled: {_crewai_err}")
@@ -1954,7 +1955,7 @@ def run_alex_daily_briefing():
             agent=alex,
         )
         crew = Crew(agents=[alex], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         guarded_output = _enforce_ceo_operating_brief("alex", str(result))
         persist_log("alex", "briefing", guarded_output)
         logging.info("[Scheduler] Alex briefing complete.")
@@ -1993,7 +1994,7 @@ def run_dek_daily_briefing():
             agent=dek,
         )
         crew = Crew(agents=[dek], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         guarded_output = _enforce_ceo_operating_brief("dek", str(result))
         persist_log("dek", "briefing", guarded_output)
         logging.info("[Scheduler] Dek briefing complete.")
@@ -2032,7 +2033,7 @@ def run_michael_meta_daily_briefing():
             agent=michael_meta,
         )
         crew = Crew(agents=[michael_meta], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         guarded_output = _enforce_ceo_operating_brief("michael_meta", str(result))
         persist_log("michael_meta", "briefing", guarded_output)
         logging.info("[Scheduler] Michael Meta briefing complete.")
@@ -2125,7 +2126,7 @@ def _run_tyler_crew():
         agent=tyler,
     )
     crew = Crew(agents=[tyler], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = kickoff_fresh(crew)
     return str(result)
 
 
@@ -2344,7 +2345,7 @@ def _run_marcus_crew(vertical_override: str | None = None):
         agent=marcus,
     )
     crew = Crew(agents=[marcus], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = kickoff_fresh(crew)
     return str(result)
 
 
@@ -2449,7 +2450,7 @@ def _run_ryan_data_crew():
         agent=ryan_data,
     )
     crew = Crew(agents=[ryan_data], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = kickoff_fresh(crew)
     return str(result)
 
 
@@ -2504,7 +2505,7 @@ def run_zoe_content():
             agent=zoe,
         )
         crew = Crew(agents=[zoe], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         raw_output = str(result)
         persist_log("zoe", "content", raw_output)
         logging.info("[Scheduler] Zoe content complete.")
@@ -2706,7 +2707,7 @@ def run_sofia_content():
             agent=sofia,
         )
         crew = Crew(agents=[sofia], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         raw_output = str(result)
         persist_log("sofia", "content", raw_output)
         logging.info("[Scheduler] Sofia content complete.")
@@ -2742,7 +2743,7 @@ def run_chase_content():
             agent=chase,
         )
         crew = Crew(agents=[chase], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         raw_output = str(result)
         persist_log("chase", "content", raw_output)
         logging.info("[Scheduler] Chase content complete.")
@@ -2834,7 +2835,7 @@ def run_jennifer_retention():
             agent=jennifer,
         )
         crew = Crew(agents=[jennifer], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         raw_output = str(result)
         persist_log("jennifer", "retention", raw_output)
         logging.info("[Scheduler] Jennifer retention complete.")
@@ -2868,7 +2869,7 @@ def run_carlos_retention():
             agent=carlos,
         )
         crew = Crew(agents=[carlos], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         raw_output = str(result)
         persist_log("carlos", "retention", raw_output)
         logging.info("[Scheduler] Carlos retention complete.")
@@ -2901,7 +2902,7 @@ def run_nova_intelligence():
             agent=nova,
         )
         crew = Crew(agents=[nova], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         persist_log("nova", "intelligence", str(result))
         logging.info("[Scheduler] Nova intelligence complete.")
     except Exception as e:
@@ -2928,7 +2929,7 @@ def run_atlas_intel():
             agent=atlas,
         )
         crew = Crew(agents=[atlas], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         persist_log("atlas", "intel", str(result))
         logging.info("[Scheduler] Atlas intel complete.")
     except Exception as e:
@@ -2954,7 +2955,7 @@ def run_phoenix_delivery():
             agent=phoenix,
         )
         crew = Crew(agents=[phoenix], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         persist_log("phoenix", "delivery", str(result))
         logging.info("[Scheduler] Phoenix delivery complete.")
     except Exception as e:
@@ -3577,10 +3578,9 @@ scheduler.add_job(_avo_sched_phoenix, CronTrigger(hour=10, minute=4, timezone=CS
     id="phoenix_daily_delivery", name="Phoenix Daily Delivery",
     replace_existing=True, misfire_grace_time=3600)
 
-# Master Test Suite — 6:30 PM (18:30) CST — All Agents
-scheduler.add_job(run_all_agents_test, CronTrigger(hour=18, minute=30, timezone=CST),
-    id="all_agents_test", name="🧪 Master Test Suite - All Agents",
-    replace_existing=True, misfire_grace_time=3600)
+# Master Test Suite (all_agents_test) unscheduled 2026-10-21: it re-ran 14
+# production agents every evening "as a test" (~$15/mo of OpenRouter) and its
+# output fed nothing. run_all_agents_test() is still callable by hand.
 
 # Quality score snapshot — 6:45 PM CST (after daily activity and test suite)
 scheduler.add_job(run_quality_snapshot_daily, CronTrigger(hour=18, minute=45, timezone=CST),
@@ -3684,9 +3684,18 @@ def _run_revops_crew(agent_name: str, agent_symbol, workspace_label: str, contac
     default_action            : what the agent should still produce when zero
                                 contacts are found (so the log is never empty)
     """
+    if not contacts:
+        # Nothing new to score: write a plain run record instead of paying an
+        # LLM to restate "0 contacts" (2026-10-21 cost fix). Still >=200 chars
+        # and names what was checked, so the log is never a silent heartbeat.
+        checked_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return (
+            f"{agent_name} RevOps cycle, {checked_at}. Source checked: {workspace_label}. "
+            f"New contacts found this cycle: 0, so no scoring or sequence decisions were needed "
+            f"and no LLM call was made. Next cycle: {default_action}. "
+            f"If this stays at 0 for a full day, check the CRM pull for {workspace_label}."
+        )
     summary = "\n".join(f"- {contact_renderer(c)}" for c in contacts[:25])
-    if not summary:
-        summary = f"(no new contacts in last cycle — {default_action})"
     task = Task(
         description=(
             f"You're running your standard RevOps cycle against {workspace_label}.\n\n"
@@ -3703,7 +3712,7 @@ def _run_revops_crew(agent_name: str, agent_symbol, workspace_label: str, contac
         expected_output="Per-contact scoring decisions + run summary (>=200 chars).",
     )
     crew = Crew(agents=[agent_symbol], tasks=[task], process=Process.sequential, memory=False, verbose=False)
-    result = crew.kickoff()
+    result = kickoff_fresh(crew)
     return str(result)
 
 
@@ -3876,10 +3885,10 @@ scheduler.add_job(_run_brenda, IntervalTrigger(hours=2, timezone=CST),
     id="brenda_revops_2h", name="Brenda RevOps (Twenty WD) — Every 2h",
     replace_existing=True, misfire_grace_time=3600)
 
-# Darrell (HubSpot RevOps + Pit Wall): every 1 hour
-scheduler.add_job(_run_darrell, IntervalTrigger(hours=1, timezone=CST),
-    id="darrell_revops_1h", name="Darrell RevOps (Twenty AvI) — Every 1h",
-    replace_existing=True, misfire_grace_time=3600)
+# Darrell (AvI RevOps) unscheduled 2026-10-21 by Michael: he scored new AvI
+# Twenty contacts hourly (~$32/mo of OpenRouter), but AvI cold outbound is off,
+# so nearly every run scored zero contacts. _run_darrell() is still in the
+# manual-trigger map if AvI outbound restarts.
 
 # Joshua (Pit Wall — AI Phone Guy): every 2 hours
 scheduler.add_job(_run_joshua, IntervalTrigger(hours=2, timezone=CST),
@@ -4360,15 +4369,9 @@ scheduler.add_job(_run_changelog, CronTrigger(day_of_week="fri", hour=17, minute
     id="changelog_friday_5pm", name="Weekly Changelog — Fri 5pm",
     replace_existing=True, misfire_grace_time=3600)
 
-# ONE-TIME TEST at 7:56 PM CST for live demo
-from apscheduler.triggers.date import DateTrigger
-test_time = datetime.datetime.now(CST).replace(hour=19, minute=56, second=0, microsecond=0)
-if test_time <= datetime.datetime.now(CST):  # If passed, schedule immediately
-    test_time = datetime.datetime.now(CST) + datetime.timedelta(seconds=5)
-scheduler.add_job(run_all_agents_test, DateTrigger(run_date=test_time),
-    id="demo_test_756pm", name="✅ LIVE DEMO - All Agents (7:56 PM)",
-    replace_existing=True, misfire_grace_time=60)
-logging.info(f"[Scheduler] One-time test scheduled for {test_time}")
+# The old "LIVE DEMO 7:56 PM" one-time job was removed 2026-10-21: once 7:56 PM
+# had passed it fired 5 seconds after every boot, re-running every agent on
+# each deploy or restart.
 
 
 RUN_NOW_SCOPES = {
@@ -4914,7 +4917,7 @@ async def chat(request: AuthRequest, authorization: Optional[str] = Header(None)
             memory=False,
             verbose=False,
         )
-        result = crew.kickoff()
+        result = kickoff_fresh(crew)
         # Persist interactive output so it is part of historical logs.
         persist_log(agent_id, "chat", str(result))
         return {
