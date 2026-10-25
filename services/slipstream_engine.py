@@ -60,6 +60,45 @@ def _site_root(live_url: str) -> str:
     return live_url.rsplit("/blog/", 1)[0]
 
 
+# A merged blog PR starts a NEW production deploy; the article and its hero image
+# 404 on the live domain until that deploy finishes (one to two minutes). The
+# loader re-hosts media onto Zernio's CDN at schedule time and SKIPS any post
+# whose image does not resolve, permanently. Calling it the instant the merge
+# returned skipped every AIPG and AvI blog post from 2026-09-07 to 2026-10-21
+# (127 posts, reason media_unreachable, all logged and nobody saw). So wait for
+# the live site first.
+LIVE_WAIT_TIMEOUT_S = 600
+LIVE_WAIT_POLL_S = 15
+
+
+def _url_live(url: str) -> bool:
+    try:
+        r = requests.get(url, timeout=20, allow_redirects=True, stream=True)
+        r.close()
+        return r.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _wait_until_live(urls, timeout_s: float = LIVE_WAIT_TIMEOUT_S,
+                     poll_s: float = LIVE_WAIT_POLL_S, check=None, sleep=None,
+                     clock=None) -> list:
+    """Poll until every url answers 200. Returns the urls still NOT live (empty
+    list = all live). Never raises."""
+    import time as _t
+    check = check or _url_live
+    sleep = sleep or _t.sleep
+    clock = clock or _t.monotonic
+    pending = [u for u in urls if u]
+    deadline = clock() + timeout_s
+    while pending:
+        pending = [u for u in pending if not check(u)]
+        if not pending or clock() >= deadline:
+            break
+        sleep(poll_s)
+    return pending
+
+
 def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
     """Best-effort: schedule the social pack via the ONE loader (Zernio for
     own-brands; the same tools/social_load loader every other rail uses -- no new
@@ -146,6 +185,13 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
             logger.info("[slipstream] %s EXPORTED %d post(s) to %s (manual posting, "
                         "no zernio)", brand, r["posts"], r["folder"])
             return {"ok": True, "exported": True, **r}
+        must_be_live = [live_url] + sorted({u for j in jobs for u in (j.get("media_urls") or [])})
+        not_live = _wait_until_live(must_be_live)
+        if not_live:
+            logger.error("[slipstream] %s (%s): live site still missing %s after %ss; social "
+                         "NOT scheduled (the loader would skip every post as media_unreachable)",
+                         brand, slug, not_live, LIVE_WAIT_TIMEOUT_S)
+            return {"ok": False, "error": "not live after wait", "not_live": not_live}
         result = run_social_load(jobs, commit=True)
         if result.get("ok"):
             logger.info("[slipstream] social scheduled for %s (%s): counts=%s",
