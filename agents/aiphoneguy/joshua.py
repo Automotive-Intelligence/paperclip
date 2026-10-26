@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm
+from config.llm import AGENT_LIMITS, get_llm
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 
 joshua = Agent(
@@ -63,6 +63,7 @@ joshua = Agent(
         "PERSONALITY TAGS: race-engineer | telemetry-reader | calm-under-pressure | data-driven | strategic"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
+    **AGENT_LIMITS,
     memory=False,
     tools=[],
     verbose=True

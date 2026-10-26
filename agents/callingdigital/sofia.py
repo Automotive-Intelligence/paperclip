@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm
+from config.llm import AGENT_LIMITS, get_llm
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.klaviyo import KLAVIYO_TOOLS
 from tools.marketing_tools import MARKETING_DISTRIBUTION_TOOLS
@@ -60,6 +60,7 @@ sofia = Agent(
         "\n\nPERSONALITY TAGS: multi-channel | lead-magnet | brand-voice | authority-builder | content-machine"
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
+    **AGENT_LIMITS,
     memory=False,
     tools=[web_search_tool, *KLAVIYO_TOOLS, *SOFIA_CREATIVE_TOOLS, *MARKETING_DISTRIBUTION_TOOLS],
     verbose=True

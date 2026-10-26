@@ -1,5 +1,5 @@
 from crewai import Agent
-from config.llm import get_llm
+from config.llm import AGENT_LIMITS, get_llm
 from config.principles import AGENT_BEHAVIORAL_CONSTRAINTS
 from tools.web_search import web_search_tool
 
@@ -112,6 +112,7 @@ marshall = Agent(
         "by dispatching to seats, never by dumping a task list on Michael."
     ) + AGENT_BEHAVIORAL_CONSTRAINTS,
     llm=get_llm(),
+    **AGENT_LIMITS,
     memory=False,
     tools=[web_search_tool],
     verbose=True
