@@ -317,12 +317,13 @@ def test_missing_or_unknown_cadence_keeps_the_old_mwf_behaviour():
     assert not due_today("mwf", _TUE)
 
 
-def test_the_three_slowed_brands_are_weekly_and_the_rest_untouched():
+def test_every_owned_brand_is_weekly_and_the_client_is_untouched():
+    # 2026-10-26 (Michael): every AVO brand posts once a week. P&P is CLIENT work
+    # (drafts only, Miriam-gated) and keeps its own MWF draft cadence.
     import yaml, pathlib
     c = yaml.safe_load(pathlib.Path("config/slipstream_brands.yaml").read_text())
     b = c["brands"]
-    for k in ("worshipdigital", "bookd", "agentempire"):
+    for k in ("worshipdigital", "bookd", "agentempire", "autointelligence", "aiphoneguy"):
         assert b[k]["cadence"] == "weekly", k
         assert b[k]["enabled"] is True, f"{k} must stay enabled, just slower"
-    for k in ("autointelligence", "aiphoneguy", "paperandpurpose"):
-        assert "cadence" not in b[k] or b[k]["cadence"] == "mwf", k
+    assert "cadence" not in b["paperandpurpose"] or b["paperandpurpose"]["cadence"] == "mwf"
