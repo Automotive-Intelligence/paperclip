@@ -17,10 +17,12 @@ import logging
 
 import requests
 
-# Route through OpenRouter (same provider paperclip's agents use, and the one
-# with credit) rather than the raw Anthropic API. Model is env-overridable.
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_MODEL = os.getenv("SLIPSTREAM_MODEL", "google/gemini-2.5-flash")
+# Anthropic Messages API, paid from the Claude Max plan's monthly API credit.
+# MOVED OFF OPENROUTER 2026-10-26 (Michael): OpenRouter is being cancelled. The
+# env var is SLIPSTREAM_CLAUDE_MODEL, not the old SLIPSTREAM_MODEL, so a stale
+# OpenRouter model id left on Railway cannot reach this endpoint and 400.
+_API_URL = "https://api.anthropic.com/v1/messages"
+_MODEL = os.getenv("SLIPSTREAM_CLAUDE_MODEL", "claude-sonnet-5")
 _MAX_TOKENS = 8000
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
@@ -40,23 +42,25 @@ class GenerationError(Exception):
 
 
 def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
-    """Call the LLM (OpenRouter, OpenAI-compatible) and parse a single JSON
-    object from its text response. Tolerates a ```json ... ``` fence."""
-    key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    """Call the LLM (Anthropic Messages) and parse a single JSON object from
+    its text response. Tolerates a ```json ... ``` fence."""
+    key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not key:
-        raise GenerationError("OPENROUTER_API_KEY missing")
+        raise GenerationError("ANTHROPIC_API_KEY missing")
+    # No response_format and no assistant prefill (claude-sonnet-5 rejects
+    # prefill): the system prompt asks for JSON and the parse below is defensive.
     r = requests.post(
-        _OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        _API_URL,
+        headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
         json={
             "model": _MODEL,
             "max_tokens": _MAX_TOKENS,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": user}],
-            # Ask OpenRouter to return its own per-call cost so the spend
-            # ledger records provider truth, not a pricing-map estimate.
-            "usage": {"include": True},
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
         },
         timeout=180,
     )
@@ -67,14 +71,23 @@ def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
     # 2026-08-30, wrote nothing to the ledger -- the daily spend email read
     # "$0.00" against real burn. Never lets a ledger failure break a post.
     try:
-        from services.llm_ledger import record_openrouter_response
-        record_openrouter_response(j, model=_MODEL, persona="slipstream", surface="slipstream")
+        from services.llm_ledger import record_usage
+        u = j.get("usage") or {}
+        record_usage(
+            j.get("model") or _MODEL,
+            input_tokens=int(u.get("input_tokens") or 0),
+            output_tokens=int(u.get("output_tokens") or 0),
+            cache_creation_tokens=int(u.get("cache_creation_input_tokens") or 0),
+            cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
+            persona="slipstream", surface="slipstream",
+            request_id=j.get("id"),
+        )
     except Exception:
         pass
-    choice = (j.get("choices") or [{}])[0]
-    text = ((choice.get("message") or {}).get("content") or "").strip()
+    text = "".join(b.get("text") or "" for b in (j.get("content") or [])
+                   if b.get("type") == "text").strip()
     if not text:
-        raise GenerationError(f"empty LLM response (finish_reason={choice.get('finish_reason')})")
+        raise GenerationError(f"empty LLM response (stop_reason={j.get('stop_reason')})")
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
         text = m.group(1)

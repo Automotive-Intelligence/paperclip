@@ -73,6 +73,8 @@ zernio_accounts:
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence
+    # SLOWED 2026-10-26 (Michael): every brand weekly. Set to mwf for 3x/week.
+    cadence: weekly
     vercel_project_id: prj_GwgqlMDuErlGKm2rsLGPGOn2ve51
     domain: automotiveintelligence.io
     enabled: true
@@ -84,6 +86,8 @@ brands:
     queue_path: automation/content-queue.md
   aiphoneguy:
     repo: salesdroid/ai-phone-guy-site
+    # SLOWED 2026-10-26 (Michael): every brand weekly. Set to mwf for 3x/week.
+    cadence: weekly
     vercel_project_id: prj_Q26URPlYmK1PFY57BSjTFtUJNLko
     domain: theaiphoneguy.com
     enabled: true

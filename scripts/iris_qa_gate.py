@@ -6,7 +6,7 @@ without a manual claude.ai handoff.
 
 Usage:
     python scripts/iris_qa_gate.py <URL> --brand <key> [--question "..."]
-                                          [--model claude-opus-4-8]
+                                          [--model claude-opus-5-5]
                                           [--width 1280]
                                           [--json]
 
@@ -21,9 +21,9 @@ Workflow:
        --json for programmatic callers.
 
 Auth:
-    - OPENROUTER_API_KEY (Doppler paperclip/prd; matches the pattern used by
-      services/flag_responder.py + services/persona_executor.py). Iris calls
-      Claude via OpenRouter's vision-enabled chat completions API.
+    - ANTHROPIC_API_KEY (Doppler paperclip/prd). Iris calls the Anthropic
+      Messages API directly, paid from the Max plan's monthly API credit.
+      Moved off OpenRouter 2026-10-26 when OpenRouter was cancelled.
     - SCREENSHOT_PROVIDER + optional SCREENSHOT_API_KEY — for non-default.
 
 Limitations:
@@ -69,7 +69,8 @@ _BRAND_BIBLES = {
     "pp":    [],
 }
 
-_DEFAULT_MODEL = os.environ.get("IRIS_QA_MODEL", "anthropic/claude-opus-4-8")
+# removeprefix: a leftover OpenRouter-style id ("anthropic/...") still works.
+_DEFAULT_MODEL = os.environ.get("IRIS_QA_MODEL", "claude-opus-5-5").removeprefix("anthropic/")
 _DEFAULT_QUESTION = (
     "Does this clear the better-than-Fifth-Avenue bar applied to this brand's "
     "own truth? If so, say approve. If not, name the specific fixes you want "
@@ -121,19 +122,14 @@ def _capture(url: str, width: int, provider: Optional[str]) -> bytes:
 
 def _call_iris(*, system: str, brand: str, url: str, question: str,
                png_b64: str, model: str, max_tokens: int) -> str:
-    """Call Iris via OpenRouter's vision-enabled chat completions endpoint.
-
-    Mirrors the pattern in services/flag_responder.py so paperclip's existing
-    OpenRouter wiring (Doppler-stored OPENROUTER_API_KEY) just works.
-    """
+    """Call Iris via the Anthropic Messages API (image + text in one turn)."""
     import requests
-    api_key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError(
-            "OPENROUTER_API_KEY not set. Run via "
+            "ANTHROPIC_API_KEY not set. Run via "
             "`doppler run --project paperclip --config prd -- python3 scripts/iris_qa_gate.py ...` "
-            "or set OPENROUTER_API_KEY directly. (Matches the pattern in "
-            "services/flag_responder.py.)"
+            "or set ANTHROPIC_API_KEY directly."
         )
 
     user_text = (
@@ -147,23 +143,22 @@ def _call_iris(*, system: str, brand: str, url: str, question: str,
     )
 
     response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
+        "https://api.anthropic.com/v1/messages",
         headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/salesdroid/paperclip",
-            "X-Title": "Iris QA Gate",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
         },
         json={
-            "model": model,
+            "model": model.removeprefix("anthropic/"),
             "max_tokens": max_tokens,
+            "system": system,
             "messages": [
-                {"role": "system", "content": system},
                 {"role": "user", "content": [
-                    {"type": "text", "text": user_text},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{png_b64}",
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": "image/png", "data": png_b64,
                     }},
+                    {"type": "text", "text": user_text},
                 ]},
             ],
         },
@@ -171,12 +166,14 @@ def _call_iris(*, system: str, brand: str, url: str, question: str,
     )
     if not response.ok:
         raise RuntimeError(
-            f"OpenRouter HTTP {response.status_code}: {response.text[:500]}"
+            f"Anthropic HTTP {response.status_code}: {response.text[:500]}"
         )
     body = response.json()
-    if not body.get("choices"):
-        raise RuntimeError(f"OpenRouter returned no choices: {body}")
-    return body["choices"][0]["message"]["content"]
+    text = "".join(b.get("text") or "" for b in (body.get("content") or [])
+                   if b.get("type") == "text").strip()
+    if not text:
+        raise RuntimeError(f"Anthropic returned no text: {body}")
+    return text
 
 
 def main(argv: Optional[list[str]] = None) -> int:

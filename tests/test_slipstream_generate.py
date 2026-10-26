@@ -62,13 +62,13 @@ def test_generate_post_missing_field_raises():
             assert "body_mdx" in str(e).lower()
 
 
-def test_llm_json_extracts_json_from_openrouter(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+def test_llm_json_extracts_json_from_anthropic(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
 
     class _Resp:
         ok = True
         def json(self):
-            return {"choices": [{"message": {"content": '```json\n{"ok": 1}\n```'}}]}
+            return {"content": [{"type": "text", "text": '```json\n{"ok": 1}\n```'}]}
 
     with mock.patch.object(sg.requests, "post", return_value=_Resp()):
         out = sg._llm_json("system", "user")
@@ -76,26 +76,26 @@ def test_llm_json_extracts_json_from_openrouter(monkeypatch):
 
 
 def test_llm_json_ignores_trailing_prose(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
 
     class _Resp:
         ok = True
         def json(self):
             # a valid JSON object followed by trailing prose (the real 07-19 failure)
-            return {"choices": [{"message": {"content": '{"ok": 1, "a": "b"}\n\nHope this helps!'}}]}
+            return {"content": [{"type": "text", "text": '{"ok": 1, "a": "b"}\n\nHope this helps!'}]}
 
     with mock.patch.object(sg.requests, "post", return_value=_Resp()):
         out = sg._llm_json("s", "u")
     assert out == {"ok": 1, "a": "b"}
 
 
-def test_llm_json_none_content_raises(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-x")
+def test_llm_json_empty_content_raises(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
 
     class _Resp:
         ok = True
         def json(self):
-            return {"choices": [{"message": {"content": None}, "finish_reason": "content_filter"}]}
+            return {"content": [], "stop_reason": "refusal"}
 
     with mock.patch.object(sg.requests, "post", return_value=_Resp()):
         try:
