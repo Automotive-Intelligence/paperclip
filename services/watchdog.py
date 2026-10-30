@@ -47,7 +47,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
@@ -1309,12 +1309,105 @@ def _check_anthropic_credits(cfg: Optional[dict] = None) -> List[Anomaly]:
         "warn")]
 
 
+SOCIAL_REGISTRY_PATH = "social_registry.jsonl"
+
+
+def _check_social_skips(cfg: Optional[dict] = None) -> List[Anomaly]:
+    """A skipped blog-social row is a FAILED post that produced no error.
+
+    From 2026-09-07 to 2026-10-19 the engine wrote 127 rows reading
+    {"action": "skipped", "skip_reason": "media_unreachable", "post_id": null}:
+    75 AIPG posts and 52 AvI. Every one was a social post that never happened. They
+    sat in the registry for seven weeks and nothing read them, so the brands simply
+    went quiet and the first anyone knew was Michael asking why AIPG had not posted.
+
+    PR #310 fixed the cause (wait for the article + media to return 200 before
+    scheduling). This check exists so a recurrence cannot be silent again: a
+    post_id of null is the signature, and it is the thing to alarm on.
+
+    An unreadable registry is reported as a WARN, never a silent pass. "I could not
+    look" and "there is nothing there" must not produce the same result, which is
+    the failure this whole module keeps rediscovering.
+    Config: monitors.social_skip_window_days (default 7; 0 disables).
+    """
+    if cfg is None:
+        cfg = load_watchdog_config()
+    mon = cfg.get("monitors") or {}
+    raw = mon.get("social_skip_window_days")
+    window_d = int(raw) if raw is not None else 7
+    if window_d <= 0:
+        return []
+
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+             or os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{TELEMETRY_REPO}/contents/{SOCIAL_REGISTRY_PATH}",
+            headers=headers, timeout=20)
+    except requests.RequestException as e:
+        logger.warning("[watchdog] social registry fetch failed: %s", e)
+        return [Anomaly("social-registry-unreadable",
+                        f"Could not fetch {SOCIAL_REGISTRY_PATH} ({e.__class__.__name__}), so "
+                        f"silently skipped social posts would be invisible right now.", "warn")]
+    if not r.ok:
+        return [Anomaly("social-registry-unreadable",
+                        f"social_registry.jsonl returned HTTP {r.status_code}. Skipped posts "
+                        f"cannot be seen, which is not the same as there being none.", "warn")]
+    try:
+        text = base64.b64decode(r.json().get("content", "")).decode("utf-8", "replace")
+    except (ValueError, KeyError):
+        return [Anomaly("social-registry-unreadable",
+                        "social_registry.jsonl could not be decoded.", "warn")]
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_d)
+    bad: List[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        # A successful row always carries a post_id. Verified against the live
+        # registry: 0 of 156 non-skipped rows have a null one, so this is a clean
+        # signature with no false positives.
+        if row.get("action") != "skipped" and row.get("post_id") is not None:
+            continue
+        stamp = str(row.get("ts") or row.get("scheduled_at") or "")
+        try:
+            when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if when >= cutoff:
+            bad.append(row)
+
+    if not bad:
+        return []
+    brands = sorted({str(b.get("business_key") or b.get("brand") or "?") for b in bad})
+    reasons = sorted({str(b.get("skip_reason") or "unspecified") for b in bad})
+    return [Anomaly(
+        "social-posts-silently-skipped",
+        f"{len(bad)} blog-social post(s) were SKIPPED in the last {window_d}d "
+        f"({', '.join(brands)}; reason: {', '.join(reasons)}). A skipped row has "
+        f"post_id null: the post never happened and nothing errored. This is the "
+        f"7-week silent outage recurring.", "critical")]
+
+
 _CHECKS = (
     _check_brand_sites,
     _check_telemetry_freshness,
     _check_blog_freshness,
     _check_slipstream_queues,
     _check_weekly_social_freshness,
+    _check_social_skips,
     _check_monitor_freshness,
     _check_media_worker_health,
     _check_emails_sent,

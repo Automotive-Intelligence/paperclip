@@ -68,24 +68,33 @@ class _Resp:
         return self._p
 
 
-def test_slipstream_call_site_records_and_requests_provider_cost(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    payload = {"choices": [{"message": {"content": '{"ok": true}'}}],
-               "usage": {"prompt_tokens": 5, "completion_tokens": 7, "cost": 0.001}}
+def test_slipstream_call_site_records_anthropic_usage(monkeypatch):
+    """PR #311 moved the blog writer from OpenRouter to Anthropic. The meter had to
+    move with it: this engine is the fleet's largest LLM spender and once reported
+    $0.00 against real burn because nothing wrote to the ledger."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    payload = {"id": "msg_1", "model": "claude-sonnet-5",
+               "content": [{"type": "text", "text": '{"ok": true}'}],
+               "usage": {"input_tokens": 100, "output_tokens": 50,
+                         "cache_read_input_tokens": 10}}
     with mock.patch.object(sg.requests, "post", return_value=_Resp(payload)) as post, \
-         mock.patch("services.llm_ledger.record_openrouter_response") as rec:
+         mock.patch("services.llm_ledger.record_usage") as rec:
         out = sg._llm_json_once("sys", "user")
     assert out == {"ok": True}
-    assert post.call_args.kwargs["json"]["usage"] == {"include": True}
+    assert post.call_args.kwargs["headers"]["x-api-key"] == "k"
     rec.assert_called_once()
+    assert rec.call_args.args[0] == "claude-sonnet-5"
     assert rec.call_args.kwargs["persona"] == "slipstream"
+    assert rec.call_args.kwargs["input_tokens"] == 100
+    assert rec.call_args.kwargs["output_tokens"] == 50
 
 
 def test_slipstream_ledger_failure_never_breaks_a_post(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    payload = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    payload = {"id": "msg_1", "model": "claude-sonnet-5",
+               "content": [{"type": "text", "text": '{"ok": true}'}], "usage": {}}
     with mock.patch.object(sg.requests, "post", return_value=_Resp(payload)), \
-         mock.patch("services.llm_ledger.record_openrouter_response", side_effect=RuntimeError("db")):
+         mock.patch("services.llm_ledger.record_usage", side_effect=RuntimeError("db")):
         assert sg._llm_json_once("sys", "user") == {"ok": True}
 
 
