@@ -17,6 +17,7 @@ module seam so tests never touch Postgres, Zernio, or email.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any, Dict, List, Set
@@ -145,7 +146,9 @@ def _file_escalations(items: List[dict]) -> bool:
         title = (f"{i.get('kind')} @{i.get('account')} ({i.get('platform')}): "
                  f"{(i.get('text') or '')[:160]}")
         detail = f"suggested reply: {draft[:280]}" if draft else (i.get("reason") or "")
-        if brief_items.add("sonar", title, fingerprint=f"sonar:{i.get('id')}",
+        iid = i.get("id") or i.get("url") or hashlib.sha1(
+            f"{i.get('account')}|{i.get('text')}".encode()).hexdigest()[:16]
+        if brief_items.add("sonar", title, fingerprint=f"sonar:{iid}",
                            brand=i.get("account"), detail=detail or None, url=i.get("url")):
             filed += 1
     return filed > 0

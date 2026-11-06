@@ -3945,16 +3945,8 @@ scheduler.add_job(_run_reid, CronTrigger(hour=10, minute=6, timezone=CST),
     id="reid_daily_intel", name="Reid Daily Intelligence (Book'd)",
     replace_existing=True, misfire_grace_time=3600)
 
-# Morning Briefing — daily 8am CDT email + SMS to Michael
-def _run_morning_briefing():
-    try:
-        from rivers.shared.morning_briefing import morning_briefing_run
-        morning_briefing_run()
-    except Exception as e:
-        logging.error(f"[Paperclip] Morning briefing failed: {e}")
-
-# 2026-11-06: unscheduled. Its data (pipeline, agent activity) feeds the CEO Brief.
-# _run_morning_briefing stays importable for the on-demand admin route.
+# 2026-11-06: the Morning Briefing send is gone; its data (pipeline, agent
+# activity) feeds the CEO Brief (services/ceo_brief, scheduled above).
 
 # Infrastructure (CTO) — daily 7:30am CDT sweep: domain SSL, agent run anomalies,
 # error patterns. Writes findings to avo-telemetry/infrastructure_state.md.
@@ -3984,32 +3976,9 @@ scheduler.add_job(_run_ape_tick, IntervalTrigger(seconds=60, timezone=CST),
     id="ape_persona_executor_tick", name="APE Persona Executor — Every 60s",
     replace_existing=True, misfire_grace_time=120)
 
-# APE Daily Routine Digest — 6 PM CDT, per-persona consolidated email.
-def _run_ape_daily_digest():
-    try:
-        from services.ape_audit_email import send_daily_digest
-        # Phase 1: Infrastructure only. Phase 2+ adds more personas to the list.
-        for persona in ("Infrastructure",):
-            send_daily_digest(persona)
-    except Exception as e:
-        logging.error(f"[Paperclip] APE daily digest failed: {e}")
-
-# 2026-11-06: unscheduled. Routine ships are drained into the CEO Brief's
-# "Shipped yesterday" section (ape_routine_digest_queue, marked sent there).
-
-# Daily AI-spend email — 7:55am CDT, just before the morning briefing.
-# Reads llm_spend_ledger and emails yesterday's spend (total / persona / model /
-# client). First real spend-visibility deliverable.
-def _run_spend_email():
-    try:
-        from services.spend_email import send_daily_spend_email
-        sent = send_daily_spend_email()
-        logging.info(f"[Paperclip] Daily spend email sent={sent}")
-    except Exception as e:
-        logging.error(f"[Paperclip] Daily spend email failed: {e}")
-
-# 2026-11-06: unscheduled. AI spend is the Money section of the CEO Brief, with an
-# honest idle / metered / gap classification instead of a daily "ledger EMPTY".
+# 2026-11-06: the APE 6 PM digest and the 7:55 AI-spend email are gone. Routine
+# ships drain into the CEO Brief's "Shipped yesterday" (queue rows are marked sent
+# only after the Brief actually sent) and AI spend is its Money section.
 
 # APE Post-Snapshot Sweep — runs every 30 min to catch ships that crossed
 # their 24h post window and need delta computation.
@@ -6523,7 +6492,7 @@ async def ceo_brief_page(k: str = "", fresh: int = 0):
     from services import ceo_brief
     if not ceo_brief.token_ok(k):
         raise HTTPException(status_code=404, detail="Not found")
-    data = None if fresh else ceo_brief.latest_run()
+    data = None if fresh else await asyncio.to_thread(ceo_brief.latest_run)
     if data is None:
         data = await asyncio.to_thread(ceo_brief.collect)
     return HTMLResponse(content=ceo_brief.render_html(data, ceo_brief.page_url(), full=True))
@@ -6534,7 +6503,7 @@ async def ceo_brief_json(k: str = "", fresh: int = 0):
     from services import ceo_brief
     if not ceo_brief.token_ok(k):
         raise HTTPException(status_code=404, detail="Not found")
-    data = None if fresh else ceo_brief.latest_run()
+    data = None if fresh else await asyncio.to_thread(ceo_brief.latest_run)
     if data is None:
         data = await asyncio.to_thread(ceo_brief.collect)
     return JSONResponse(content=json.loads(json.dumps(data, default=str)))

@@ -408,12 +408,15 @@ def run(dry_run: bool = False, today: Optional[date] = None) -> Dict[str, Any]:
         # The failure is filed for the CEO Brief every time. The immediate email
         # fires only when the failure REASON is new: the same dead token failing
         # four Sundays in a row is a Broken-signals line, not four alerts.
+        # A dry run (preview) neither files a row nor suppresses the real run.
         from services import brief_items
-        prev = brief_items.last_detail("script-engine:")
-        repeat = brief_items.same_root_cause(prev, str(e))
-        brief_items.add("failure", f"Script engine failed for the {shoot} shoot: no scripts generated",
-                        fingerprint=f"script-engine:{shoot.isoformat()}", brand="studio",
-                        detail=str(e)[:400])
+        repeat = False
+        if not dry_run:
+            prev = brief_items.last_detail("script-engine:")
+            repeat = brief_items.same_root_cause(prev, str(e))
+            brief_items.add("failure", f"Script engine failed for the {shoot} shoot: no scripts generated",
+                            fingerprint=f"script-engine:{shoot.isoformat()}", brand="studio",
+                            detail=str(e)[:400])
         emailed = False
         if not repeat:
             emailed = send_scripts_email(f"🔴 Script engine FAILED · shoot {shoot.strftime('%b %-d')}",

@@ -58,16 +58,16 @@ def test_render_needs_you_with_link_and_broken_fix_on_full_page_only():
 def test_ai_spend_states():
     ctx = CB._Ctx()
     now = dt.datetime(2026, 11, 7, 7, 0, tzinfo=CB._CT)
-    with mock.patch("services.llm_ledger.daily_totals",
-                    return_value={"day": "2026-11-06", "total_usd": 0.0, "calls": 0}), \
+    with mock.patch("services.llm_ledger.window_totals",
+                    return_value={"day": "last 24h", "total_usd": 0.0, "calls": 0}), \
          mock.patch("services.llm_ledger.month_to_date_total", return_value=3.5):
         idle = CB._ai_spend(ctx, now, engine_activity=0)
         gap = CB._ai_spend(ctx, now, engine_activity=4)
     assert idle["state"] == "idle" and idle["mtd_usd"] == 3.5
     assert gap["state"] == "gap"
     assert any(b["key"] == "ledger-gap" for b in ctx.broken)
-    with mock.patch("services.llm_ledger.daily_totals",
-                    return_value={"day": "2026-11-06", "total_usd": 1.25, "calls": 9}), \
+    with mock.patch("services.llm_ledger.window_totals",
+                    return_value={"day": "last 24h", "total_usd": 1.25, "calls": 9}), \
          mock.patch("services.llm_ledger.month_to_date_total", return_value=3.5):
         assert CB._ai_spend(CB._Ctx(), now, engine_activity=0)["state"] == "metered"
 
@@ -93,7 +93,7 @@ def test_shipped_dead_engine_signal_lists_token_fix():
     ctx = CB._Ctx()
     with mock.patch("services.cmo_shipped.collect", return_value=rows), \
          mock.patch.object(CB, "fetch_all", return_value=[]):
-        s = CB._shipped(ctx, consume=False)
+        s = CB._shipped(ctx)
     assert s["brands"][0]["signal_ok"] is False
     assert any(b["key"] == "slipstream-gh-token" and "401" in b["text"] for b in ctx.broken)
 
@@ -145,3 +145,29 @@ def test_send_posts_one_email_to_one_inbox(monkeypatch):
     assert "salesdroid" not in str(captured["json"]["to"])
     assert captured["json"]["subject"].startswith("CEO Brief")
     assert "text" in captured["json"] and "html" in captured["json"]
+
+
+def test_run_daily_marks_ape_queue_only_after_a_confirmed_send(monkeypatch):
+    data = _data(shipped={"brands": [], "ape": [{"id": 4, "persona": "Infrastructure", "summary": "rotated a cert"}]})
+    marked = []
+    with mock.patch.object(CB, "collect", return_value=data), \
+         mock.patch.object(CB, "store_run"), \
+         mock.patch.object(CB, "mark_ape_delivered", side_effect=lambda ids: marked.extend(ids)), \
+         mock.patch.object(CB, "send", return_value={"status": "failed", "http": 500}):
+        CB.run_daily()
+    assert marked == []                                   # failed send keeps the ships queued
+    with mock.patch.object(CB, "collect", return_value=data), \
+         mock.patch.object(CB, "store_run"), \
+         mock.patch.object(CB, "mark_ape_delivered", side_effect=lambda ids: marked.extend(ids)), \
+         mock.patch.object(CB, "send", return_value={"status": "sent", "id": "em_2"}), \
+         mock.patch("services.watchdog.record_heartbeat"):
+        r = CB.run_daily()
+    assert marked == [4] and r["status"] == "sent"
+
+
+def test_pipeline_fully_unwired_is_a_broken_signal():
+    ctx = CB._Ctx()
+    with mock.patch("rivers.shared.morning_briefing.pull_revenue_pipeline_summary",
+                    return_value={"wired": False, "by_brand": {}}):
+        CB._pipeline(ctx)
+    assert any(b["key"] == "twenty-pipeline" for b in ctx.broken)

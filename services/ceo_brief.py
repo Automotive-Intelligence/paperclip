@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import hmac
 import html as _html
 import json
 import logging
@@ -117,7 +118,7 @@ def view_token() -> str:
 
 def token_ok(candidate: str) -> bool:
     tok = view_token()
-    return bool(tok) and bool(candidate) and candidate == tok
+    return bool(tok) and bool(candidate) and hmac.compare_digest(candidate, tok)
 
 
 def page_url() -> str:
@@ -202,7 +203,7 @@ def _portal(ctx: _Ctx) -> Dict[str, Any]:
     return _safe(ctx, "portal-feed", _get, empty, "Client Portal feed")
 
 
-def _shipped(ctx: _Ctx, consume: bool) -> Dict[str, Any]:
+def _shipped(ctx: _Ctx) -> Dict[str, Any]:
     """Blog + social per brand (24h), APE routine ships, and whether the engine
     signal could be read at all."""
     from services import cmo_shipped
@@ -231,19 +232,28 @@ def _shipped(ctx: _Ctx, consume: bool) -> Dict[str, Any]:
         rows_ = fetch_all(
             "SELECT id, persona, envelope FROM ape_routine_digest_queue "
             "WHERE sent_at IS NULL ORDER BY queued_at ASC LIMIT 50")
-        out, ids = [], []
+        out = []
         for _id, persona, env in rows_:
             env = json.loads(env) if isinstance(env, str) else (env or {})
-            out.append({"persona": persona, "summary": env.get("action_summary", "?")})
-            ids.append(_id)
-        if consume and ids:
-            execute_query("UPDATE ape_routine_digest_queue SET sent_at = NOW() "
-                          "WHERE id = ANY(%s)", (ids,))
+            out.append({"id": _id, "persona": persona,
+                        "summary": env.get("action_summary", "?")})
         return out
 
     ape = _safe(ctx, "ape-digest", _ape, [], "APE routine ships")
     return {"brands": brands, "ape": ape, "posts": sum(b["post_count"] for b in brands),
             "social": sum(b["social"] for b in brands)}
+
+
+def mark_ape_delivered(ids: List[Any]) -> None:
+    """Called ONLY after Resend accepted the Brief: a skipped or failed send must
+    leave the routine ships queued for the next Brief (fail closed)."""
+    if not ids:
+        return
+    try:
+        execute_query("UPDATE ape_routine_digest_queue SET sent_at = NOW() "
+                      "WHERE id = ANY(%s)", (list(ids),))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ceo-brief] mark_ape_delivered failed: %s", e)
 
 
 def _agent_runs_24h() -> int:
@@ -256,10 +266,11 @@ def _ai_spend(ctx: _Ctx, now_ct: _dt.datetime, engine_activity: int) -> Dict[str
        metered  rows exist
        idle     no rows AND no engine ran (nothing to meter)
        gap      no rows BUT engines ran -> a metering gap, listed as a broken signal"""
-    from services.llm_ledger import daily_totals, month_to_date_total
-    yday = (now_ct - _dt.timedelta(days=1)).date()
-    totals = _safe(ctx, "llm-ledger", lambda: daily_totals(yday),
-                   {"day": yday.isoformat(), "total_usd": 0.0, "calls": 0, "by_persona": []},
+    from services.llm_ledger import month_to_date_total, window_totals
+    # Trailing 24h on BOTH sides (ledger and agent_logs), so an evening run cannot
+    # land in "today" for one and "yesterday" for the other and fake a gap.
+    totals = _safe(ctx, "llm-ledger", lambda: window_totals(24),
+                   {"day": "last 24h", "total_usd": 0.0, "calls": 0, "by_persona": []},
                    "AI spend ledger")
     mtd = _safe(ctx, "llm-ledger-mtd", lambda: month_to_date_total(now_ct.date()), None,
                 "AI spend month to date")
@@ -269,7 +280,7 @@ def _ai_spend(ctx: _Ctx, now_ct: _dt.datetime, engine_activity: int) -> Dict[str
     elif engine_activity > 0:
         state = "gap"
         ctx.signal("ledger-gap",
-                   f"AI spend ledger recorded 0 calls yesterday while {engine_activity} "
+                   f"AI spend ledger recorded 0 calls in the last 24h while {engine_activity} "
                    "agent run(s) logged: a metering gap, not a quiet day.",
                    "Only instrumented call sites write llm_spend_ledger rows (slipstream, "
                    "studio-social, persona executor, litellm hook). Find the engine that "
@@ -309,6 +320,10 @@ def _pipeline(ctx: _Ctx) -> Dict[str, Any]:
     from rivers.shared.morning_briefing import pull_revenue_pipeline_summary
     p = _safe(ctx, "twenty-pipeline", pull_revenue_pipeline_summary,
               {"wired": False, "by_brand": {}}, "Twenty pipeline")
+    if not p.get("wired"):
+        ctx.signal("twenty-pipeline", "Twenty pipeline unreadable: no brand workspace answered, "
+                   "so the Money section has no pipeline number")
+        return p
     unwired = [b for b, v in (p.get("by_brand") or {}).items() if not v.get("wired")]
     if unwired:
         ctx.signal("twenty-unwired",
@@ -420,9 +435,9 @@ def _scoreboard(ctx: _Ctx, shipped: Dict[str, Any], money: Dict[str, Any],
     return {"majors": majors, "minors": minors}
 
 
-def collect(now: Optional[_dt.datetime] = None, *, consume: bool = False) -> Dict[str, Any]:
-    """Build the whole Brief. `consume` marks one-shot queues (APE ships) as delivered;
-    only the daily send passes True, previews never do."""
+def collect(now: Optional[_dt.datetime] = None) -> Dict[str, Any]:
+    """Build the whole Brief. Read-only: one-shot queues (APE ships) are marked
+    delivered by run_daily only after Resend accepted the email."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     now_ct = now.astimezone(_CT)
     ctx = _Ctx()
@@ -435,7 +450,7 @@ def collect(now: Optional[_dt.datetime] = None, *, consume: bool = False) -> Dic
                       "detail": (j.get("request") or "")[:240], "url": j.get("url") or "",
                       "age_h": j.get("age_hours")})
     engine_activity = _safe(ctx, "agent-logs", _agent_runs_24h, 0, "Agent run log")
-    shipped = _shipped(ctx, consume)
+    shipped = _shipped(ctx)
     money = _money(ctx, now_ct, engine_activity)
     leads = _leads(ctx)
     kpis = _kpis(ctx)
@@ -687,11 +702,16 @@ def send(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def run_daily() -> Dict[str, Any]:
-    """APScheduler entry point: collect (consuming one-shot queues), send, persist."""
+    """APScheduler entry point: collect, send, persist; drain one-shot queues only
+    once the send is confirmed."""
     try:
-        data = collect(consume=True)
+        data = collect()
         result = send(data)
-        store_run(data, sent=(result.get("status") == "sent"), resend_id=result.get("id"))
+        sent_ok = result.get("status") == "sent"
+        store_run(data, sent=sent_ok, resend_id=result.get("id"))
+        if sent_ok:
+            mark_ape_delivered([a.get("id") for a in (data.get("shipped") or {}).get("ape") or []
+                                if a.get("id") is not None])
         try:
             from services.watchdog import record_heartbeat
             record_heartbeat("ceo_brief")

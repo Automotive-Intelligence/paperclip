@@ -118,6 +118,8 @@ postal_auth:
 # 0 disables a service.
 heartbeats:
   sonar_inbox_max_age_hours: 3
+  ceo_brief_max_age_hours: 30     # one send a day at 07:00 CT; with every other
+                                  # daily email gone, a dead Brief must not be silent
   wd_dmarc_max_age_hours: 200   # weekly Sun 08:00 CT; 200h clears the 168h cadence,
                                 # fires ~32h after a genuinely missed audit
   inbox_janitor_max_age_hours: 0   # janitor DISABLED 2026-08-16 with the postal
