@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 # ── Config ──────────────────────────────────────────────────────────────────
 
 # Recipients — comma-separated BRIEFING_RECIPIENTS env override.
-# Default adds salesdroid (CRO sweep inbox) alongside the primary AvI inbox.
+# One inbox only since 2026-11-06 (CEO Brief spec): the salesdroid duplicate is off.
 BRIEFING_RECIPIENTS = [
     r.strip() for r in os.getenv(
         "BRIEFING_RECIPIENTS",
-        "michael@automotiveintelligence.io,salesdroid@gmail.com",
+        "michael@automotiveintelligence.io",
     ).split(",") if r.strip()
 ]
 # Backward-compat: BRIEFING_RECIPIENT (singular) overrides if set.

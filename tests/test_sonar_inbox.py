@@ -39,9 +39,9 @@ def test_run_sweep_no_classifier_fails_closed_to_escalation():
          mock.patch.object(SI, "pull_new", return_value=new), \
          mock.patch.object(SI, "_classify", return_value={"tier": "escalate"}), \
          mock.patch.object(SI, "_mark_handled", side_effect=lambda it: marked.append(it["id"])), \
-         mock.patch.object(SI, "_escalate_email", return_value=True) as esc:
+         mock.patch.object(SI, "_file_escalations", return_value=True) as esc:
         r = SI.run_sweep()
-    assert r["escalations"] == 1 and r["escalation_emailed"] is True
+    assert r["escalations"] == 1 and r["escalation_filed"] is True
     assert esc.called and marked == ["c1"]       # escalated AND marked handled (never re-process)
 
 
@@ -54,7 +54,7 @@ def test_run_sweep_routes_classifier_tiers():
          mock.patch.object(SI, "pull_new", return_value=new), \
          mock.patch.object(SI, "_classify", side_effect=lambda it: tiers[it["id"]]), \
          mock.patch.object(SI, "_mark_handled"), \
-         mock.patch.object(SI, "_escalate_email", return_value=True):
+         mock.patch.object(SI, "_file_escalations", return_value=True):
         r = SI.run_sweep()
     assert r["auto"] == 1 and r["leads"] == 1 and r["escalations"] == 1
 
@@ -74,7 +74,7 @@ def test_first_run_seeds_backlog_without_escalating_or_llm():
     with mock.patch.object(SI, "handled_ids", return_value=set()), \
          mock.patch.object(SI, "pull_new", return_value=new), \
          mock.patch.object(SI, "_mark_handled", side_effect=lambda it: marked.append(it["id"])), \
-         mock.patch.object(SI, "_escalate_email") as esc, \
+         mock.patch.object(SI, "_file_escalations") as esc, \
          mock.patch.object(SI, "_classify") as clf:
         r = SI.run_sweep()
     assert r["seeded"] == 2
@@ -97,21 +97,18 @@ def test_pull_new_carries_account_id_for_reply_path():
     assert new and new[0]["account_id"] == "acct_9"
 
 
-def test_escalate_email_surfaces_classifier_draft():
-    captured = {}
-    class _Resp:
-        ok = True
-    def _fake_post(url, **kw):
-        captured["html"] = kw["json"]["html"]
-        return _Resp()
-    with mock.patch.dict("os.environ", {"RESEND_API_KEY": "x"}), \
-         mock.patch.object(SI.requests, "post", side_effect=_fake_post):
-        ok = SI._escalate_email([{"kind": "comment", "account": "aipg", "platform": "instagram",
-                                  "text": "love it", "url": "http://x/1",
-                                  "draft": "Thanks so much, glad it helped!"}])
-    assert ok is True
-    assert "suggested reply" in captured["html"]
-    assert "Thanks so much, glad it helped!" in captured["html"]
+def test_file_escalations_writes_brief_items_with_draft():
+    from services import brief_items
+    filed = []
+    items = [{"id": "c9", "kind": "comment", "account": "theaiphoneguy", "platform": "instagram",
+              "text": "do you do Spanish?", "url": "http://x/c9", "draft": "Yes, Sophie speaks Spanish."}]
+    with mock.patch.object(brief_items, "add", side_effect=lambda *a, **k: filed.append((a, k)) or True):
+        assert SI._file_escalations(items) is True
+    (kind, title), kw = filed[0]
+    assert kind == "sonar" and "@theaiphoneguy" in title
+    assert kw["fingerprint"] == "sonar:c9" and kw["url"] == "http://x/c9"
+    assert "Sophie" in kw["detail"]
+    assert SI._file_escalations([]) is False
 
 
 def test_zernio_reply_helpers_are_guarded_until_verified():

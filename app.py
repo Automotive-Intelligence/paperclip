@@ -3116,9 +3116,16 @@ def _avo_sched_axiom():
 # the once-a-day marketing-gate brief via Resend; cmo_daily_state.json is now only
 # an optional editorial overlay (ignored when stale). Per CMO autonomy spec file
 # 58 (B&T handoff step 1).
-from services.cmo_daily_email import run_daily as _cmo_daily_email
-scheduler.add_job(_cmo_daily_email, CronTrigger(hour=7, minute=0, timezone=CST),
-    id="cmo_daily_email_700", name="CMO Daily Email — 7:00 AM CT",
+# 2026-11-06: the CMO Daily send is folded into the CEO Brief (services/ceo_brief).
+# POST /admin/cmo-daily-email-now still renders it on demand; nothing schedules it.
+
+# CEO Brief — ONE email a day to Michael (default 7:00 AM CT; CEO_BRIEF_HOUR
+# overrides). Replaces the Morning Briefing, the AI-spend email, the APE digest,
+# the CMO Daily and every per-event "needs you" stream. Sends on zero days too.
+from services.ceo_brief import run_daily as _ceo_brief_daily
+_CEO_BRIEF_HOUR = int(os.getenv("CEO_BRIEF_HOUR", "7") or 7)
+scheduler.add_job(_ceo_brief_daily, CronTrigger(hour=_CEO_BRIEF_HOUR, minute=0, timezone=CST),
+    id="ceo_brief_daily", name=f"CEO Brief — {_CEO_BRIEF_HOUR}:00 AM CT",
     replace_existing=True, misfire_grace_time=3600)
 
 # AIFB meetup date-bound reminders (T-1d + morning-of SMS to aifb-evt1
@@ -3946,9 +3953,8 @@ def _run_morning_briefing():
     except Exception as e:
         logging.error(f"[Paperclip] Morning briefing failed: {e}")
 
-scheduler.add_job(_run_morning_briefing, CronTrigger(hour=8, minute=0, timezone=CST),
-    id="morning_briefing_daily_8am", name="Morning Briefing (Email + SMS) — Daily 8am CST",
-    replace_existing=True, misfire_grace_time=3600)
+# 2026-11-06: unscheduled. Its data (pipeline, agent activity) feeds the CEO Brief.
+# _run_morning_briefing stays importable for the on-demand admin route.
 
 # Infrastructure (CTO) — daily 7:30am CDT sweep: domain SSL, agent run anomalies,
 # error patterns. Writes findings to avo-telemetry/infrastructure_state.md.
@@ -3988,9 +3994,8 @@ def _run_ape_daily_digest():
     except Exception as e:
         logging.error(f"[Paperclip] APE daily digest failed: {e}")
 
-scheduler.add_job(_run_ape_daily_digest, CronTrigger(hour=18, minute=0, timezone=CST),
-    id="ape_daily_digest_6pm", name="APE Daily Digest — 6 PM CDT",
-    replace_existing=True, misfire_grace_time=3600)
+# 2026-11-06: unscheduled. Routine ships are drained into the CEO Brief's
+# "Shipped yesterday" section (ape_routine_digest_queue, marked sent there).
 
 # Daily AI-spend email — 7:55am CDT, just before the morning briefing.
 # Reads llm_spend_ledger and emails yesterday's spend (total / persona / model /
@@ -4003,9 +4008,8 @@ def _run_spend_email():
     except Exception as e:
         logging.error(f"[Paperclip] Daily spend email failed: {e}")
 
-scheduler.add_job(_run_spend_email, CronTrigger(hour=7, minute=55, timezone=CST),
-    id="daily_spend_email_755am", name="Daily AI Spend Email — 7:55am CST",
-    replace_existing=True, misfire_grace_time=3600)
+# 2026-11-06: unscheduled. AI spend is the Money section of the CEO Brief, with an
+# honest idle / metered / gap classification instead of a daily "ledger EMPTY".
 
 # APE Post-Snapshot Sweep — runs every 30 min to catch ships that crossed
 # their 24h post window and need delta computation.
@@ -6500,6 +6504,40 @@ async def cmo_daily_email_now(authorization: Optional[str] = Header(None)):
     from services.cmo_daily_email import run_daily
     result = await asyncio.to_thread(run_daily)
     return JSONResponse(content=result)
+
+
+@app.post("/admin/ceo-brief-now")
+async def ceo_brief_now(authorization: Optional[str] = Header(None)):
+    """Build + send the CEO Brief immediately (same path as the daily job)."""
+    validate_key(authorization)
+    from services.ceo_brief import run_daily
+    result = await asyncio.to_thread(run_daily)
+    return JSONResponse(content=result)
+
+
+@app.get("/brief")
+async def ceo_brief_page(k: str = "", fresh: int = 0):
+    """The CEO Brief dashboard page. The link in the email carries the token; a
+    wrong token 404s so the route is invisible. ?fresh=1 recomputes instead of
+    showing the stored morning run (never consumes one-shot queues)."""
+    from services import ceo_brief
+    if not ceo_brief.token_ok(k):
+        raise HTTPException(status_code=404, detail="Not found")
+    data = None if fresh else ceo_brief.latest_run()
+    if data is None:
+        data = await asyncio.to_thread(ceo_brief.collect)
+    return HTMLResponse(content=ceo_brief.render_html(data, ceo_brief.page_url(), full=True))
+
+
+@app.get("/brief.json")
+async def ceo_brief_json(k: str = "", fresh: int = 0):
+    from services import ceo_brief
+    if not ceo_brief.token_ok(k):
+        raise HTTPException(status_code=404, detail="Not found")
+    data = None if fresh else ceo_brief.latest_run()
+    if data is None:
+        data = await asyncio.to_thread(ceo_brief.collect)
+    return JSONResponse(content=json.loads(json.dumps(data, default=str)))
 
 
 @app.post("/admin/cmo-override-poll-now")

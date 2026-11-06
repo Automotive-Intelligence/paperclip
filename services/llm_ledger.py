@@ -185,6 +185,18 @@ def record_from_response(
         return None
 
 
+def month_to_date_total(day=None) -> float:
+    """Sum of ledger cost from the 1st of `day`'s month through `day` (UTC dates)."""
+    day = day or datetime.now(timezone.utc).date()
+    first = day.replace(day=1)
+    rows = fetch_all(
+        "SELECT COALESCE(SUM(cost_usd),0) FROM llm_spend_ledger "
+        "WHERE ts::date >= %s AND ts::date <= %s",
+        (first, day),
+    )
+    return float(rows[0][0]) if rows else 0.0
+
+
 def daily_totals(day: Optional[date] = None) -> Dict[str, Any]:
     """Spend rollup for a single UTC day (defaults to today).
 

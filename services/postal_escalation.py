@@ -118,24 +118,17 @@ def send_escalations(items: list[dict[str, Any]]) -> dict[str, Any]:
         )
         return {"escalated": len(items), "sent": False, "shadow": True}
 
-    try:
-        from rivers.shared.morning_briefing import send_briefing_email, send_briefing_sms
-    except Exception as e:  # pragma: no cover - import guard
-        logger.error("postal escalation: could not import send path: %s", e)
-        return {"escalated": len(items), "sent": False, "error": str(e)}
-
-    subject = f"🔥 Postal: {len(items)} email(s) need you"
-    email_ok = sms_ok = False
-    try:
-        email_ok = bool(send_briefing_email(build_email_html(items), subject))
-    except Exception as e:
-        logger.error("postal escalation email failed: %s", e)
-    try:
-        sms_ok = bool(send_briefing_sms(build_sms(items)))
-    except Exception as e:
-        logger.error("postal escalation sms failed: %s", e)
-
-    logger.info(
-        "postal escalation sent: items=%d email=%s sms=%s", len(items), email_ok, sms_ok
-    )
-    return {"escalated": len(items), "sent": True, "email": email_ok, "sms": sms_ok}
+    # Since 2026-11-06 the alert is the CEO Brief: items are filed to brief_items and
+    # listed under "Needs you today" once a day. No per-sweep email, no SMS.
+    from services import brief_items
+    filed = 0
+    for it in items:
+        cat = _CATEGORY_LABEL.get(it.get("category", ""), it.get("category", "other"))
+        acct = it.get("account") or "?"
+        fp = f"postal:{acct}:{it.get('thread_id') or (it.get('sender') or '')[:80] + '|' + (it.get('subject') or '')[:80]}"
+        title = f"{cat} in {acct} inbox: {(it.get('subject') or '(no subject)')[:120]}"
+        detail = f"From: {(it.get('sender') or '?')[:120]}. {(it.get('snippet') or '')[:240]}"
+        if brief_items.add("postal", title, fingerprint=fp, brand=acct, detail=detail):
+            filed += 1
+    logger.info("postal escalation filed to the CEO Brief: items=%d new=%d", len(items), filed)
+    return {"escalated": len(items), "sent": False, "filed": filed}

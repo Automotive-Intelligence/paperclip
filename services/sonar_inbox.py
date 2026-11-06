@@ -131,33 +131,24 @@ def _classify(item: dict) -> dict:
         return {"tier": "escalate", "reason": f"classifier error: {e}"}
 
 
-def _escalate_email(items: List[dict]) -> bool:
-    """Ping Michael ONLY on escalations, via the proven Resend rail (verified domain)."""
-    key = (os.getenv("RESEND_API_KEY") or "").strip()
-    if not key or not items:
+def _file_escalations(items: List[dict]) -> bool:
+    """File escalations for the CEO Brief (services.brief_items) instead of emailing
+    Michael per sweep. The Brief lists them under "Needs you today" with the link and
+    the classifier's gate-passed suggested reply when there is one. Returns True when
+    at least one NEW item was filed (dedup is by Zernio item id)."""
+    if not items:
         return False
-    def _row(i: dict) -> str:
-        # Surface the classifier's gate-passed suggested wording when present, so an
-        # auto-worthy item that escalates only because auto-send isn't wired arrives
-        # copy-paste-ready (Sonar v2 flag). No draft -> just the item + link.
+    from services import brief_items
+    filed = 0
+    for i in items:
         draft = (i.get("draft") or "").strip()
-        suggested = (f"<br><i>suggested reply:</i> {draft[:280]}" if draft else "")
-        return (f"<li><b>{i.get('kind')}</b> @{i.get('account')} ({i.get('platform')}): "
-                f"{(i.get('text') or '')[:220]} &mdash; <a href='{i.get('url')}'>open</a>"
-                f"{suggested}</li>")
-    rows = "".join(_row(i) for i in items)
-    try:
-        r = requests.post(
-            "https://api.resend.com/emails", timeout=15,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"from": os.getenv("LEAD_ALERT_FROM", "AVO <cmo@mail.automotiveintelligence.io>"),
-                  "to": [os.getenv("SONAR_ESCALATE_TO", "michael@automotiveintelligence.io")],
-                  "subject": f"[Sonar] {len(items)} engagement item(s) need a human",
-                  "html": f"<p>Sonar could not auto-handle these engagement items:</p><ul>{rows}</ul>"})
-        return r.ok
-    except requests.RequestException:
-        logger.exception("[sonar] escalation email failed")
-        return False
+        title = (f"{i.get('kind')} @{i.get('account')} ({i.get('platform')}): "
+                 f"{(i.get('text') or '')[:160]}")
+        detail = f"suggested reply: {draft[:280]}" if draft else (i.get("reason") or "")
+        if brief_items.add("sonar", title, fingerprint=f"sonar:{i.get('id')}",
+                           brand=i.get("account"), detail=detail or None, url=i.get("url")):
+            filed += 1
+    return filed > 0
 
 
 def run_sweep(*, commit: bool = True) -> Dict[str, Any]:
@@ -207,9 +198,9 @@ def _run_sweep(*, commit: bool = True) -> Dict[str, Any]:
         if commit:
             _mark_handled(it)               # NEVER re-process, whatever the outcome
 
-    escalated = _escalate_email(escalations) if (escalations and commit) else False
+    filed = _file_escalations(escalations) if (escalations and commit) else False
     receipt = {"ok": True, "new": len(new_items), "leads": leads, "auto": autos,
-               "escalations": len(escalations), "escalation_emailed": escalated,
+               "escalations": len(escalations), "escalation_filed": filed,
                "accounts": sorted({i.get("account") for i in new_items if i.get("account")})}
     logger.info("[sonar] sweep receipt: %s", receipt)
     return receipt

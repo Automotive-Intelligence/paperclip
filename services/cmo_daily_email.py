@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 _RESEND_API = "https://api.resend.com/emails"
 _DEFAULT_FROM = "Michael's CMO <cmo@mail.automotiveintelligence.io>"
-_DEFAULT_TO = "michael@worshipdigital.co"
+_DEFAULT_TO = "michael@automotiveintelligence.io"  # one inbox since 2026-11-06
 # Reply-To points at a REAL inbox Michael reads (the connected `avi` Gmail,
 # michael@automotiveintelligence.io — same brand family as the sender). A reply
 # there is filed as a CMO override by services/cmo_override.
