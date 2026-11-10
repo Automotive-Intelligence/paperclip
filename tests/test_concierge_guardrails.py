@@ -53,6 +53,7 @@ def _zpayload(text, acct="69c8aef66cb7b8cf4cabaf67", conv_id="conv-1"):
 def live(monkeypatch):
     """Force LIVE so the send/handoff transport actually fires (default SHADOW)."""
     monkeypatch.setattr(c, "LIVE", True)
+    c._SEEN.clear()  # dedupe guard is module state; each test starts clean
 
 
 # --- item 1: legal / medical / financial risk terms -> HOT -> suppress + handoff ---
@@ -131,3 +132,43 @@ def test_zernio_clean_reply_sends(live):
          mock.patch.object(c, "_zernio_send") as zsend:
         c.handle_zernio(_zpayload("Tell me about the DIAGNOSTIC"))
     zsend.assert_called_once()
+
+
+# --- 2026-11-10: one DM must get ONE reply, even if Zernio redelivers the webhook ---
+
+def test_zernio_duplicate_message_id_replies_once(live):
+    c._SEEN.clear()
+    reply = "Here is the link: automotiveintelligence.io/diagnostic-call"
+    p = _zpayload("Tell me about the DIAGNOSTIC", conv_id="conv-dup-id")
+    p["message"]["id"] = "msg-123"
+    with mock.patch.object(c, "_claude", return_value=reply), \
+         mock.patch.object(c, "_zernio_send") as zsend:
+        first = c.handle_zernio(p)
+        second = c.handle_zernio(p)
+    zsend.assert_called_once()
+    assert "skip" not in first
+    assert second["skip"] == "duplicate"
+
+
+def test_zernio_same_text_same_conversation_in_window_replies_once(live):
+    c._SEEN.clear()
+    reply = "Here is the link: automotiveintelligence.io/diagnostic-call"
+    with mock.patch.object(c, "_claude", return_value=reply), \
+         mock.patch.object(c, "_zernio_send") as zsend:
+        c.handle_zernio(_zpayload("DIAGNOSTIC", conv_id="conv-dup-text"))
+        c.handle_zernio(_zpayload("diagnostic", conv_id="conv-dup-text"))
+        c.handle_zernio(_zpayload("DIAGNOSTIC", conv_id="conv-other"))
+    assert zsend.call_count == 2  # same conv deduped; a different conversation still answered
+
+
+def test_zernio_dedupe_window_expires(live, monkeypatch):
+    c._SEEN.clear()
+    monkeypatch.setattr(c, "DEDUPE_WINDOW_S", 0)
+    reply = "Here is the link: automotiveintelligence.io/diagnostic-call"
+    clock = iter([0.0, 10.0])
+    monkeypatch.setattr(c.time, "monotonic", lambda: next(clock))
+    with mock.patch.object(c, "_claude", return_value=reply), \
+         mock.patch.object(c, "_zernio_send") as zsend:
+        c.handle_zernio(_zpayload("DIAGNOSTIC", conv_id="conv-exp"))
+        c.handle_zernio(_zpayload("DIAGNOSTIC", conv_id="conv-exp"))
+    assert zsend.call_count == 2
