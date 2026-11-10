@@ -74,7 +74,9 @@ _EXCLUDE_TOKENS = ("bookd", "ryan", "velazquez", "paper", "purpose", "panda", "m
 # are not enumerated in config); an unmatched handle FAILS CLOSED (auto is blocked
 # because we can't prove the voice; a lead still routes with brand="unknown").
 _BRAND_ALIASES: Dict[str, Tuple[str, ...]] = {
-    "automotive_intelligence": ("automotiveintelligence", "autointelligence", "automotiveintel"),
+    "automotive_intelligence": ("automotiveintelligence", "autointelligence", "automotiveintel",
+                                "autointelliai", "whatthepromptai"),
+    "equity_pulse": ("getequitypulse", "equity.pulse", "equitypulse"),
     "ai_phone_guy": ("aiphoneguy", "theaiphoneguy", "aipg", "phoneguy"),
     "worship_digital": ("worshipdigital", "callingdigital", "worship"),
     "agent_empire": ("agentempire", "buildagentempire"),
