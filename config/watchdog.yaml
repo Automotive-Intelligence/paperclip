@@ -6,15 +6,16 @@
 brands:
   automotive_intelligence:
     sitemap_url: https://automotiveintelligence.io/sitemap.xml
-    blog_max_age_hours: 96      # cadence ~ every 2 days + headroom
+    blog_max_age_hours: 192     # blog writer runs WEEKLY per brand since #311 (2026-10-26);
+                                # 192h = one missed weekly fire, not two
     severity: warn
   ai_phone_guy:
     sitemap_url: https://theaiphoneguy.com/sitemap.xml
-    blog_max_age_hours: 96
+    blog_max_age_hours: 192     # weekly since #311; one missed fire
     severity: warn
   agent_empire:
     sitemap_url: https://buildagentempire.com/sitemap.xml
-    blog_max_age_hours: 168     # weekly-ish; social distribution still a GAP
+    blog_max_age_hours: 192     # weekly since #311; one missed fire (AE parked, warn only)
     severity: warn
   worship_digital:
     sitemap_url: https://worshipdigital.co/sitemap.xml

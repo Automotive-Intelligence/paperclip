@@ -281,7 +281,6 @@ def _receipt_md(week_monday: str, per_brand: Dict[str, Any], commit: bool) -> st
                          f"{n} post-slots; skips: {len(b.get('skips', []))}")
         for d in b.get("dropped", []):
             lines.append(f"    - dropped {d['key']}: {d['reason']}")
-    lines.append("\nAE: unconnected, blocked.")
     return "\n".join(lines)
 
 
