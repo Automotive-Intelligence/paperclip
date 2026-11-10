@@ -67,11 +67,12 @@ brands:
     platforms: ["facebook", "linkedin", "instagram", "x"]
     voice: "full-service SMB marketing agency for the 380 corridor; practical, results-first; NOT faith-centered"
     themes_note: "SMB marketing: reporting clarity, stop-boosting-random-posts, local lead gen. Not churchy."
-    # TODO(CMG/Studio): confirm WD's exact free-sample / audit-request URL and add it
-    # here. Until then CTAs point to the live site root (verified 200), never an
-    # invented deep-link and never a DM/comment keyword.
+    # Deep-link confirmed 2026-11-09: WD has no /free-sample route (404); the
+    # free-sample ask lands on /contact (200). Never an invented deep-link, never
+    # a DM/comment keyword.
     allowed_ctas:
-      - "request a free marketing review at https://worshipdigital.co"
+      - "ask for a free sample of the work first at https://worshipdigital.co/contact"
+      - "request a free marketing review at https://worshipdigital.co/contact"
   agent_empire:
     # MANUAL 2026-09-03 (Michael): Zernio costs real money, so this brand is
     # posted BY HAND. export = produce + gate as usual, then write a paste-ready
