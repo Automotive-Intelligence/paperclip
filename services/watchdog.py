@@ -953,10 +953,10 @@ _RUNBOOKS: Tuple[Tuple[str, str], ...] = (
      "in the Tavily dashboard (app.tavily.com -> billing); if the burn is "
      "unwanted, the consumer is contact enrichment in _execute_sales_pipeline "
      "(tools/contact_enricher.py) -- a Revenue-lane volume decision."),
-    ("llm-credits-", "Top up at openrouter.ai/settings/credits (Michael's card). "
-     "Until then every Slipstream blog fire 402-HOLDs silently across all "
-     "brands. After top-up, re-fire overdue brands via POST "
-     "/admin/run-slipstream/<brand_key>."),
+    ("llm-credits-", "OpenRouter balance is below the floor; this check measures "
+     "the balance only. Top up at openrouter.ai/settings/credits (Michael's "
+     "card). Consumers that bill OpenRouter 402 until then; the blog writer and "
+     "Iris gate run on the Anthropic key since #311 and are not affected."),
 )
 
 
