@@ -323,7 +323,12 @@ def test_every_owned_brand_is_weekly_and_the_client_is_untouched():
     import yaml, pathlib
     c = yaml.safe_load(pathlib.Path("config/slipstream_brands.yaml").read_text())
     b = c["brands"]
+    # 2026-11-09 (Michael): BAE + Book'd sites are no longer running, so those two
+    # are OFF (the rotated SLIPSTREAM_GH_TOKEN has no access to their repos).
     for k in ("worshipdigital", "bookd", "agentempire", "autointelligence", "aiphoneguy"):
         assert b[k]["cadence"] == "weekly", k
+    for k in ("worshipdigital", "autointelligence", "aiphoneguy"):
         assert b[k]["enabled"] is True, f"{k} must stay enabled, just slower"
+    for k in ("bookd", "agentempire"):
+        assert b[k]["enabled"] is False, f"{k} is retired (2026-11-09)"
     assert "cadence" not in b["paperandpurpose"] or b["paperandpurpose"]["cadence"] == "mwf"
