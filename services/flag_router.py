@@ -88,8 +88,8 @@ def _fetch_telemetry_path(path: str, ref: str = "main") -> str:
 class Seat:
     canonical_name: str
     owned_file: str
-    slack_channel: str
     aliases: tuple[str, ...]
+    slack_channel: str = ""  # vestigial: Slack decommissioned 2026-07-20; kept for old callers
 
 
 @dataclass(frozen=True)
@@ -157,8 +157,8 @@ def load_seats(force_refresh: bool = False) -> list[Seat]:
             Seat(
                 canonical_name=raw["canonical_name"],
                 owned_file=raw["owned_file"],
-                slack_channel=raw["slack_channel"],
                 aliases=tuple(raw.get("aliases", [])),
+                slack_channel=raw.get("slack_channel", ""),
             )
         )
     _seats_cache = seats
@@ -388,7 +388,11 @@ def post_to_slack(
     When is_escalation=True, header renders with `:rotating_light: ESCALATED:`
     so a re-fired flag is distinguishable from a brand-new one at a glance.
     """
-    token = _slack_token()
+    # Slack was decommissioned 2026-07-20: flags ride the owned-file markdown
+    # protocol (pushing IS the notification). No network call, no error spam.
+    logger.debug("[flag_router] Slack decommissioned; flag for %s not posted", seat.canonical_name)
+    return False, None, None
+    token = _slack_token()  # pragma: no cover (dead path kept for history)
     if not token:
         logger.error("[flag_router] SLACK_BOT_TOKEN missing — Slack push skipped")
         return False, None, None
@@ -807,6 +811,10 @@ def post_digest_to_slack(digest: dict) -> bool:
     targets that need a new seats.yaml alias. Skip the post if there's nothing
     to surface (no flags older than threshold + no unrouted).
     """
+    # Slack decommissioned 2026-07-20: the digest is read from the owned files
+    # (and the CEO Brief email); never posts.
+    logger.debug("[digest] Slack decommissioned; digest not posted")
+    return False
     by_seat: dict = digest.get("by_seat", {})
     unresolved: list = digest.get("unresolved_targets", [])
     if not by_seat and not unresolved:
