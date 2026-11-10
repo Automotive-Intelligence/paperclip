@@ -113,7 +113,7 @@ brands:
     repo: salesdroid/buildagentempire
     vercel_project_id: prj_mhJYWyIm1arV3RQhQIlbmfvYG6ot
     domain: buildagentempire.com
-    enabled: true
+    enabled: false   # OFF 2026-11-09 (Michael): BAE no longer running; new SLIPSTREAM_GH_TOKEN has no access to this repo
     blog_dir: src/content/blog
     business_key: agentempire
     voice: "builder field-notes, honest, ledger-only numbers, no income claims"
@@ -162,7 +162,7 @@ brands:
     # (format: tsx_post, services/slipstream_assemble.assemble_tsx_post). Verified a
     # generated post compiles + prerenders in a real `next build`. auto_merge is ON:
     # merge_when_green polls the Vercel build (bookd-clarity), same as the MDX brands.
-    enabled: true
+    enabled: false   # OFF 2026-11-09 (Michael): Book'd site no longer running; new SLIPSTREAM_GH_TOKEN has no access to this repo
     repo: salesdroid/bookd-marketing-site
     vercel_project_id: prj_MoGjISD1fG9Hf8YkD5EEp0eofek7   # bookd-clarity (verified linked to this repo)
     domain: bookd.cx
