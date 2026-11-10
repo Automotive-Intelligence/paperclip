@@ -9,7 +9,7 @@ Schedule: Every 4 hours.
 
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from core.logger import log_enrollment, log_sequence_event, log_info, log_error
 from core.hours import is_within_send_window
 from rivers.ai_phone_guy.sequences import (
@@ -56,7 +56,7 @@ def randy_run():
     that Randy was leaking contacts at the enrollment step (29 stuck, +4/day).
     """
     from datetime import datetime as _dt
-    started_at = _dt.now()
+    started_at = _dt.now(timezone.utc)
     log_info("ai_phone_guy", "=== RANDY RUN START ===")
     tally = {
         "prospects_found": 0,
@@ -112,7 +112,7 @@ def randy_run():
         check_for_hot_leads(enrolled_contacts)
 
         tally["messages_sent_confirmed"] = _stats["messages_sent"]
-        duration_sec = (_dt.now() - started_at).total_seconds()
+        duration_sec = (_dt.now(timezone.utc) - started_at).total_seconds()
         log_info("ai_phone_guy", f"=== RANDY RUN COMPLETE === Enrolled: {_stats['enrolled']} | Messages: {_stats['messages_sent']}")
         return _format_run_summary(tally, duration_sec, started_at)
     except Exception as e:
@@ -348,7 +348,7 @@ def _enroll_contact(contact: dict) -> bool:
     _enrolled[cid] = {
         "vertical": vertical,
         "channel": channel,
-        "enrolled_at": datetime.now(),
+        "enrolled_at": datetime.now(timezone.utc),
         "last_step": -1,
         "contact": contact,
     }
@@ -399,7 +399,7 @@ def _process_sequences():
     """Check all enrolled contacts and send due sequence steps.
     Only sends if within the vertical's scheduled send window.
     """
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     for cid, data in list(_enrolled.items()):
         enrolled_at = data["enrolled_at"]
         last_step = data["last_step"]
