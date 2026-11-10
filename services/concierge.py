@@ -5,7 +5,7 @@ SHADOW MODE by default: logs + drafts, sends nothing, until CONCIERGE_LIVE=1.
 Brain rules: per-brand voice, wired-CTA registry ONLY, no pricing, no em-dashes,
 hot-thread handoff (conversation opened to human inbox) on qualification signal.
 """
-import os, json, re, logging
+import os, json, re, logging, time
 import requests
 
 CHATWOOT_URL = os.getenv("CHATWOOT_URL", "https://portal.worshipdigital.co").rstrip("/")
@@ -143,6 +143,25 @@ def _zernio_send(conversation_id: str, text: str, account_id: str) -> int:
         logging.exception("[concierge] ZERNIO SEND FAILED conv=%s acct=%s", conversation_id, account_id)
         return 500
 
+# Dedupe guard (2026-11-10): one real IG DM "PLAYBOOK" drew TWO auto-replies 16s apart,
+# different wording, two request_ids. Whether Zernio redelivered the webhook or the
+# sender double-tapped, the customer must never get two replies to one message.
+# Keyed by message id when Zernio sends one, else by (conversation, text) inside a window.
+DEDUPE_WINDOW_S = int(os.getenv("CONCIERGE_DEDUPE_WINDOW_S", "600"))
+_SEEN: dict = {}  # key -> monotonic timestamp
+
+def _is_duplicate(msg: dict, conv_id, text: str) -> bool:
+    now = time.monotonic()
+    for k in [k for k, t in _SEEN.items() if now - t > DEDUPE_WINDOW_S]:
+        _SEEN.pop(k, None)
+    mid = msg.get("id") or msg.get("_id") or msg.get("messageId")
+    key = f"id:{mid}" if mid else f"conv:{conv_id}:{text.lower()}"
+    if key in _SEEN:
+        return True
+    _SEEN[key] = now
+    return False
+
+
 def handle_zernio(payload: dict) -> dict:
     if payload.get("event") != "message.received":
         return {"skip": "not message.received"}
@@ -151,6 +170,9 @@ def handle_zernio(payload: dict) -> dict:
         return {"skip": "not incoming"}
     text = (msg.get("text") or "").strip()
     conv_id = msg.get("conversationId")
+    if _is_duplicate(msg, conv_id, text):
+        logging.info("[concierge] zernio DUPLICATE skipped conv=%s", conv_id)
+        return {"skip": "duplicate", "conv": conv_id}
     acct = str(msg.get("accountId") or (payload.get("account") or {}).get("id")
                or msg.get("account_id") or "")
     brand = ZERNIO_ACCOUNT_BRANDS.get(acct)
