@@ -71,7 +71,7 @@ def _idempotency_key(payload: Dict[str, Any]) -> str:
 
 
 def _ghl_write(lead: Dict[str, Any]) -> Optional[str]:
-    """Write the contact to GHL. 5xx is retried, 4xx (bad payload / dup) is not.
+    """Upsert the contact into GHL. 5xx is retried, 4xx (bad payload) is not.
     Returns the GHL contact id on success (the AIPG site needs it for the instant
     speed-to-lead SMS), or None on failure -> caller dead-letters + alerts a human."""
     key = (os.getenv("GHL_API_KEY") or "").strip()
@@ -88,8 +88,11 @@ def _ghl_write(lead: Dict[str, Any]) -> Optional[str]:
         ("sms-opt-in" if lead.get("sms_consent") else "")) if t]
     for attempt in range(_GHL_MAX_ATTEMPTS):
         try:
+            # /contacts/upsert (GHL v2): a returning or already-known phone/email
+            # updates the existing contact instead of 4xx-duplicating into the
+            # dead-letter queue (TP flag 2026-09-16, lead-ingest upsert fix).
             r = requests.post(
-                "https://services.leadconnectorhq.com/contacts/", timeout=15,
+                "https://services.leadconnectorhq.com/contacts/upsert", timeout=15,
                 headers={"Authorization": f"Bearer {key}", "Version": "2021-07-28",
                          "Content-Type": "application/json"},
                 json={"locationId": loc, "firstName": first, "lastName": last,
