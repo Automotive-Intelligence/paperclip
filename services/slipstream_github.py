@@ -8,8 +8,10 @@ increment) waits on that preview build succeeding. Uses SLIPSTREAM_GH_TOKEN
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urlencode
@@ -156,6 +158,73 @@ def _vercel_deployment_for(
     return deployments[0] if deployments else None
 
 
+_VERCEL_BOT_LOGIN = "vercel[bot]"
+_VC_PAYLOAD = re.compile(r"\[vc\]:\s*#[^:\s]+:([A-Za-z0-9+/=]+)")
+
+
+def _vercel_bot_comment_state(
+    http: Callable, repo_api: str, pr_num: int, token: str, project_id: Optional[str],
+) -> Optional[str]:
+    """Second source for the build gate: the Vercel GitHub integration's own PR
+    comment. Returns "READY", "ERROR", or None (unknown / not yet / stale).
+
+    Why this exists: VERCEL_API_TOKEN died in the 2026-10-21 breach rotation and
+    every auto-merge since held for 10 minutes and then gave up (AIPG PR #57 sat
+    open from 10-21; PR #61 on 11-11 did the same), so no blog published even
+    after SLIPSTREAM_GH_TOKEN was replaced. The fine-grained PAT cannot read
+    commit statuses, check-runs or deployments (all 403), but it CAN read PR
+    comments, and vercel[bot] posts one per PR carrying a machine-readable
+    payload with each project's deploy status.
+
+    Fail-closed rules, all required:
+      - a per-brand vercel_project_id is configured and a project entry in the
+        payload matches it exactly;
+      - the comment author is the Vercel bot account;
+      - the comment was last updated AFTER the PR's newest commit, so a status
+        left over from an earlier commit can never approve a later one.
+    Anything else returns None and the caller keeps polling, then HOLDS.
+    """
+    if not project_id:
+        return None
+    try:
+        commits = http("GET", f"{repo_api}/pulls/{pr_num}/commits?per_page=100", token)
+        if not isinstance(commits, list) or not commits:
+            return None
+        head_at = max(
+            ((c.get("commit") or {}).get("committer") or {}).get("date") or "" for c in commits
+        )
+        comments = http("GET", f"{repo_api}/issues/{pr_num}/comments?per_page=100", token)
+        if not head_at or not isinstance(comments, list):
+            return None
+    except Exception:
+        return None
+    for c in reversed(comments):
+        user = c.get("user") or {}
+        if user.get("login") != _VERCEL_BOT_LOGIN or user.get("type") != "Bot":
+            continue
+        # ISO-8601 UTC "Z" timestamps of equal precision compare correctly as strings.
+        if (c.get("updated_at") or "") <= head_at:
+            return None
+        m = _VC_PAYLOAD.search(c.get("body") or "")
+        if not m:
+            return None
+        try:
+            payload = json.loads(base64.b64decode(m.group(1)))
+        except Exception:
+            return None
+        for proj in payload.get("projects") or []:
+            if proj.get("projectId") != project_id:
+                continue
+            status = (proj.get("nextCommitStatus") or "").upper()
+            if status == "DEPLOYED":
+                return "READY"
+            if status in ("FAILED", "ERROR", "CANCELED", "CANCELLED"):
+                return "ERROR"
+            return None
+        return None
+    return None
+
+
 def merge_when_green(
     repo: str,
     pr_url: str,
@@ -187,25 +256,30 @@ def merge_when_green(
     ref = head.get("ref")
 
     vercel_token = (vercel_token or os.getenv("VERCEL_API_TOKEN") or "").strip()
-    if not vercel_token:
-        # Fail CLOSED: without a way to verify the build, never auto-merge.
+    if not vercel_token and not vercel_project_id:
+        # Fail CLOSED: no API token and no project id to match the Vercel bot
+        # comment against means there is no way to verify the build.
         return {"merged": False, "reason": "VERCEL_API_TOKEN missing (cannot verify build)",
                 "pr_url": pr_url}
 
     last_err: Optional[str] = None
+    comment_ready_streak = 0
     for _ in range(timeout_polls):
-        try:
-            dep = _vercel_deployment_for(
-                vercel_http, vercel_token,
-                sha=sha, ref=ref,
-                project_id=vercel_project_id, team_id=vercel_team_id,
-            )
-        except Exception as e:
-            # A transient Vercel API blip must not crash the run (which already
-            # opened the PR). Remember it and keep polling; a persistent error
-            # falls through to a timeout HOLD (fail CLOSED, never a bad merge).
-            last_err = str(e)[:200]
-            dep = None
+        dep = None
+        api_unavailable = not vercel_token
+        if vercel_token:
+            try:
+                dep = _vercel_deployment_for(
+                    vercel_http, vercel_token,
+                    sha=sha, ref=ref,
+                    project_id=vercel_project_id, team_id=vercel_team_id,
+                )
+            except Exception as e:
+                # A transient Vercel API blip must not crash the run (which already
+                # opened the PR). Remember it and keep polling; a persistent error
+                # falls through to the bot-comment gate, then a timeout HOLD.
+                last_err = str(e)[:200]
+                api_unavailable = True
         if dep is not None:
             state = (dep.get("readyState") or dep.get("state") or "").upper()
             if state == "READY":
@@ -214,6 +288,20 @@ def merge_when_green(
             if state in ("ERROR", "CANCELED"):
                 return {"merged": False, "reason": f"vercel build {state.lower()}", "pr_url": pr_url}
             # BUILDING / QUEUED / INITIALIZING -> keep polling.
+        elif api_unavailable:
+            # The Vercel API cannot answer (token missing, revoked or erroring).
+            # Fall back to the Vercel bot's PR comment. READY must be seen on two
+            # consecutive polls before merging, so a comment mid-update never wins.
+            cstate = _vercel_bot_comment_state(http, repo_api, pr_num, token, vercel_project_id)
+            if cstate == "ERROR":
+                return {"merged": False, "reason": "vercel build error (per Vercel bot comment)",
+                        "pr_url": pr_url}
+            comment_ready_streak = comment_ready_streak + 1 if cstate == "READY" else 0
+            if comment_ready_streak >= 2:
+                http("PUT", f"{repo_api}/pulls/{pr_num}/merge", token, {"merge_method": "squash"})
+                logger.warning("[slipstream] merged %s on the Vercel bot comment gate "
+                               "(Vercel API unavailable: %s)", pr_url, last_err or "no token")
+                return {"merged": True, "pr_url": pr_url, "gate": "vercel_bot_comment"}
         sleep(poll_sleep)
     reason = "vercel build timeout (still pending)"
     if last_err:
