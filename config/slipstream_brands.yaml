@@ -69,6 +69,10 @@ zernio_accounts:
     # sign-off. Re-add the linkedin id here only after that consent process exists.
     facebook: "6a67e85911e357f89d7e4155"
     instagram: "6a67e8e011e357f89d7e4722"
+  # equitypulse: NO ENTRY, ON PURPOSE (2026-11-11). Equity Pulse social runs on its
+  # own approved weekly slate, not on blog fan-out. A brand with no entry here
+  # resolves to an empty account map, so _distribute_social skips every platform
+  # and schedules nothing. Do not add ids here to "fix" the silence.
 
 brands:
   autointelligence:
@@ -179,6 +183,32 @@ brands:
     money_pages: ["/pricing", "/blog"]
     queue_repo: salesdroid/avo-telemetry
     queue_path: scripts/blog_queues/bookd_topics.md
+  equitypulse:
+    # ADDED 2026-11-11. Equity Pulse articles live under /learn, not /blog:
+    # url_prefix is what the engine uses for the article URL and the site root.
+    # Images do NOT follow it; they are committed to public/blog/ and served from
+    # /blog/<slug>-<name>.png like every other MDX brand.
+    repo: salesdroid/equity-pulse
+    cadence: weekly
+    vercel_project_id: prj_Gjo3V9Z52q7AEtHxogIJ5I8FYfdD   # unused while auto_merge:false, wired for when it flips
+    domain: getequitypulse.com
+    enabled: true
+    auto_merge: false                         # EP has NO Vercel git integration: a merge deploys
+                                              # nothing, and production promotion is Michael's step.
+                                              # So the engine only OPENS a PR; a human merges and
+                                              # deploys. The queue topic is still checked off (against
+                                              # the PR url) so the next weekly run takes the next topic.
+    url_prefix: learn
+    blog_dir: src/content/learn
+    business_key: equitypulse
+    voice: "Equity Pulse, a free car equity tracker. Asset lens ONLY: the car is an asset the owner manages, like reading a brokerage or Homebot statement. Tone is insider-translator: explain how the numbers really work, attack opacity, never attack dealers. NEVER dealership or retail desk language (no 'dealer trade', no 'thinking about trading?', no sales-floor urgency). Trust line: 'We're not trying to buy your car.' Tagline: 'Know your number before anyone else does.' Values are always RANGES, never false precision. NEVER say 'pre-approved' or 'guaranteed'. NEVER say or imply that user data is sold. NO fabricated or unsourced statistics, ever: cite a real published source or stay qualitative. NO em-dashes anywhere. Michael Rodriguez is the author. Imagery: dark navy canvas (never pure black), emerald #10B981 as the single accent, green means gain and red means loss, NO AI-generated faces or people, NO car-on-white cutouts."
+    # EXACTLY the set src/components/learn/MDXComponents.tsx defines in the EP repo.
+    # Anything else crashes the EP build, so change both together.
+    components: ["AnswerFirst", "EntityDefinition", "Callout", "PullQuote", "KeyTakeaway", "StatRow"]
+    # Real EP routes (verified in src/app). "/?start=1" opens the free sign-up.
+    money_pages: ["/?start=1", "/methodology", "/learn"]
+    queue_repo: salesdroid/avo-telemetry
+    queue_path: scripts/blog_queues/equitypulse_topics.md
   paperandpurpose:
     # NO `repo` key on purpose: P&P is a Shopify STOREFRONT, not a git repo, which
     # is the whole reason it sat off the engine. `shopify_article` publishes through

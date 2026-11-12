@@ -72,6 +72,16 @@ BRAND_PROMPT_STYLES = {
         "Orange accent tones (#F2994A). Friendly, conversion-focused. "
         "Phone and communication imagery. "
     ),
+    # Equity Pulse. Brand law: navy canvas (never pure black), ONE accent, and no
+    # generated people. A car-on-white cutout reads as a dealer listing, which is
+    # the opposite of the asset-statement lens.
+    "equitypulse": (
+        "Calm financial-statement aesthetic for a car equity tracker. Deep dark navy "
+        "canvas (never pure black) with emerald green (#10B981) as the single accent "
+        "color. Green means gain, red means loss, used sparingly. Clean diagrammatic "
+        "data visuals: lines, ranges, crossover points. NO people, NO faces, NO hands, "
+        "no car-on-white studio cutouts, no dealership showroom, no text, no lettering, no logos. "
+    ),
     # Paper & Purpose (client, Miriam-gated). The palette and the no-people rule
     # are brand law, not taste: P&P imagery is restrained botanicals only, and the
     # on-camera face is Miriam's own photography, never a generated one.
