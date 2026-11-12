@@ -59,6 +59,18 @@ def test_synthetic_stores_but_skips_ghl_and_human_alert():
     assert r["ok"] is True and r["via"] == "synthetic" and r["status"] == "verified"
 
 
+def test_non_ghl_brand_is_stored_and_alerted_but_never_pushed_to_ghl():
+    from contextlib import ExitStack
+    with ExitStack() as s:
+        calls = _patch(s)
+        r = LS.ingest_lead({"brand": "wd", "name": "Pat Lee", "email": "p@x.co"})
+        assert any(c.startswith("INSERT INTO leads") for c in calls)
+        assert not LS._ghl_write.called         # WD's CRM is Twenty, not AIPG's GHL
+        assert LS._alert_email.called           # a human is still told
+    assert r["ok"] is True and r["stored"] is True and r["ghl_ok"] is False
+    assert r["status"] == "stored"              # not a dead letter: nothing failed
+
+
 def test_idempotency_key_stable_and_explicit_wins():
     a = LS._idempotency_key({"brand": "aipg", "email": "J@x.co", "phone": "555", "name": "Jane"})
     b = LS._idempotency_key({"brand": "aipg", "email": "j@x.co", "phone": "555", "name": "jane"})

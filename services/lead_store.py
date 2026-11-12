@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 _FIELDS = ("name", "phone", "email", "trade", "message", "source", "business")
 _GHL_MAX_ATTEMPTS = 3
+# The one GHL location this service holds creds for is AIPG's. A lead from any other
+# brand (Worship Digital's CRM is Twenty, written by its own site) is stored + alerted
+# here but NEVER pushed into AIPG's GHL, where the `website-lead` tag starts AIPG nurture
+# and skews the AIPG store-vs-GHL reconciliation.
+_GHL_BRANDS = frozenset({"aipg"})
 
 _CREATE = """
 CREATE TABLE IF NOT EXISTS leads (
@@ -140,7 +145,8 @@ def ingest_lead(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "alerted": True, "via": prior[0][1], "key": key}
 
     # 2. GHL (retried). 3. ALWAYS alert a human (never gate on GHL), unless synthetic.
-    ghl_id = None if synthetic else _ghl_write(lead)
+    uses_ghl = brand.strip().lower() in _GHL_BRANDS
+    ghl_id = _ghl_write(lead) if (uses_ghl and not synthetic) else None
     ghl_ok = bool(ghl_id)
     if synthetic:
         alerted, via = True, "synthetic"      # canary verifies plumbing; no human paged
@@ -151,7 +157,9 @@ def ingest_lead(payload: Dict[str, Any]) -> Dict[str, Any]:
         alerted = bool(emailed or issued)
         via = "email" if emailed else ("issue" if issued else "receipt-only")
 
-    status = "delivered" if ghl_ok else ("verified" if synthetic else "dead_letter")
+    # A non-GHL brand has no CRM write to fail here, so it is "stored", not a dead letter.
+    status = ("delivered" if ghl_ok else "verified" if synthetic
+              else "dead_letter" if uses_ghl else "stored")
     execute_query(
         "UPDATE leads SET ghl_ok=%s, alerted=%s, alert_via=%s, status=%s WHERE idempotency_key=%s",
         (ghl_ok, alerted, via, status, key))
