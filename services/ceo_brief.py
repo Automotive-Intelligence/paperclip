@@ -63,8 +63,7 @@ MINORS = (
 
 # cmo_shipped brand keys -> business keys used here.
 _SHIPPED_TO_BIZ = {
-    "worshipdigital": "wd", "autointelligence": "avi", "aiphoneguy": "aipg",
-    "agentempire": "avi", "bookd": "bookd",
+    "worshipdigital": "wd", "autointelligence": "avi", "aiphoneguy": "aipg", "bookd": "bookd",
 }
 # Twenty pipeline brand labels (rivers/shared/morning_briefing) -> business keys.
 _PIPELINE_TO_BIZ = {"WD": "wd", "AvI": "avi", "AIPG": "aipg", "Book'd": "bookd"}
@@ -72,8 +71,19 @@ _PIPELINE_TO_BIZ = {"WD": "wd", "AvI": "avi", "AIPG": "aipg", "Book'd": "bookd"}
 _KPI_BRAND_TO_BIZ = {
     "wd": "wd", "avi": "avi", "aipg": "aipg", "bookd": "bookd", "pp": None,
     "worshipdigital.co": "wd", "automotiveintelligence.io": "avi",
-    "theaiphoneguy.com": "aipg", "bookd.cx": "bookd", "buildagentempire.com": "avi",
+    "theaiphoneguy.com": "aipg", "bookd.cx": "bookd",
 }
+
+_APE_QUEUE_DDL = """
+CREATE TABLE IF NOT EXISTS ape_routine_digest_queue (
+    id BIGSERIAL PRIMARY KEY,
+    persona TEXT NOT NULL,
+    ship_id TEXT NOT NULL,
+    envelope JSONB NOT NULL,
+    queued_at TIMESTAMPTZ DEFAULT NOW(),
+    sent_at TIMESTAMPTZ
+);
+"""
 
 _RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS ceo_brief_runs (
@@ -218,30 +228,43 @@ def _shipped(ctx: _Ctx) -> Dict[str, Any]:
                        "held": held, "signal_ok": r.get("signal_ok", True),
                        "post_count": r.get("post_count", 0), "social": r.get("social", 0)})
     if dead:
-        errors = {r["name"]: (r.get("signal_error") or "unknown error")
-                  for r in rows if not r.get("signal_ok", True)}
-        detail = "; ".join(f"{n}: {e[:120]}" for n, e in errors.items())
-        if any("401" in e for e in errors.values()):
+        # One line per failure CLASS, each naming its brands with a short reason.
+        # No URLs or response bodies: those stay in the logs.
+        token_dead, no_access, other = [], [], []
+        for r in rows:
+            if r.get("signal_ok", True):
+                continue
+            st = r.get("signal_status")
+            reason = cmo_shipped.signal_reason(r)
+            if st == 401 or reason == "no GitHub token":
+                token_dead.append(f"{r['name']} ({reason})")
+            elif st in (403, 404):
+                no_access.append(f"{r['name']} ({reason})")
+            else:
+                other.append(f"{r['name']} ({reason})")
+        if token_dead:
             ctx.signal("slipstream-gh-token",
-                       "Blog engine signal unavailable for " + ", ".join(dead)
-                       + ": SLIPSTREAM_GH_TOKEN on Railway returns 401. Blog, social, "
-                       "script engine and the APE handoff poller are all dark on it.",
+                       "Blog engine signal unavailable, GitHub token dead or unset: "
+                       + ", ".join(token_dead) + ". Blog, social, script engine and the "
+                       "APE handoff poller are all dark on it.",
                        "Mint a fine-grained GitHub token (salesdroid) with Contents + Pull "
                        "requests on the brand repos and avo-telemetry; set it as "
                        "SLIPSTREAM_GH_TOKEN on the paperclip Railway service.")
-        else:
-            ctx.signal("blog-signal",
-                       "Blog engine signal unavailable for " + ", ".join(dead) + " (" + detail + ")",
-                       "Check the brand repo name and the token's repo access in "
-                       "services/cmo_shipped.BRANDS.")
+        if no_access:
+            ctx.signal("blog-signal-access",
+                       "Blog engine signal unavailable, repo missing or token lacks access: "
+                       + ", ".join(no_access),
+                       "Check the repo name in services/cmo_shipped.BRANDS and the token's "
+                       "repo list; if the site is retired, drop the brand there.")
+        if other:
+            ctx.signal("blog-signal-unreadable",
+                       "Blog engine signal unreadable this run: " + ", ".join(other)
+                       + " (may be a transient GitHub error; repeats are a real break)")
 
     def _ape():
-        # The digest queue table is created by the APE writer on first use; on an
-        # install where no routine ship was ever queued it does not exist, and that
-        # is "no ships", not a broken feed.
-        exists = fetch_all("SELECT to_regclass('ape_routine_digest_queue')")
-        if not exists or exists[0][0] is None:
-            return []
+        # Same lazy DDL the APE writer uses, so a fresh install reads as "no ships"
+        # while a real read failure still surfaces as a broken signal.
+        execute_query(_APE_QUEUE_DDL)
         rows_ = fetch_all(
             "SELECT id, persona, envelope FROM ape_routine_digest_queue "
             "WHERE sent_at IS NULL ORDER BY queued_at ASC LIMIT 50")

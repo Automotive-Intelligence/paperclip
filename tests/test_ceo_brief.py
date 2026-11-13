@@ -87,29 +87,55 @@ def test_portal_unwired_is_a_broken_signal(monkeypatch):
     assert any(b["key"] == "portal-feed" for b in ctx.broken)
 
 
-def test_shipped_dead_engine_401_lists_token_fix():
-    rows = [{"key": "aiphoneguy", "name": "AI Phone Guy", "signal_ok": False, "posts": [],
-             "post_count": 0, "social": 0, "held": [], "signal_error": "GET ... -> 401: Bad credentials"}]
+def _dead(key, name, status, err):
+    return {"key": key, "name": name, "signal_ok": False, "posts": [], "post_count": 0,
+            "social": 0, "held": [], "signal_status": status, "signal_error": err}
+
+
+def test_shipped_classifies_token_access_and_transient_errors_separately():
+    rows = [_dead("aiphoneguy", "AI Phone Guy", 401, "GitHubError: GET x -> 401: Bad credentials"),
+            _dead("worshipdigital", "Worship Digital", 404, "GitHubError: GET x -> 404: Not Found"),
+            _dead("autointelligence", "Automotive Intelligence", None, "ReadTimeout: HTTPSConnectionPool 401")]
     ctx = CB._Ctx()
     with mock.patch("services.cmo_shipped.collect", return_value=rows), \
-         mock.patch.object(CB, "fetch_all", return_value=[(None,)]):
+         mock.patch.object(CB, "execute_query"), \
+         mock.patch.object(CB, "fetch_all", return_value=[]):
         s = CB._shipped(ctx)
-    assert s["brands"][0]["signal_ok"] is False
-    assert any(b["key"] == "slipstream-gh-token" and "401" in b["text"] for b in ctx.broken)
-    assert s["ape"] == []                         # no digest table -> no ships, no signal
-    assert not any(b["key"] == "ape-digest" for b in ctx.broken)
+    by = {b["key"]: b for b in ctx.broken}
+    assert "AI Phone Guy" in by["slipstream-gh-token"]["text"]
+    assert "Worship Digital" in by["blog-signal-access"]["text"]
+    assert "Automotive Intelligence" in by["blog-signal-unreadable"]["text"]   # '401' in a timeout string is not a token death
+    assert "Worship Digital" not in by["slipstream-gh-token"]["text"]
+    assert "https://" not in "".join(b["text"] for b in ctx.broken)            # no URLs in the Brief
+    assert s["ape"] == [] and not any(b["key"] == "ape-digest" for b in ctx.broken)
 
 
-def test_shipped_dead_engine_other_error_carries_real_error_not_token_story():
-    rows = [{"key": "worshipdigital", "name": "Worship Digital", "signal_ok": False, "posts": [],
-             "post_count": 0, "social": 0, "held": [], "signal_error": "GET ... -> 404: Not Found"}]
+def test_shipped_unset_token_is_the_token_story():
+    rows = [_dead("aiphoneguy", "AI Phone Guy", None, "no GitHub token (SLIPSTREAM_GH_TOKEN unset)")]
     ctx = CB._Ctx()
     with mock.patch("services.cmo_shipped.collect", return_value=rows), \
-         mock.patch.object(CB, "fetch_all", return_value=[(None,)]):
+         mock.patch.object(CB, "execute_query"), \
+         mock.patch.object(CB, "fetch_all", return_value=[]):
         CB._shipped(ctx)
-    keys = [b["key"] for b in ctx.broken]
-    assert "blog-signal" in keys and "slipstream-gh-token" not in keys
-    assert any("404" in b["text"] for b in ctx.broken)
+    assert [b["key"] for b in ctx.broken] == ["slipstream-gh-token"]
+
+
+def test_shipped_reads_ape_queue_rows_and_keeps_ids_for_later_marking():
+    ctx = CB._Ctx()
+    with mock.patch("services.cmo_shipped.collect", return_value=[]), \
+         mock.patch.object(CB, "execute_query") as ddl, \
+         mock.patch.object(CB, "fetch_all", return_value=[(7, "Infrastructure", '{"action_summary": "rotated a cert"}')]):
+        s = CB._shipped(ctx)
+    assert ddl.called                                     # lazy DDL ran, no special-casing
+    assert s["ape"] == [{"id": 7, "persona": "Infrastructure", "summary": "rotated a cert"}]
+
+
+def test_shipped_ape_read_failure_is_a_broken_signal():
+    ctx = CB._Ctx()
+    with mock.patch("services.cmo_shipped.collect", return_value=[]), \
+         mock.patch.object(CB, "execute_query", side_effect=RuntimeError("db down")):
+        s = CB._shipped(ctx)
+    assert s["ape"] == [] and any(b["key"] == "ape-digest" for b in ctx.broken)
 
 
 def test_scoreboard_minor_only_when_moved():

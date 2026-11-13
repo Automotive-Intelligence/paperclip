@@ -128,3 +128,27 @@ def test_shipped_lines_include_social_and_extra_more():
     assert "blog: A" in lines
     assert any("+2 more" in x for x in lines)
     assert any("6 social" in x for x in lines)
+
+
+def test_signal_reason_and_lines_use_the_real_error():
+    from services import cmo_shipped as CS
+    row404 = {"signal_ok": False, "signal_status": 404, "signal_error": "GitHubError: GET u -> 404: Not Found"}
+    row401 = {"signal_ok": False, "signal_status": 401, "signal_error": "GitHubError: GET u -> 401: Bad credentials"}
+    rownotok = {"signal_ok": False, "signal_status": None, "signal_error": "no GitHub token (SLIPSTREAM_GH_TOKEN unset)"}
+    assert "404" in CS.signal_reason(row404) and "token" not in CS.shipped_lines(row404)[0].split("(")[0]
+    assert "401" in CS.signal_reason(row401)
+    assert CS.signal_reason(rownotok) == "no GitHub token"
+    assert CS.shipped_lines(row404) == ["engine signal unavailable (repo not found or token has no access (404))"]
+
+
+def test_collect_records_status_from_github_error():
+    from services import cmo_shipped as CS
+
+    def gh_get(url, token):
+        raise CS.GitHubError(url, 404, '{"message":"Not Found"}')
+
+    rows = CS.collect(gh_token="tok", registry_text="", gh_get=gh_get)
+    dead = [r for r in rows if r.get("repo") or r["key"] != "bookd"]
+    wd = next(r for r in rows if r["key"] == "worshipdigital")
+    assert wd["signal_ok"] is False and wd["signal_status"] == 404
+    assert "https://" not in CS.signal_reason(wd)

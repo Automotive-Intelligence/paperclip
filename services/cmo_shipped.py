@@ -116,6 +116,33 @@ def _gh_token() -> str:
     return (os.environ.get("SLIPSTREAM_GH_TOKEN") or "").strip()
 
 
+class GitHubError(RuntimeError):
+    """A failed GitHub read with its HTTP status, so consumers can tell a dead token
+    (401) from a missing repo (404) from a transient outage (5xx / timeout)."""
+
+    def __init__(self, url: str, status: Optional[int], body: str = ""):
+        self.status = status
+        self.url = url
+        super().__init__(f"GET {url} -> {status}: {body[:200]}")
+
+
+def signal_reason(row: Dict[str, Any]) -> str:
+    """Short human reason for a signal_ok=False row (no URLs, no JSON bodies)."""
+    st = row.get("signal_status")
+    err = row.get("signal_error") or ""
+    if err.startswith("no GitHub token"):
+        return "no GitHub token"
+    if st == 401:
+        return "GitHub token rejected (401)"
+    if st == 404:
+        return "repo not found or token has no access (404)"
+    if st == 403:
+        return "GitHub refused the read (403)"
+    if st:
+        return f"GitHub HTTP {st}"
+    return (err.split(":")[0] or "unreadable")[:80]
+
+
 def _default_gh_get(url: str, token: str) -> Any:
     r = requests.get(
         url,
@@ -128,7 +155,7 @@ def _default_gh_get(url: str, token: str) -> Any:
         timeout=_REQUEST_TIMEOUT,
     )
     if not r.ok:
-        raise RuntimeError(f"GET {url} -> {r.status_code}: {r.text[:200]}")
+        raise GitHubError(url, r.status_code, r.text)
     return r.json() if r.text else []
 
 
@@ -297,7 +324,7 @@ def collect(
         row: Dict[str, Any] = {
             "key": b.key, "name": b.name, "autonomy": b.autonomy, "light": b.light,
             "posts": [], "post_count": 0, "social": social_n,
-            "held": [], "signal_ok": True,
+            "held": [], "signal_ok": True, "signal_status": None, "signal_error": None,
         }
         if not b.repo:
             # No Slipstream rail (Book'd) -- social-only, blog signal N/A but OK.
@@ -316,7 +343,8 @@ def collect(
         except Exception as e:  # noqa: BLE001 - degrade to "unavailable", not false-negative
             logger.warning("[cmo-shipped] %s blog signal failed: %s", b.key, e)
             row["signal_ok"] = False
-            row["signal_error"] = str(e)[:200]
+            row["signal_status"] = getattr(e, "status", None)
+            row["signal_error"] = f"{type(e).__name__}: {str(e)[:160]}"
         try:
             row["held"] = list_open_blog_prs(b.repo, token, gh_get)
         except Exception as e:  # noqa: BLE001 - held is best-effort
@@ -328,7 +356,7 @@ def collect(
 def shipped_lines(row: Dict[str, Any]) -> List[str]:
     """Human-readable 'Shipped (auto)' cell for one brand row."""
     if not row.get("signal_ok", True):
-        return ["engine signal unavailable (check SLIPSTREAM_GH_TOKEN / Slipstream)"]
+        return [f"engine signal unavailable ({signal_reason(row)})"]
     lines: List[str] = []
     for title in row.get("posts", []):
         lines.append(f"blog: {title}")
