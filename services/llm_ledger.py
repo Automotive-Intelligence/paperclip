@@ -185,6 +185,42 @@ def record_from_response(
         return None
 
 
+def window_totals(hours: int = 24) -> Dict[str, Any]:
+    """Same shape as daily_totals, over the trailing `hours` (the CEO Brief compares
+    this against agent_logs over the same trailing window, so neither side can
+    straddle a UTC date boundary the other does not)."""
+    out: Dict[str, Any] = {"day": f"last {int(hours)}h", "total_usd": 0.0, "calls": 0,
+                           "by_persona": [], "by_model": [], "by_client": []}
+    try:
+        total = fetch_all(
+            "SELECT COALESCE(SUM(cost_usd),0), COUNT(*) FROM llm_spend_ledger "
+            "WHERE ts >= NOW() - make_interval(hours => %s)", (int(hours),))
+        out["total_usd"] = float(total[0][0]) if total else 0.0
+        out["calls"] = int(total[0][1]) if total else 0
+        out["by_persona"] = [
+            {"persona": r[0] or "(untagged)", "cost_usd": float(r[1]), "calls": int(r[2])}
+            for r in fetch_all(
+                "SELECT persona, SUM(cost_usd), COUNT(*) FROM llm_spend_ledger "
+                "WHERE ts >= NOW() - make_interval(hours => %s) GROUP BY persona "
+                "ORDER BY SUM(cost_usd) DESC", (int(hours),))
+        ]
+    except Exception as e:
+        logger.warning("[llm_ledger] window_totals failed: %s", e)
+    return out
+
+
+def month_to_date_total(day=None) -> float:
+    """Sum of ledger cost from the 1st of `day`'s month through `day` (UTC dates)."""
+    day = day or datetime.now(timezone.utc).date()
+    first = day.replace(day=1)
+    rows = fetch_all(
+        "SELECT COALESCE(SUM(cost_usd),0) FROM llm_spend_ledger "
+        "WHERE ts::date >= %s AND ts::date <= %s",
+        (first, day),
+    )
+    return float(rows[0][0]) if rows else 0.0
+
+
 def daily_totals(day: Optional[date] = None) -> Dict[str, Any]:
     """Spend rollup for a single UTC day (defaults to today).
 

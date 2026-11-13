@@ -887,6 +887,20 @@ def _send_critical_alert(result: SweepResult) -> bool:
     if not critical:
         return False
 
+    # Since 2026-11-06 a red sweep is filed for the CEO Brief ("Needs you today" +
+    # the Broken-signals line) instead of an immediate email. Flip
+    # INFRA_CRITICAL_EMAIL=on on Railway to get the immediate send back.
+    from services import brief_items
+    filed = 0
+    for f in critical:
+        if brief_items.add("failure", f"Infrastructure critical [{f.check}]: {f.title}",
+                           fingerprint=f"infra:{f.check}:{f.title[:120]}:{result.finished_at[:10]}",
+                           brand="infra", detail=(f.detail or "")[:600]):
+            filed += 1
+    if (os.getenv("INFRA_CRITICAL_EMAIL") or "").strip().lower() not in ("1", "true", "yes", "on"):
+        logger.info("[infra_sweep] %d critical finding(s) filed to the CEO Brief (no email)", filed)
+        return filed > 0
+
     rows = "".join(
         f"<li style='margin:8px 0;'><b>[{f.check}]</b> {f.title}"
         f"{('<br><span style=color:#555;font-size:12px>' + f.detail.replace(chr(10), ' ') + '</span>') if f.detail else ''}"

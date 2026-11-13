@@ -97,3 +97,21 @@ def test_sms_and_email_build():
     assert "need you" in sms
     html = postal_escalation.build_email_html(items)
     assert "wd" in html and "avi" in html
+
+
+def test_send_escalations_files_to_brief_not_email(monkeypatch):
+    from unittest import mock
+    from services import brief_items
+    monkeypatch.setenv("POSTAL_ESCALATE_ENABLED", "true")
+    filed = []
+    items = [
+        {"account": "wd", "category": "intent_reply", "sender": "a@b.com", "subject": "Re: hi",
+         "snippet": "we want a site", "thread_id": "t1"},
+        {"account": "wd", "category": "intent_reply", "sender": "a@b.com", "subject": "Re: hi",
+         "snippet": "we want a site", "thread_id": "t1"},
+    ]
+    with mock.patch.object(brief_items, "add",
+                           side_effect=lambda *a, **k: filed.append(k["fingerprint"]) or (len(filed) == 1)):
+        res = postal_escalation.send_escalations(items)
+    assert res == {"escalated": 2, "sent": False, "filed": 1}
+    assert filed == ["postal:wd:t1", "postal:wd:t1"]      # same thread -> one row

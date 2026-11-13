@@ -169,3 +169,37 @@ def test_money_pages_come_from_the_shared_config():
     pages = se._money_pages()
     assert any("theaiphoneguy.com/discovery" in u for u in pages["aipg"])
     assert all(u.startswith("https://") for v in pages.values() for u in v)
+
+
+def test_run_failure_dry_run_never_files_or_suppresses(monkeypatch):
+    from services import brief_items
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "tok")
+    bad = _video(comment_ask="")
+    with mock.patch.object(se, "fetch_repo_file", return_value=None), \
+         mock.patch.object(se, "list_existing_titles", return_value=[]), \
+         mock.patch.object(se, "generate_videos", return_value=[bad]), \
+         mock.patch.object(se, "send_scripts_email", return_value=True), \
+         mock.patch.object(brief_items, "add") as add, \
+         mock.patch.object(brief_items, "last_detail", return_value="gate failed twice: x") as last:
+        r = se.run(dry_run=True, today=date(2026, 8, 9))
+    assert r["ok"] is False and r["failure_emailed"] and r["failure_repeat"] is False
+    assert not add.called and not last.called
+
+
+def test_run_failure_repeat_reason_files_without_email(monkeypatch):
+    from services import brief_items
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "tok")
+    bad = _video(comment_ask="")
+    sent = []
+    with mock.patch.object(se, "fetch_repo_file", return_value=None), \
+         mock.patch.object(se, "list_existing_titles", return_value=[]), \
+         mock.patch.object(se, "generate_videos", return_value=[bad]), \
+         mock.patch.object(se, "send_scripts_email", side_effect=lambda *a, **k: sent.append(a) or True), \
+         mock.patch.object(se, "_commit_files_to_main", create=True), \
+         mock.patch.object(brief_items, "add", return_value=True) as add, \
+         mock.patch.object(brief_items, "last_detail",
+                           side_effect=lambda prefix: "gate failed twice: " + "x" * 200):
+        r = se.run(dry_run=False, today=date(2026, 8, 9))
+    assert r["ok"] is False and add.called
+    assert r["failure_repeat"] is (r["error"][:120] == ("gate failed twice: " + "x" * 200)[:120])
+    assert r["failure_emailed"] is (not r["failure_repeat"])

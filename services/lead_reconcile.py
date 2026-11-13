@@ -76,21 +76,17 @@ def _ghl_recent_count(hours: int) -> Optional[int]:
     return n
 
 
-def _alert(subject: str, html: str) -> bool:
-    key = (os.getenv("RESEND_API_KEY") or "").strip()
-    to_addr = (os.getenv("LEAD_ALERT_TO") or "michael@automotiveintelligence.io").strip()
-    frm = os.getenv("LEAD_ALERT_FROM", "AVO <cmo@mail.automotiveintelligence.io>")
-    if not key:
-        logger.error("[reconcile] RESEND_API_KEY missing; cannot alert: %s", subject)
-        return False
-    try:
-        r = requests.post(_RESEND, timeout=15,
-                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                          json={"from": frm, "to": [to_addr], "subject": subject, "html": html})
-        return r.ok
-    except requests.RequestException:
-        logger.exception("[reconcile] alert failed")
-        return False
+def _alert(subject: str, html: str, brand: str = "aipg") -> bool:
+    """File the delta for the CEO Brief (Broken signals / Needs you) instead of an
+    immediate email; one row per subject per day."""
+    import re as _re
+    from datetime import date as _date
+    from services import brief_items
+    text = _re.sub(r"<[^>]+>", " ", html or "")
+    text = _re.sub(r"\s+", " ", text).strip()
+    return brief_items.add("failure", subject[:200],
+                           fingerprint=f"reconcile:{subject[:120]}:{_date.today().isoformat()}",
+                           brand=brand, detail=text[:600])
 
 
 def reconcile(brand: str = "aipg", hours: int = 24, *, commit: bool = True) -> Dict[str, Any]:
@@ -103,7 +99,7 @@ def reconcile(brand: str = "aipg", hours: int = 24, *, commit: bool = True) -> D
         detail = f"CRM unreadable; store has {store_n} {brand} lead(s) in {hours}h"
         alerted = _alert(f"[Reconcile] {brand.upper()} CRM unreadable -- cannot verify funnel",
                          f"<p>Reconciliation could NOT read GHL, so a silent drop cannot be "
-                         f"ruled out.</p><p>{detail}</p>") if commit else False
+                         f"ruled out.</p><p>{detail}</p>", brand) if commit else False
         return {"ok": False, "brand": brand, "store": store_n, "crm": None,
                 "delta": None, "alerted": alerted, "note": "CRM unreadable (fail closed)"}
 
@@ -116,7 +112,7 @@ def reconcile(brand: str = "aipg", hours: int = 24, *, commit: bool = True) -> D
             f"<p>System of record and CRM disagree over the last {hours}h.</p><ul>"
             f"<li>system of record (lead_store): <b>{store_n}</b></li>"
             f"<li>CRM (GHL, tag {_TAG}): <b>{crm_n}</b></li>"
-            f"<li>delta: <b>{delta:+d}</b> -- {direction}</li></ul>") if commit else False
+            f"<li>delta: <b>{delta:+d}</b> -- {direction}</li></ul>", brand) if commit else False
         return {"ok": False, "brand": brand, "store": store_n, "crm": crm_n,
                 "delta": delta, "alerted": alerted}
 

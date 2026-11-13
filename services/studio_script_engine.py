@@ -312,9 +312,9 @@ def send_scripts_email(subject: str, md_body: str, *, dry_run: bool = False) -> 
     # that demonstrably lands. Sending to michael@ alone reported delivered at
     # Resend while nothing appeared in the mailbox Michael actually reads, so
     # every shoot sheet since 08-06 went nowhere he could see it.
+    # One inbox only (CEO Brief spec, 2026-11-06): the salesdroid duplicate is off.
     to = [a.strip() for a in os.getenv(
-        "SCRIPT_ENGINE_TO",
-        "michael@automotiveintelligence.io,salesdroid@gmail.com").split(",") if a.strip()]
+        "SCRIPT_ENGINE_TO", "michael@automotiveintelligence.io").split(",") if a.strip()]
     if dry_run:
         logger.info("[script-engine] DRY RUN: would email %r (%d chars) to %s",
                     subject, len(md_body), ", ".join(to))
@@ -405,9 +405,24 @@ def run(dry_run: bool = False, today: Optional[date] = None) -> Dict[str, Any]:
                f"**Error:** {e}\n\nNo scripts were generated. Reply here or rerun "
                f"POST /admin/run-script-engine after the fix. A silent Sunday is the "
                f"failure mode this engine exists to prevent, so you are hearing about it.")
-        emailed = send_scripts_email(f"🔴 Script engine FAILED · shoot {shoot.strftime('%b %-d')}",
-                                     msg, dry_run=dry_run)
-        if not emailed:
-            _alert_issue(f"script-engine: RUN FAILED for {shoot}", msg, token)
-        receipt.update(ok=False, error=str(e)[:400], failure_emailed=emailed)
+        # The failure is filed for the CEO Brief every time. The immediate email
+        # fires only when the failure REASON is new: the same dead token failing
+        # four Sundays in a row is a Broken-signals line, not four alerts.
+        # A dry run (preview) neither files a row nor suppresses the real run.
+        from services import brief_items
+        repeat = False
+        if not dry_run:
+            prev = brief_items.last_detail("script-engine:")
+            repeat = brief_items.same_root_cause(prev, str(e))
+            brief_items.add("failure", f"Script engine failed for the {shoot} shoot: no scripts generated",
+                            fingerprint=f"script-engine:{shoot.isoformat()}", brand="studio",
+                            detail=str(e)[:400])
+        emailed = False
+        if not repeat:
+            emailed = send_scripts_email(f"🔴 Script engine FAILED · shoot {shoot.strftime('%b %-d')}",
+                                         msg, dry_run=dry_run)
+            if not emailed:
+                _alert_issue(f"script-engine: RUN FAILED for {shoot}", msg, token)
+        receipt.update(ok=False, error=str(e)[:400], failure_emailed=emailed,
+                       failure_repeat=repeat)
         return receipt
