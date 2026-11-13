@@ -325,10 +325,137 @@ def test_every_owned_brand_is_weekly_and_the_client_is_untouched():
     b = c["brands"]
     # 2026-11-09 (Michael): BAE + Book'd sites are no longer running, so those two
     # are OFF (the rotated SLIPSTREAM_GH_TOKEN has no access to their repos).
-    for k in ("worshipdigital", "bookd", "agentempire", "autointelligence", "aiphoneguy"):
+    # 2026-11-11: Equity Pulse joins as a weekly, enabled, human-merged brand.
+    for k in ("worshipdigital", "bookd", "agentempire", "autointelligence", "aiphoneguy",
+              "equitypulse"):
         assert b[k]["cadence"] == "weekly", k
-    for k in ("worshipdigital", "autointelligence", "aiphoneguy"):
+    for k in ("worshipdigital", "autointelligence", "aiphoneguy", "equitypulse"):
         assert b[k]["enabled"] is True, f"{k} must stay enabled, just slower"
     for k in ("bookd", "agentempire"):
         assert b[k]["enabled"] is False, f"{k} is retired (2026-11-09)"
     assert "cadence" not in b["paperandpurpose"] or b["paperandpurpose"]["cadence"] == "mwf"
+
+
+# ------------------------------------------------------------- url_prefix
+# Equity Pulse publishes under /learn, not /blog. "/blog/" used to be assumed in
+# the site root, the live URL and the social media URL, so a non-/blog brand would
+# have checked off, linked and shared a 404.
+_EP_CFG = {"brand_key": "equitypulse", "repo": "salesdroid/equity-pulse",
+           "domain": "getequitypulse.com", "url_prefix": "learn",
+           "blog_dir": "src/content/learn", "business_key": "equitypulse",
+           "money_pages": ["/learn"], "voice": "asset lens"}
+
+
+def _patch_ep(cfg):
+    return (
+        mock.patch.object(se, "_brand_cfg", return_value=cfg),
+        mock.patch.object(se, "generate_post", return_value=_POST),
+        mock.patch.object(se, "generate_images", return_value={"hero": b"H", "gap": b"G"}),
+        mock.patch.object(se, "assemble_mdx", return_value=("MDX", [])),
+        mock.patch.object(se, "publish_post", return_value="https://gh/pull/9"),
+    )
+
+
+def test_url_prefix_defaults_to_blog_and_normalizes_slashes():
+    assert se._url_prefix({}) == "blog"
+    assert se._url_prefix({"url_prefix": None}) == "blog"
+    assert se._url_prefix({"url_prefix": ""}) == "blog"
+    assert se._url_prefix({"url_prefix": "/learn/"}) == "learn"
+    assert se._live_url({"domain": "d.com"}, "s") == "https://d.com/blog/s"
+    assert se._live_url({"domain": "d.com", "url_prefix": "learn"}, "s") == "https://d.com/learn/s"
+    assert se._live_url({}, "s") == ""
+
+
+def test_site_root_splits_on_the_brand_prefix():
+    assert se._site_root("https://d.com/blog/s") == "https://d.com"
+    assert se._site_root("https://d.com/learn/s", "learn") == "https://d.com"
+
+
+def test_prefixed_brand_publishes_under_its_own_route_with_images_under_blog():
+    """The article goes to blog_dir and the live URL uses url_prefix, but images
+    stay in public/blog/: the generator, the gate and heroImage all say /blog/."""
+    ps = _patch_ep(_EP_CFG)
+    with ps[0], ps[1], ps[2], ps[3], ps[4] as pub, \
+         mock.patch.object(se, "merge_when_green", return_value={"merged": True}), \
+         mock.patch.object(se, "_distribute_social", return_value={"ok": False}) as ds, \
+         mock.patch.object(se, "_checkoff_topic", return_value=True) as co:
+        out = se.run_brand("equitypulse", topic="t", token="tok", date_str="2026-11-16")
+    assert out["live_url"] == "https://getequitypulse.com/learn/my-post"
+    co.assert_called_once_with(_EP_CFG, "t", "https://getequitypulse.com/learn/my-post", "tok")
+    assert ds.call_args.args[3] == "https://getequitypulse.com/learn/my-post"
+    paths = list(pub.call_args.args[2].keys())
+    assert "src/content/learn/my-post.mdx" in paths
+    assert "public/blog/my-post-hero.png" in paths
+    assert not any(p.startswith("public/learn/") for p in paths)
+
+
+def test_social_media_url_uses_blog_image_dir_for_a_prefixed_brand():
+    cfg = {**_EP_CFG, "zernio_accounts": {"linkedin": "acct_li"}}
+    with mock.patch("services.social_load_service.run_social_load",
+                    return_value={"ok": True, "counts": {"scheduled": 1}}) as rsl:
+        se._distribute_social(cfg, _POST, "my-post", "https://getequitypulse.com/learn/my-post")
+    job = rsl.call_args[0][0][0]
+    assert job["media_urls"] == ["https://getequitypulse.com/blog/my-post-hero.png"]
+    assert job["content"].endswith("https://getequitypulse.com/learn/my-post")
+
+
+def test_config_auto_merge_false_opens_pr_only_and_still_advances_the_queue():
+    """EP is human-merged by config. The engine must never merge or fire social,
+    but it MUST check the topic off (against the PR) or the weekly cron reopens a
+    PR for the same topic every Monday (the WD #17/#18/#19 failure)."""
+    cfg = {**_EP_CFG, "auto_merge": False}
+    ps = _patch_ep(cfg)
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         mock.patch.object(se, "merge_when_green") as mw, \
+         mock.patch.object(se, "_distribute_social") as ds, \
+         mock.patch.object(se, "_checkoff_topic", return_value=True) as co:
+        out = se.run_brand("equitypulse", topic="when to trade in a car", token="tok",
+                           date_str="2026-11-16")
+    mw.assert_not_called()
+    ds.assert_not_called()
+    assert out["published"] is False and out["pr_url"] == "https://gh/pull/9"
+    assert "human merges" in out["note"]
+    co.assert_called_once_with(cfg, "when to trade in a car", "PR: https://gh/pull/9", "tok")
+    assert out["topic_checked_off"] is True
+    assert out["live_url_after_merge"] == "https://getequitypulse.com/learn/my-post"
+
+
+def test_caller_auto_merge_false_does_not_touch_the_queue():
+    """A supervised one-off (caller passes auto_merge=False on an auto-merge brand)
+    must stay repeatable: no check-off."""
+    ps = _patch_all([])
+    with ps[0], ps[1], ps[2], ps[3], ps[4], \
+         mock.patch.object(se, "_checkoff_topic") as co:
+        out = se.run_brand("autointelligence", topic="t", token="tok",
+                           date_str="2026-07-19", auto_merge=False)
+    co.assert_not_called()
+    assert "topic_checked_off" not in out
+
+
+def test_equitypulse_real_config():
+    """Guard the real yaml: /learn route, human-merged, and NO social accounts, so
+    an EP article can never fan out to (or cross-post onto) any feed."""
+    se._load_cfg.cache_clear()
+    cfg = se._brand_cfg("equitypulse")
+    assert cfg["repo"] == "salesdroid/equity-pulse"
+    assert cfg["domain"] == "getequitypulse.com"
+    assert cfg["url_prefix"] == "learn" and cfg["blog_dir"] == "src/content/learn"
+    assert cfg["auto_merge"] is False
+    assert cfg.get("format", "mdx") == "mdx"
+    assert cfg["queue_repo"] == "salesdroid/avo-telemetry"
+    assert cfg["queue_path"] == "scripts/blog_queues/equitypulse_topics.md"
+    assert cfg["zernio_accounts"] == {}
+    assert "equitypulse" not in se._load_cfg()["zernio_accounts"]
+    assert "\u2014" not in cfg["voice"]
+    with mock.patch("services.social_load_service.run_social_load") as rsl:
+        out = se._distribute_social(cfg, {"social": {"linkedin": "a", "x": "b", "facebook": "c",
+                                                     "instagram": "d"}},
+                                    "s", "https://getequitypulse.com/learn/s")
+    rsl.assert_not_called()
+    assert out == {"ok": False, "note": "no social drafts"}
+
+
+def test_equitypulse_has_an_image_style():
+    from tools.image_gen import BRAND_PROMPT_STYLES
+    style = BRAND_PROMPT_STYLES["equitypulse"]
+    assert "#10B981" in style and "navy" in style and "NO faces" in style

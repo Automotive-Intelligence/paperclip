@@ -55,9 +55,30 @@ def _social_distribution_enabled() -> bool:
         "0", "false", "no", "off")
 
 
-def _site_root(live_url: str) -> str:
-    """https://host/blog/slug -> https://host"""
-    return live_url.rsplit("/blog/", 1)[0]
+def _url_prefix(cfg: dict) -> str:
+    """The path segment a brand's articles live under: https://host/<prefix>/<slug>.
+
+    Optional per-brand `url_prefix` in config/slipstream_brands.yaml, default
+    "blog". Equity Pulse publishes under /learn, and until this existed "/blog/"
+    was assumed in three places (site root, live URL, social media URL), so a
+    non-/blog brand would have checked off and shared a 404.
+
+    This is the ARTICLE route only. Images are a separate, fixed rule: every
+    non-tsx_post brand commits them to public/blog/ and serves them from /blog/
+    (the generator prompt, the validate gate and the frontmatter heroImage all
+    say /blog/), whatever the article prefix is."""
+    return str((cfg or {}).get("url_prefix") or "blog").strip().strip("/") or "blog"
+
+
+def _live_url(cfg: dict, slug: str) -> str:
+    """https://<domain>/<url_prefix>/<slug>. Empty string if the brand has no domain."""
+    domain = (cfg or {}).get("domain", "")
+    return f"https://{domain}/{_url_prefix(cfg)}/{slug}" if domain else ""
+
+
+def _site_root(live_url: str, url_prefix: str = "blog") -> str:
+    """https://host/<url_prefix>/slug -> https://host"""
+    return live_url.rsplit(f"/{url_prefix}/", 1)[0]
 
 
 # A merged blog PR starts a NEW production deploy; the article and its hero image
@@ -160,7 +181,9 @@ def _distribute_social(cfg: dict, post: dict, slug: str, live_url: str) -> dict:
                 # /blog/. Hardcoding /blog/ here produced a 404 media URL for
                 # Book'd, and Zernio REJECTS an Instagram post whose media does
                 # not resolve, so every IG post for that brand failed at the API.
-                "media_urls": [f"{_site_root(live_url)}/"
+                # The site root is split on the brand's ARTICLE prefix (/learn
+                # for Equity Pulse); the image dir does not follow that prefix.
+                "media_urls": [f"{_site_root(live_url, _url_prefix(cfg))}/"
                                f"{'img' if cfg.get('format') == 'tsx_post' else 'blog'}"
                                f"/{slug}-hero.png"],
             })
@@ -484,6 +507,17 @@ def run_brand(
         note = "PR opened (auto_merge off)"
         if auto_merge and not cfg.get("auto_merge", True):
             note = "PR opened (auto_merge disabled in brand config; human merges)"
+            # A brand that is human-merged BY CONFIG still has to advance its
+            # queue, or every scheduled run regenerates the same topic and opens
+            # another PR for it (WD did exactly that: PRs #17/#18/#19, one topic).
+            # Check the topic off against the PR, not a live URL: nothing is live
+            # yet. Only on the config ceiling, never when a caller passed
+            # auto_merge=False for a supervised one-off (that run must stay
+            # repeatable). Reversible: a human unchecks the line to re-run it.
+            result["topic_checked_off"] = _checkoff_topic(cfg, topic, f"PR: {pr_url}", token)
+            would_be = _live_url(cfg, slug)
+            if would_be:
+                result["live_url_after_merge"] = would_be
         return {**result, "published": False, "note": note}
 
     # Auto-publish, gated on the Vercel preview build. A red build HOLDS the PR.
@@ -498,8 +532,7 @@ def run_brand(
         logger.warning("[slipstream] %s NOT merged: %s", brand_key, m.get("reason"))
         return {**result, "note": f"held for review: {m.get('reason')}"}
 
-    domain = cfg.get("domain", "")
-    live_url = f"https://{domain}/blog/{slug}" if domain else pr_url
+    live_url = _live_url(cfg, slug) or pr_url
     result["live_url"] = live_url
     result["topic_checked_off"] = _checkoff_topic(cfg, topic, live_url, token)
     result["social"] = _distribute_social(cfg, post, slug, live_url)
