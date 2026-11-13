@@ -94,9 +94,9 @@ BRANDS: List[Brand] = [
     Brand("autointelligence", "Automotive Intelligence", "auto", "\U0001F7E2",
           "salesdroid/automotive-intelligence", "src/content/blog",
           ("avi",), "automotiveintelligence.io"),
-    Brand("agentempire", "Build Agent Empire", "auto", "\U0001F7E2",
-          "salesdroid/buildagentempire", "src/content/blog",
-          ("agent_empire",), "buildagentempire.com"),
+    # Build Agent Empire removed 2026-11-12: the site is no longer running (Slipstream
+    # disabled it 11-09, PR #313) and the new SLIPSTREAM_GH_TOKEN has no access to the
+    # repo, so every read 404'd and the brief called it "engine signal unavailable".
     # AIPG promoted partial->auto 2026-08-13: it auto-publishes MDX like the other
     # three (auto_merge unset -> defaults true); the "partial" label was stale from
     # the .ai->.com + OAuth issues, now resolved. Blog autonomy is full-auto.
@@ -305,6 +305,7 @@ def collect(
             continue
         if not token:
             row["signal_ok"] = False
+            row["signal_error"] = "no GitHub token (SLIPSTREAM_GH_TOKEN unset)"
             rows.append(row)
             continue
         try:
@@ -315,6 +316,7 @@ def collect(
         except Exception as e:  # noqa: BLE001 - degrade to "unavailable", not false-negative
             logger.warning("[cmo-shipped] %s blog signal failed: %s", b.key, e)
             row["signal_ok"] = False
+            row["signal_error"] = str(e)[:200]
         try:
             row["held"] = list_open_blog_prs(b.repo, token, gh_get)
         except Exception as e:  # noqa: BLE001 - held is best-effort

@@ -218,17 +218,30 @@ def _shipped(ctx: _Ctx) -> Dict[str, Any]:
                        "held": held, "signal_ok": r.get("signal_ok", True),
                        "post_count": r.get("post_count", 0), "social": r.get("social", 0)})
     if dead:
-        ctx.signal("slipstream-gh-token",
-                   "Blog engine signal unavailable for " + ", ".join(dead)
-                   + ": SLIPSTREAM_GH_TOKEN on Railway returns 401 (deleted in the 10-21 "
-                   "breach rotation). Blog, social, script engine and the APE handoff "
-                   "poller are all dark on it.",
-                   "Mint a fine-grained GitHub token on the salesdroid account with "
-                   "Contents read/write + Pull requests read/write on the brand repos and "
-                   "salesdroid/avo-telemetry; set it as SLIPSTREAM_GH_TOKEN on the "
-                   "paperclip Railway service.")
+        errors = {r["name"]: (r.get("signal_error") or "unknown error")
+                  for r in rows if not r.get("signal_ok", True)}
+        detail = "; ".join(f"{n}: {e[:120]}" for n, e in errors.items())
+        if any("401" in e for e in errors.values()):
+            ctx.signal("slipstream-gh-token",
+                       "Blog engine signal unavailable for " + ", ".join(dead)
+                       + ": SLIPSTREAM_GH_TOKEN on Railway returns 401. Blog, social, "
+                       "script engine and the APE handoff poller are all dark on it.",
+                       "Mint a fine-grained GitHub token (salesdroid) with Contents + Pull "
+                       "requests on the brand repos and avo-telemetry; set it as "
+                       "SLIPSTREAM_GH_TOKEN on the paperclip Railway service.")
+        else:
+            ctx.signal("blog-signal",
+                       "Blog engine signal unavailable for " + ", ".join(dead) + " (" + detail + ")",
+                       "Check the brand repo name and the token's repo access in "
+                       "services/cmo_shipped.BRANDS.")
 
     def _ape():
+        # The digest queue table is created by the APE writer on first use; on an
+        # install where no routine ship was ever queued it does not exist, and that
+        # is "no ships", not a broken feed.
+        exists = fetch_all("SELECT to_regclass('ape_routine_digest_queue')")
+        if not exists or exists[0][0] is None:
+            return []
         rows_ = fetch_all(
             "SELECT id, persona, envelope FROM ape_routine_digest_queue "
             "WHERE sent_at IS NULL ORDER BY queued_at ASC LIMIT 50")

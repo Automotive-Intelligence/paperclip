@@ -87,15 +87,29 @@ def test_portal_unwired_is_a_broken_signal(monkeypatch):
     assert any(b["key"] == "portal-feed" for b in ctx.broken)
 
 
-def test_shipped_dead_engine_signal_lists_token_fix():
+def test_shipped_dead_engine_401_lists_token_fix():
     rows = [{"key": "aiphoneguy", "name": "AI Phone Guy", "signal_ok": False, "posts": [],
-             "post_count": 0, "social": 0, "held": []}]
+             "post_count": 0, "social": 0, "held": [], "signal_error": "GET ... -> 401: Bad credentials"}]
     ctx = CB._Ctx()
     with mock.patch("services.cmo_shipped.collect", return_value=rows), \
-         mock.patch.object(CB, "fetch_all", return_value=[]):
+         mock.patch.object(CB, "fetch_all", return_value=[(None,)]):
         s = CB._shipped(ctx)
     assert s["brands"][0]["signal_ok"] is False
     assert any(b["key"] == "slipstream-gh-token" and "401" in b["text"] for b in ctx.broken)
+    assert s["ape"] == []                         # no digest table -> no ships, no signal
+    assert not any(b["key"] == "ape-digest" for b in ctx.broken)
+
+
+def test_shipped_dead_engine_other_error_carries_real_error_not_token_story():
+    rows = [{"key": "worshipdigital", "name": "Worship Digital", "signal_ok": False, "posts": [],
+             "post_count": 0, "social": 0, "held": [], "signal_error": "GET ... -> 404: Not Found"}]
+    ctx = CB._Ctx()
+    with mock.patch("services.cmo_shipped.collect", return_value=rows), \
+         mock.patch.object(CB, "fetch_all", return_value=[(None,)]):
+        CB._shipped(ctx)
+    keys = [b["key"] for b in ctx.broken]
+    assert "blog-signal" in keys and "slipstream-gh-token" not in keys
+    assert any("404" in b["text"] for b in ctx.broken)
 
 
 def test_scoreboard_minor_only_when_moved():
