@@ -53,7 +53,7 @@ kpis:
 token_budget_daily_usd: <numeric>        # daily Claude spend ceiling for this persona
 ```
 
-## Persona roster (9)
+## Persona roster (9 functional + 1 brand-GM pilot)
 
 | File | Persona | F1 Analog | Cadence |
 |---|---|---|---|
@@ -66,6 +66,12 @@ token_budget_daily_usd: <numeric>        # daily Claude spend ceiling for this p
 | agent_empire.yaml | Agent Empire | Junior Driver Program | daily |
 | b2b_operations.yaml | B2B Operations | Track Operations | daily |
 | customer_advocate.yaml | Customer Advocate (WEND) | Driver | daily |
+
+Brand-GM pilot (per-brand, not functional — see its `scope:` for why it exists):
+
+| File | Persona | F1 Analog | Cadence |
+|---|---|---|---|
+| twinning_gm.yaml | TWinning Desk GM (pilot) | Team Principal (single-car entry) | weekly |
 
 ## How to review (Michael)
 
