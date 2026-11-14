@@ -9,6 +9,91 @@
 # vercel_project_id below scopes the deployment lookup to the right project.
 vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
 
+# FACT-CHECK + EDITOR GATE (services/slipstream_factcheck.py). Runs in run_brand
+# after the format gate and before any image is bought or PR opened. Added
+# 2026-11-13 after an audit found dead source links, invented numbers, features
+# described that are not live, and an anecdote invented in the founder's voice.
+#
+# `banned` rules are regexes (case-insensitive) matched per sentence across the
+# title, body, FAQ, image alt text and social drafts. A match HOLDS the post.
+#   unless_in_facts: true  -> the sentence is allowed only if that exact sentence
+#                             is in the brand's facts file (an APPROVED statement).
+#   prompt                 -> the same rule in plain words, given to the writer.
+# `defaults` apply to EVERY brand; `brands.<key>` adds to them.
+# Facts files: config/slipstream_facts/<brand_key>.md (override with facts_file).
+factcheck:
+  defaults:
+    # Tokens that look like numbers but are not statistics.
+    figure_allowlist: ["24/7"]
+    banned:
+      - id: first_person_experience
+        label: "first-person founder anecdote or experience claim that is not in the brand facts file"
+        unless_in_facts: true
+        prompt: "Never write a first-person anecdote or experience claim (for example 'Michael here', 'I have sat across', 'in my store', 'we have seen', 'our clients') unless that exact sentence is in APPROVED BRAND FACTS."
+        patterns:
+          - '\b\w+ here\.\s*I\b'
+          - '\bMichael here\b'
+          - '\bI(?:''ve| have| had)\s+(?:sat|seen|watched|worked|sold|run|built|helped|spent|learned|noticed|heard|talked|been)\b'
+          - '\bI (?:sat|saw|watched|worked|sold|ran|built|helped|spent|learned|noticed|remember|once|used to)\b'
+          - '\bin my (?:store|dealership|shop|showroom|experience|years|career|time)\b'
+          - '\b(?:at|on|from) my (?:store|dealership|shop|desk|showroom)\b'
+          - '\bmy (?:clients?|customers?|dealers?)\b'
+          - '\bwe(?:''ve| have) (?:seen|found|watched|worked|helped|built|run|learned|noticed|heard|measured|tested)\b'
+          - '\bwe (?:saw|found|watched|learned|noticed|measured) (?:that|this|it|a|the)\b'
+          - '\bour (?:clients?|customers?|dealers?|own (?:data|numbers|experience)|last \w+ (?:setups?|installs?|launches|clients?|customers?))\b'
+          - '\bin our experience\b'
+          - '\b(?:a|one) (?:client|customer|dealer|owner) (?:of ours|we worked with|told (?:me|us))\b'
+  brands:
+    aiphoneguy:
+      banned:
+        # NOT LIVE as of 2026-11-08: call transfer, call screening, text-back.
+        # CRM / scheduling-software integration is partial at best, and the site
+        # says it does not connect to ServiceTitan, Jobber or Housecall Pro.
+        # Owner alerts go by EMAIL. Remove a rule here only when the feature ships.
+        - id: aipg_call_transfer_not_live
+          label: "call transfer / handing a caller to a human is not a live capability"
+          unless_in_facts: true
+          prompt: "Do not mention transferring, routing, escalating or handing a call to a human or a live person. Call transfer is not live. The AI books an appointment or takes a message."
+          patterns:
+            - '\btransfer(?:s|red|ring|rable)?\b'
+            - '\b(?:rout(?:e|es|ed|ing)|hand(?:s|ed|ing)?[ -]?off|escalat(?:e|es|ed|ing|ion)|pass(?:es|ed|ing)?|patch(?:es|ed|ing)?|connect(?:s|ed|ing)?)\b[^.]{0,60}\b(?:a human|a person|a live (?:agent|person|rep)|a real person|your (?:staff|team|office|front desk)|the owner|a team member)\b'
+            - '\b(?:warm|live|human) (?:transfer|hand[ -]?off)\b'
+        - id: aipg_call_screening_not_live
+          label: "call screening is not a live capability"
+          unless_in_facts: true
+          prompt: "Do not mention call screening, spam filtering or blocking robocalls. It is not live."
+          patterns:
+            - '\bcall[ -]screening\b'
+            - '\bscreen(?:s|ed|ing)? (?:your |the |every |incoming |all )?(?:calls?|callers?)\b'
+            - '\b(?:spam|robocall) (?:call )?(?:filter(?:s|ing)?|block(?:s|ing)?|screening)\b'
+            - '\b(?:filter(?:s|ing)?|block(?:s|ing)?) (?:out )?(?:spam|robocalls?|telemarketers?)\b'
+        - id: aipg_text_back_not_live
+          label: "text-back / SMS follow-up or SMS owner alerts are not live (owner alerts are by email)"
+          unless_in_facts: true
+          prompt: "Do not mention text-back, missed-call texts, or texting the owner or the caller. It is not live. Owner alerts go by email."
+          patterns:
+            - '\btext[- ]?backs?\b'
+            - '\bmissed[- ]call text\w*\b'
+            - '\b(?:texts?|SMS|text messages?)\b[^.]{0,40}\b(?:you|the owner|the caller|callers?|customers?|alerts?|notif\w+|summar\w+|details|confirmations?)\b'
+            - '\b(?:alerts?|notif\w+|summar\w+|confirmations?)\b[^.]{0,30}\b(?:by|via|over|as a) (?:text|SMS)\b'
+        - id: aipg_crm_scheduling_integration_not_live
+          label: "scheduling-software / CRM integration is not a live capability"
+          unless_in_facts: true
+          prompt: "Do not describe any integration, connection, sync, login or API access with scheduling software or a CRM (ServiceTitan, Jobber, Housecall Pro or any other). It is not live. Bookings go onto a calendar we set up."
+          patterns:
+            - '\b(?:ServiceTitan|Jobber|Housecall Pro|HubSpot|Salesforce)\b'
+            - '\b(?:integrat\w+|connect\w*|sync\w*|plug\w*|hook\w*|link\w*|API|login)\b[^.]{0,70}\b(?:CRM|scheduling (?:software|tools?|systems?|platforms?|apps?)|dispatch (?:software|system)|field[- ]service (?:software|platform)|your (?:existing |current )?calendar)\b'
+            - '\b(?:CRM|scheduling (?:software|tools?|systems?|platforms?|apps?)|dispatch (?:software|system))\b[^.]{0,70}\b(?:integrat\w+|connect\w*|sync\w*|API|login)\b'
+    worshipdigital:
+      banned:
+        # WD is a full-service marketing partner for ANY small business. The
+        # name is not a positioning statement: no religious or faith framing.
+        - id: wd_no_faith_framing
+          label: "religious or faith framing (Worship Digital is not a faith-positioned agency)"
+          prompt: "No religious or faith framing of any kind: no churches, ministries, pastors, congregations, scripture, prayer or faith language. Worship Digital serves any small business."
+          patterns:
+            - '\b(?:church(?:es)?|ministr(?:y|ies)|pastors?|congregations?|parish(?:es)?|sermons?|scriptures?|bible|biblical|gospel|prayers?|pray(?:s|ed|ing)?|christ|christians?|christianity|jesus|god|godly|faith|faith[- ]based|faithful(?:ly)?|believers?|blessed|blessings?|kingdom|tithes?|worship(?:ers?|ping)?(?!\s+digital))\b'
+
 # Zernio account ids per brand+platform, used by slipstream_engine._distribute_social.
 # THESE ARE LOAD-BEARING FOR SAFETY, not a convenience. publish_to_zernio treats a
 # missing account id as "post to EVERY connected account on this platform", so a

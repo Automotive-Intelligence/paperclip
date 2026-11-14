@@ -27,7 +27,9 @@ import yaml
 from datetime import timedelta
 
 from services.slipstream_assemble import assemble_mdx, assemble_ts_posts, assemble_tsx_post
-from services.slipstream_generate import generate_post
+from services.slipstream_factcheck import (pr_table, resolve_factcheck_cfg,
+                                           run_gate as run_factcheck, summarize as _fc_summary)
+from services.slipstream_generate import generate_post, revise_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
 from services.slipstream_shopify import assemble_shopify_article, create_article_draft
@@ -227,6 +229,9 @@ def _brand_cfg(brand_key: str) -> dict:
     # social routing is declared in one table rather than scattered per brand.
     merged.setdefault("zernio_accounts",
                       (full.get("zernio_accounts") or {}).get(brand_key) or {})
+    # Fact-check gate config (banned content, facts file) lives in the top-level
+    # `factcheck:` block: defaults for every brand plus per-brand additions.
+    merged.setdefault("factcheck", resolve_factcheck_cfg(full, brand_key))
     return merged
 
 
@@ -316,12 +321,64 @@ def _social_md(post: Dict[str, Any]) -> str:
             f"## X\n\n{s.get('x','')}\n")
 
 
-def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx") -> str:
+def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
+             factcheck: Optional[Dict[str, Any]] = None) -> str:
     gate = "validate_blocks" if fmt == "ts_posts_array" else "validate_post"
+    if factcheck and factcheck.get("ran"):
+        gate += " + factcheck"
     return (f"Automated Slipstream post (Railway engine).\n\n- slug: `{post['slug']}`\n"
             f"- format: `{fmt}`\n"
             f"- images: {image_count} (hero + in-body)\n- gates: passed ({gate})\n\n"
-            "Vercel preview builds this PR = the build-gate. Review + merge to publish.")
+            "Vercel preview builds this PR = the build-gate. Review + merge to publish."
+            + pr_table(factcheck))
+
+
+def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reassemble=None):
+    """The fact-check + editor gate, with ONE writer revision.
+
+    Returns (post, reassembled, summary, violations). `violations` empty means
+    the post may go on; otherwise the caller HOLDS it. `reassembled` is what
+    `reassemble(revised_post)` returned when a revision passed, so the caller
+    publishes the REVISED payload, never the one the gate rejected.
+
+    Bounded cost: at most one revision and two gate passes, and the second pass
+    skips the paid model calls when the free code checks already fail.
+    Kill-safe: a gate error, a failed revision, or anything unexpected HOLDS.
+    """
+    cache: Dict[str, Any] = {}
+    try:
+        r1 = run_factcheck(post, cfg, link_cache=cache)
+    except Exception as e:  # run_gate never raises; this guards a broken import/stub
+        msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
+        return post, None, {"ran": True, "passed": False, "revised": False, "error": msg,
+                            "model": None, "counts": {}, "claims": []}, [msg]
+    if r1.get("ok"):
+        return post, None, _fc_summary([r1], False), []
+    if r1.get("error"):
+        # The gate itself failed. A revision cannot fix that, so do not pay for one.
+        return post, None, _fc_summary([r1], False), list(r1.get("violations") or ["factcheck gate error"])
+    try:
+        revised = revise_post(cfg, topic, post, list(r1["violations"]))
+        revised["slug"] = post["slug"]
+        revised["image_prompts"] = post["image_prompts"]
+        reassembled = reassemble(revised) if reassemble else None
+    except Exception as e:
+        logger.exception("[slipstream] %s revision after factcheck failed", cfg.get("brand_key", "?"))
+        return post, None, _fc_summary([r1], False), \
+            list(r1["violations"]) + [f"revision failed ({type(e).__name__}: {e}); original violations stand"]
+    fmt_violations = list(reassembled[-1] or []) if reassembled else []
+    if fmt_violations:
+        return revised, None, _fc_summary([r1], True), \
+            ["revised post failed the format gate"] + fmt_violations
+    try:
+        r2 = run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True)
+    except Exception as e:
+        msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
+        return revised, None, _fc_summary([r1], True), [msg]
+    summary = _fc_summary([r1, r2], True)
+    if r2.get("ok"):
+        return revised, reassembled, summary, []
+    return revised, None, summary, list(r2.get("violations") or ["factcheck gate failed"])
 
 
 def _publish_shopify_draft(cfg: Dict[str, Any], draft: Dict[str, Any], slug: str,
@@ -390,6 +447,8 @@ def run_brand(
         fmt = cfg.get("format", "mdx")
         topic = topic or _next_topic(cfg, token)
         post = generate_post(cfg, topic)
+        factcheck: Optional[Dict[str, Any]] = None
+        fc_violations: list = []
         # DO NOT buy images yet. Every image is a paid fal call, and the content gate
         # below can still HOLD this post -- which used to mean 3-4 images bought and
         # thrown away on every held run. Only the Shopify path needs images in hand to
@@ -397,22 +456,45 @@ def run_brand(
         # text alone, so for those we generate AFTER the gate passes.
         images: Dict[str, bytes] = {}
         if cfg.get("format") == "shopify_article":
-            images = generate_images(post["image_prompts"], cfg["business_key"])
+            # Shopify must hold images to assemble, so its fact-check runs FIRST,
+            # on the text alone: a post that fails it never buys an image.
+            post, _, factcheck, fc_violations = _factcheck_stage(cfg, topic, post)
+            if not fc_violations:
+                images = generate_images(post["image_prompts"], cfg["business_key"])
         # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
         # P&P (shopify_article) has no repo at all and builds a Shopify article draft;
         # every other brand keeps the MDX file. `payload` is what gets published either way.
         payload = None
         tsx_files: Optional[Dict[str, str]] = None
-        if fmt == "shopify_article":
-            payload, violations = assemble_shopify_article(post, date_str, cfg, images)
-        elif fmt == "ts_posts_array":
-            payload, violations = assemble_ts_posts(post, date_str, cfg, token)
-        elif fmt == "tsx_post":
-            # Book'd: per-post .tsx module + a splice into src/lib/blog.ts. Returns
-            # the files dict directly (two files), not a single payload string.
-            tsx_files, violations = assemble_tsx_post(post, date_str, cfg, token)
+
+        def _assemble(p: Dict[str, Any]):
+            """(payload, tsx_files, format_violations) for post `p`. A closure so
+            a revised post is re-assembled and re-gated exactly like the first."""
+            if fmt == "shopify_article":
+                pl, v = assemble_shopify_article(p, date_str, cfg, images)
+                return pl, None, v
+            if fmt == "ts_posts_array":
+                pl, v = assemble_ts_posts(p, date_str, cfg, token)
+                return pl, None, v
+            if fmt == "tsx_post":
+                # Book'd: per-post .tsx module + a splice into src/lib/blog.ts. Returns
+                # the files dict directly (two files), not a single payload string.
+                tf, v = assemble_tsx_post(p, date_str, cfg, token)
+                return None, tf, v
+            pl, v = assemble_mdx(p, date_str)
+            return pl, None, v
+
+        if fc_violations:
+            violations = fc_violations            # shopify: held before images or assembly
         else:
-            payload, violations = assemble_mdx(post, date_str)
+            payload, tsx_files, violations = _assemble(post)
+            # FACT-CHECK + EDITOR GATE. After the format gate passes, before any
+            # image is bought and before any PR exists. One writer revision, then
+            # the whole gate again; still failing = HOLD with the reasons.
+            if not violations and fmt != "shopify_article":
+                post, redo, factcheck, violations = _factcheck_stage(cfg, topic, post, _assemble)
+                if redo is not None:
+                    payload, tsx_files = redo[0], redo[1]
     except QueueExhausted as e:
         # VISIBLE, not silent: an exhausted queue stops the brand producing every
         # run. Log LOUDLY (error) and return a distinct reason so the scheduler and
@@ -428,7 +510,10 @@ def run_brand(
 
     if violations:
         logger.warning("[slipstream] %s HELD on gate: %s", brand_key, violations)
-        return {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
+        held = {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
+        if factcheck is not None:
+            held["factcheck"] = factcheck
+        return held
 
     slug = post["slug"]
 
@@ -446,7 +531,10 @@ def run_brand(
     # the Admin API". Returns here, BEFORE any GitHub write path, so no branch, no
     # PR and no merge is ever attempted for a storefront brand.
     if fmt == "shopify_article":
-        return _publish_shopify_draft(cfg, payload, slug, topic, token, dry_run)
+        res = _publish_shopify_draft(cfg, payload, slug, topic, token, dry_run)
+        if factcheck is not None:
+            res["factcheck"] = factcheck
+        return res
 
     # WD writes the whole posts.ts array file (+images) INSTEAD of the mdx/social.md
     # pair. The social pack still flows to _distribute_social via post["social"].
@@ -467,7 +555,7 @@ def run_brand(
     branch = f"slipstream/{slug}-{date_str}"
     try:
         pr_url = publish_post(cfg["repo"], branch, files, f"content: {post['title']}",
-                              _pr_body(post, len(images), fmt), token)
+                              _pr_body(post, len(images), fmt, factcheck), token)
     except Exception as e:
         logger.exception("[slipstream] %s publish failed", brand_key)
         return {"ok": False, "held": False, "violations": [], "slug": slug,
@@ -475,6 +563,8 @@ def run_brand(
 
     logger.info("[slipstream] %s PR opened %s (%d images)", brand_key, pr_url, len(images))
     result = {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
+    if factcheck is not None:
+        result["factcheck"] = factcheck
 
     # auto_merge is a HARD CEILING from config: a brand with `auto_merge: false`
     # NEVER squash-merges automatically, even if a caller passes auto_merge=True.

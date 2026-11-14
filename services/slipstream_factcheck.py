@@ -54,7 +54,7 @@ _MAX_SOURCE_CHARS = 600_000        # kept per fetched page for the code checks
 _PROMPT_SOURCE_CHARS = 30_000      # per source handed to the verifier model
 _PROMPT_TOTAL_SOURCE_CHARS = 180_000
 _MIN_QUOTE_CHARS = 20
-_EM_DASH = "—"
+_EM_DASH = chr(0x2014)
 
 DEFAULT_VERIFIER_MODEL = "claude-opus-5-5"
 
@@ -176,7 +176,7 @@ def _sentences(text: str, where: str, surface: str = "body", split: bool = True)
         ulinks = [links[int(i)] for i in _MARK_RE.findall(p)]
         plain = _clean(_MARK_RE.sub("", p).replace("․", "."))
         plain = re.sub(r"\(\s*\)", "", plain).strip()
-        plain = re.sub(r"\s+([.,;:!?])", r"\1", plain)
+        plain = re.sub(r"\s+([.,;:!?)])", r"\1", plain)
         if not plain and not ulinks:
             continue
         if not re.search(r"\w", plain) and out:
@@ -382,7 +382,27 @@ def check_link(url: str, http_get: Callable[[str], Any], internal: bool = False)
                            internal=internal)
         state = "dead" if status in (404, 410) else "unchecked"
         last = Fetched(url=url, state=state, status=status, detail=f"HTTP {status}", internal=internal)
+    if last.state == "dead" and last.status in (404, 410) and not internal:
+        # Some sites answer every automated request with a fake 404 (ftc.gov did
+        # this in the 2026-11-12 audit, for its own home page too). If the site
+        # ROOT does not load either, the 404 says nothing about this page: it is
+        # "could not check", not "dead". Both still HOLD; the reason differs.
+        if not _root_loads(url, http_get):
+            last = Fetched(url=url, state="unchecked", status=last.status, internal=internal,
+                           detail=f"HTTP {last.status}, and the site root does not load either, "
+                                  "so this host is likely blocking automated checks")
     return last
+
+
+def _root_loads(url: str, http_get: Callable[[str], Any]) -> bool:
+    p = urlparse(url)
+    if not p.scheme or not p.netloc or p.path in ("", "/"):
+        return True                 # the link IS the root: its own status stands
+    try:
+        r = http_get(f"{p.scheme}://{p.netloc}/")
+        return 200 <= int(getattr(r, "status_code", 0) or 0) < 300
+    except Exception:
+        return False
 
 
 def check_links(units: List[Unit], domain: str, http_get: Callable[[str], Any],
@@ -452,7 +472,7 @@ _UNIT = (r"(?:business\s+)?(?:seconds?|minutes?|hours?|days?|weeks?|months?|quar
          r"|businesses|owners|clients|people|dollars)")
 _WORDFIG_RE = re.compile(rf"\b({_W})((?:\s+(?:to|or|and)\s+{_W})?)[\s-]+{_UNIT}\b", re.I)
 _LOOSE_RE = re.compile(r"\b(?:once or twice|(?:in|by) half|half (?:the|of|as)|twice as"
-                       r"|(?:doubl|tripl|quadrupl)(?:e|es|ed|ing))\b", re.I)
+                       r"|(?:doubl|tripl|quadrupl)(?:e|es|ed|ing)(?![- ](?:book|check|click|sided|edged)))\b", re.I)
 
 
 def _norm(s: str) -> str:
