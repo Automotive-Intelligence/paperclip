@@ -77,7 +77,7 @@ brands:
     cadence: weekly
     vercel_project_id: prj_GwgqlMDuErlGKm2rsLGPGOn2ve51
     domain: automotiveintelligence.io
-    enabled: true
+    enabled: false   # HOLD 2026-11-13 (Michael): nothing is written or published until the fact-check + editor gate is built. Flip back to true with that gate.
     blog_dir: src/content/blog
     business_key: autointelligence
     voice: "restrained, diagnostic, anti-hype, operator-grounded"
@@ -90,7 +90,7 @@ brands:
     cadence: weekly
     vercel_project_id: prj_Q26URPlYmK1PFY57BSjTFtUJNLko
     domain: theaiphoneguy.com
-    enabled: true
+    enabled: false   # HOLD 2026-11-13 (Michael): nothing is written or published until the fact-check + editor gate is built. Flip back to true with that gate.
     blog_dir: src/content/blog
     business_key: aiphoneguy
     voice: "plainspoken, trade-savvy, anti-hype, for home-service owners"
@@ -132,7 +132,7 @@ brands:
     repo: salesdroid/worship-digital        # NOTE: worship-digital, NOT worship-digital-site
     vercel_project_id: prj_6IuzlVBshSxrAeIny3Q6CiJJxSm5   # unused while auto_merge:false, wired for when it flips
     domain: worshipdigital.co
-    enabled: true
+    enabled: false   # HOLD 2026-11-13 (Michael): nothing is written or published until the fact-check + editor gate is built. Flip back to true with that gate.
     auto_merge: true                          # flipped 2026-08-06: the rebuild landed and WD PR #20
                                               # merged cleanly through the safe path. While this was
                                               # false the engine returned BEFORE _checkoff_topic, so
