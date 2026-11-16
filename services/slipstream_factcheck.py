@@ -79,6 +79,9 @@ def resolve_factcheck_cfg(full_cfg: Dict[str, Any], brand_key: str) -> Dict[str,
     defaults = fc.get("defaults") or {}
     brand = (fc.get("brands") or {}).get(brand_key) or {}
     return {
+        # Opt-out is explicit and per brand only: anything but a literal `false`
+        # (a missing key, a typo, a brand not listed) leaves the gate ON.
+        "enabled": brand.get("enabled") is not False,
         "banned": list(defaults.get("banned") or []) + list(brand.get("banned") or []),
         "figure_allowlist": list(defaults.get("figure_allowlist") or [])
                             + list(brand.get("figure_allowlist") or []),

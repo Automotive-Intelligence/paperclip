@@ -345,6 +345,12 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
     skips the paid model calls when the free code checks already fail.
     Kill-safe: a gate error, a failed revision, or anything unexpected HOLDS.
     """
+    if (cfg.get("factcheck") or {}).get("enabled") is False:
+        # Brand explicitly opted out in config (factcheck.brands.<key>.enabled: false).
+        # Only a literal False skips; a missing or malformed value still gates.
+        logger.info("[slipstream] %s factcheck gate OFF for this brand by config",
+                    cfg.get("brand_key", "?"))
+        return post, None, None, []
     cache: Dict[str, Any] = {}
     try:
         r1 = run_factcheck(post, cfg, link_cache=cache)

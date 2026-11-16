@@ -44,6 +44,11 @@ factcheck:
           - '\bin our experience\b'
           - '\b(?:a|one) (?:client|customer|dealer|owner) (?:of ours|we worked with|told (?:me|us))\b'
   brands:
+    paperandpurpose:
+      # OFF 2026-11-15 (Michael): leave P&P out of the gate for now. Its posts are
+      # Shopify DRAFTS a person reviews before anything is public, and the gate is
+      # proven on the three owned brands first. Delete this line to gate P&P.
+      enabled: false
     aiphoneguy:
       banned:
         # NOT LIVE as of 2026-11-08: call transfer, call screening, text-back.

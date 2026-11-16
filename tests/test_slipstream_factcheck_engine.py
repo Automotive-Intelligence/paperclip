@@ -430,3 +430,35 @@ def test_script_runs_deterministic_only_by_default_and_exits_1_on_hold(tmp_path,
     out = capsys.readouterr().out
     assert "VERDICT HOLD" in out and "1. figure x" in out
     assert mod.main([str(tmp_path / "missing.diff"), "--brand", "aiphoneguy"]) == 2
+
+
+# ── per-brand opt-out (2026-11-15: Michael left Paper & Purpose out of the gate) ──
+
+def test_only_paper_and_purpose_is_opted_out_in_the_real_config():
+    import yaml
+    from services.slipstream_factcheck import resolve_factcheck_cfg
+    full = yaml.safe_load(open("config/slipstream_brands.yaml"))
+    off = [k for k in full["brands"] if resolve_factcheck_cfg(full, k)["enabled"] is False]
+    assert off == ["paperandpurpose"]
+
+
+def test_opt_out_needs_a_literal_false():
+    from services.slipstream_factcheck import resolve_factcheck_cfg
+    for val in (None, "false", 0, "", "no"):
+        full = {"factcheck": {"brands": {"x": {"enabled": val}}}}
+        assert resolve_factcheck_cfg(full, "x")["enabled"] is True
+    assert resolve_factcheck_cfg({}, "unlisted")["enabled"] is True
+    assert resolve_factcheck_cfg({"factcheck": {"brands": {"x": {"enabled": False}}}}, "x")["enabled"] is False
+
+
+def test_opted_out_brand_skips_the_gate_and_a_gated_brand_does_not(monkeypatch):
+    from services import slipstream_engine as eng
+    calls = []
+    monkeypatch.setattr(eng, "run_factcheck",
+                        lambda *a, **k: calls.append(1) or {"passed": True, "violations": []})
+    post = {"title": "t"}
+    out = eng._factcheck_stage({"brand_key": "paperandpurpose", "factcheck": {"enabled": False}}, "topic", post)
+    assert out == (post, None, None, []) and calls == []
+    eng._factcheck_stage({"brand_key": "x", "factcheck": {"enabled": True}}, "topic", post)
+    eng._factcheck_stage({"brand_key": "y"}, "topic", post)
+    assert len(calls) == 2
