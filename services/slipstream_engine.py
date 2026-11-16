@@ -32,7 +32,9 @@ from services.slipstream_factcheck import (pr_table, resolve_factcheck_cfg,
 from services.slipstream_generate import EmptyAtLimit, generate_post, revise_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
-from services.slipstream_research import (build_source_pack, pack_violations,
+from services.slipstream_repair import (pr_section as _repair_pr_section, repair_post,
+                                        summarize as _repair_summary)
+from services.slipstream_research import (build_source_pack, pack_failures,
                                           pr_section as _research_pr_section,
                                           research_enabled, resolve_research_cfg,
                                           summarize as _research_summary)
@@ -340,7 +342,8 @@ def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
             f"- images: {image_count} (hero + in-body)\n- gates: passed ({gate})\n\n"
             "Vercel preview builds this PR = the build-gate. Review + merge to publish."
             + _research_pr_section(research, post)
-            + pr_table(factcheck))
+            + pr_table(factcheck)
+            + _repair_pr_section((factcheck or {}).get("repair")))
 
 
 def _research_stage(cfg: Dict[str, Any], topic: str, link_cache: Dict[str, Any]):
@@ -383,9 +386,11 @@ def _with_pack_check(r: Dict[str, Any], post: Dict[str, Any], cfg: Dict[str, Any
     every link in the post came from the verified pack. It can only ADD
     violations; it never clears one the gate raised."""
     if pack is not None and not r.get("error"):
-        extra = pack_violations(post, pack, cfg.get("domain", ""))
+        found = pack_failures(post, pack, cfg.get("domain", ""))
+        extra = list(dict.fromkeys(f["violation"] for f in found))
         if extra:
             r = dict(r)
+            r["failures"] = list(r.get("failures") or []) + found
             r["violations"] = extra + [v for v in (r.get("violations") or []) if v not in extra]
             r["ok"] = False
             r["counts"] = {**(r.get("counts") or {}), "links_outside_pack": len(extra),
@@ -416,8 +421,12 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
     # The research stage already fetched every pack source and every verified
     # internal link into this cache, so the gate does not fetch them again.
     cache: Dict[str, Any] = link_cache if link_cache is not None else {}
+    # Sentences the verifier SUPPORTED with a code-confirmed quote are carried to
+    # the later passes while they stay byte-identical (same text, same links).
+    verdicts: Dict[Any, Any] = {}
     try:
-        r1 = _with_pack_check(run_factcheck(post, cfg, link_cache=cache), post, cfg, pack)
+        r1 = _with_pack_check(run_factcheck(post, cfg, link_cache=cache, verdict_cache=verdicts),
+                              post, cfg, pack)
     except Exception as e:  # run_gate never raises; this guards a broken import/stub
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
         return post, None, {"ran": True, "passed": False, "revised": False, "error": msg,
@@ -453,7 +462,8 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
             ["revised post failed the format gate"] + fmt_violations
     try:
         r2 = _with_pack_check(
-            run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True),
+            run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True,
+                          verdict_cache=verdicts),
             revised, cfg, pack)
     except Exception as e:
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
@@ -461,7 +471,61 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
     summary = _fc_summary([r1, r2], True)
     if r2.get("ok"):
         return revised, reassembled, summary, []
-    return revised, None, summary, list(r2.get("violations") or ["factcheck gate failed"])
+    if r2.get("error") or (cfg.get("factcheck") or {}).get("repair_pass") is False:
+        return revised, None, summary, list(r2.get("violations") or ["factcheck gate failed"])
+    return _repair_stage(cfg, revised, [r1, r2], reassemble, pack, cache, verdicts)
+
+
+def _repair_stage(cfg: Dict[str, Any], revised: Dict[str, Any], passes: list, reassemble,
+                  pack: Optional[Dict[str, Any]], cache: Dict[str, Any], verdicts: Dict[Any, Any]):
+    """The LAST step: one targeted repair of the sentences that still fail after
+    the revision, then the full gate one final time. No loop.
+
+    The repair may only rewrite a failing sentence to say no more than its
+    quote, or delete it. services/slipstream_repair enforces that in code by
+    diffing the result against the revised post; a repair that breaks the
+    contract is thrown away and the post HOLDS on its original violations.
+    Returns the same tuple as _factcheck_stage."""
+    r2 = passes[-1]
+    held = list(r2.get("violations") or ["factcheck gate failed"])
+    brand_key = cfg.get("brand_key", "?")
+    rep = repair_post(revised, r2, cfg, pack=pack)
+    summary = _fc_summary(passes, True)
+    summary["repair"] = _repair_summary(rep)
+    if rep.get("skipped"):
+        # Not repairable (too many failing sentences, a failure a sentence edit
+        # cannot fix). Held exactly as it would have been without this step.
+        logger.info("[slipstream] %s repair skipped: %s", brand_key, rep["skipped"])
+        return revised, None, summary, held
+    if not rep.get("ok"):
+        logger.warning("[slipstream] %s repair REJECTED by the contract: %s", brand_key, rep.get("violations"))
+        return revised, None, summary, held + ["repair pass rejected, original violations stand: " + v
+                                               for v in rep.get("violations") or ["no usable repair"]]
+    repaired = rep["post"]
+    repaired["slug"] = revised["slug"]
+    repaired["image_prompts"] = revised["image_prompts"]
+    try:
+        reassembled = reassemble(repaired) if reassemble else None
+    except Exception as e:
+        logger.exception("[slipstream] %s reassembly after repair failed", brand_key)
+        return revised, None, summary, held + [f"repaired post could not be assembled "
+                                               f"({type(e).__name__}: {e}); original violations stand"]
+    fmt_violations = list(reassembled[-1] or []) if reassembled else []
+    if fmt_violations:
+        return repaired, None, summary, ["repaired post failed the format gate"] + fmt_violations
+    try:
+        r3 = _with_pack_check(run_factcheck(repaired, cfg, link_cache=cache, verdict_cache=verdicts),
+                              repaired, cfg, pack)
+    except Exception as e:
+        msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
+        return repaired, None, summary, [msg]
+    summary = _fc_summary(passes + [r3], True)
+    summary["repair"] = _repair_summary(rep, bool(r3.get("ok")))
+    if r3.get("ok"):
+        logger.info("[slipstream] %s passed the final gate after repairing %d sentence(s)",
+                    brand_key, len(rep.get("changes") or []))
+        return repaired, reassembled, summary, []
+    return repaired, None, summary, list(r3.get("violations") or ["factcheck gate failed"])
 
 
 def _publish_shopify_draft(cfg: Dict[str, Any], draft: Dict[str, Any], slug: str,

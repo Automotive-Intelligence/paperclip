@@ -871,32 +871,37 @@ def pack_violations(post: Dict[str, Any], pack: Dict[str, Any], domain: str) -> 
     """Every external link in the post must be a pack source, and every
     internal link must be on the verified list. Returned in the gate's
     violation style so the one writer revision can fix them."""
+    return _dedupe([f["violation"] for f in pack_failures(post, pack, domain)])
+
+
+def pack_failures(post: Dict[str, Any], pack: Dict[str, Any], domain: str) -> List[Dict[str, Any]]:
+    """pack_violations with the sentence each one sits in, in the gate's
+    structured failure shape (see fc._fail), for the targeted repair pass."""
     allowed = {canonical_url(s["url"]) for s in pack.get("sources") or []}
     dom = (domain or "").lower()
     dom = dom[4:] if dom.startswith("www.") else dom
     internal_ok = {canonical_url(f"https://{dom}{p}") for p in pack.get("internal_links") or []}
     units, _sources = fc.extract_post(post)
-    out: List[str] = []
-    seen = set()
+    out: List[Dict[str, Any]] = []
     for u in units:
-        for href in u.links:
-            if href in seen:
-                continue
-            seen.add(href)
+        for href in dict.fromkeys(u.links):
             resolved = fc.resolve_link(href, domain)
             if not resolved:
                 continue
             url, internal = resolved
             if internal:
                 if canonical_url(url) not in internal_ok:
-                    out.append(f"internal link is not on the verified internal link list: {href}")
+                    fc._fail(out, u, "pack", f"internal link is not on the verified internal link list: {href}",
+                             href=href)
             elif canonical_url(url) not in allowed:
-                out.append(f"source link is not in the verified source pack (cited from memory): {href}")
-    out.extend(_second_hand_violations(units, pack, domain))
+                fc._fail(out, u, "pack", "source link is not in the verified source pack (cited from "
+                                         f"memory): {href}", href=href)
+    _second_hand_violations(units, pack, domain, out)
     return out
 
 
-def _second_hand_violations(units: List[fc.Unit], pack: Dict[str, Any], domain: str) -> List[str]:
+def _second_hand_violations(units: List[fc.Unit], pack: Dict[str, Any], domain: str,
+                            sink: Optional[List[Dict[str, Any]]] = None) -> List[str]:
     """A figure the post takes from a pack source where that page only repeats
     someone else's number, and the original is not in the pack."""
     first: Dict[str, set] = {}
@@ -938,6 +943,7 @@ def _second_hand_violations(units: List[fc.Unit], pack: Dict[str, Any], domain: 
             if name:
                 out.append(f'figure "{fig.raw}" is second-hand: the cited page credits it to {name}, '
                            f'and the original is not in the source pack: "{fc._short(u.text)}"')
+                fc._fail(sink, u, "pack", out[-1])
     return _dedupe(out)
 
 

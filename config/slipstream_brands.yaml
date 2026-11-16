@@ -23,6 +23,18 @@ vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
 # Facts files: config/slipstream_facts/<brand_key>.md (override with facts_file).
 factcheck:
   defaults:
+    # TARGETED REPAIR (services/slipstream_repair.py). When the post still fails
+    # after the one writer revision, ONE repair pass may rewrite a failing
+    # sentence to say no more than its cited quote, or delete it, and nothing
+    # else. Code diffs the result and throws the repair away if a passing
+    # sentence changed, a figure or URL was added, or a deletion broke the
+    # structure. Then the full gate runs one final time. Set false here or under
+    # brands.<key> to hold straight after the revision instead.
+    repair_pass: true
+    # Skip repair and HOLD when more than this share of the judged claims fail.
+    repair_max_fail_ratio: 0.34
+    # HOLD if a repair leaves the body under this many words.
+    repair_min_words: 600
     # Tokens that look like numbers but are not statistics.
     figure_allowlist: ["24/7"]
     banned:
