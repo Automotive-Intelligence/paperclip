@@ -327,8 +327,11 @@ def test_every_owned_brand_is_weekly_and_the_client_is_untouched():
     # are OFF (the rotated SLIPSTREAM_GH_TOKEN has no access to their repos).
     for k in ("worshipdigital", "bookd", "agentempire", "autointelligence", "aiphoneguy"):
         assert b[k]["cadence"] == "weekly", k
+    # 2026-11-13 (Michael): HOLD. An audit found invented numbers, dead source links
+    # and false product claims in engine posts, so nothing is written or published
+    # until the fact-check + editor gate exists. Flip these back with that gate.
     for k in ("worshipdigital", "autointelligence", "aiphoneguy"):
-        assert b[k]["enabled"] is True, f"{k} must stay enabled, just slower"
+        assert b[k]["enabled"] is False, f"{k} is on hold until the fact-check gate ships"
     for k in ("bookd", "agentempire"):
         assert b[k]["enabled"] is False, f"{k} is retired (2026-11-09)"
     assert "cadence" not in b["paperandpurpose"] or b["paperandpurpose"]["cadence"] == "mwf"
