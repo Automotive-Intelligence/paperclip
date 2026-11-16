@@ -346,7 +346,9 @@ def test_default_search_uses_the_server_side_web_search_tool_with_a_cap(monkeypa
                               "blocked_domains": ["reddit.com"]}]
     assert body["model"] == "some-model" and "a topic" in body["messages"][0]["content"]
     assert "test-key" not in json.dumps(body)
-    assert out == {"candidates": [{"url": NIST[0], "title": "t"}], "searches": 1, "model": "some-model"}
+    assert out == {"candidates": [{"url": NIST[0], "title": "t"}], "searches": 1, "model": "some-model",
+                   "results_seen": 0}
+    assert "Return an empty list only when the searches found nothing relevant" in body["system"]
     assert gen.USAGE_LOG[-1]["web_searches"] == 1 and gen.USAGE_LOG[-1]["surface"] == "slipstream_research"
 
 
