@@ -386,6 +386,10 @@ def test_candidates_fall_back_to_the_search_result_urls_when_the_model_returns_n
                                                        "error_code": "max_uses_exceeded"}},
         {"type": "text", "text": "Here is what I found."}]
     assert rs._candidates_from_response(content) == [{"url": NIST[0], "title": "N"}]
+    # the 2026-11-15 failure: an explicit empty list while results sit in the response
+    empty = [content[0], {"type": "text", "text": '{"candidates": []}'}]
+    assert rs._candidates_from_response(empty) == [{"url": NIST[0], "title": "N"}]
+    assert rs._candidates_from_response([{"type": "text", "text": '{"candidates": []}'}]) == []
     fenced = [{"type": "text", "text": 'Sure {not json}\n```json\n{"candidates": [{"url": "https://a.example/x"}]}\n```'}]
     assert rs._candidates_from_response(fenced) == [{"url": "https://a.example/x"}]
 
@@ -739,3 +743,13 @@ def test_only_a_run_with_a_pack_gets_the_larger_writer_budget(monkeypatch):
     gen.generate_post(_CFG, "t", pack=_pack())
     gen.revise_post(_CFG, "t", dict(_MDX), ["v"], pack=_pack())
     assert seen[2:] == [{"max_tokens": 16000, "timeout": 420}] * 2
+
+
+def test_default_search_recovers_results_from_a_paused_turn_when_the_model_returns_nothing(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    paused = _api([{"type": "web_search_tool_result",
+                    "content": [{"type": "web_search_result", "url": TRADE[0], "title": "T"}]}], "pause_turn")
+    final = _api([{"type": "text", "text": '{"candidates": []}'}], searches=0)
+    with mock.patch("requests.post", side_effect=[paused, final]):
+        out = rs.default_search(_CFG, "t", rs._rcfg(_CFG))
+    assert out["candidates"] == [{"url": TRADE[0], "title": "T"}] and out["results_seen"] == 1

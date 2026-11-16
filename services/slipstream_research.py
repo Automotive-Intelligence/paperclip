@@ -257,8 +257,14 @@ def build_search_prompt(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, A
 
 def _candidates_from_response(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Candidates from the model's final JSON. If the model returned no usable
-    JSON, fall back to the URLs of the search results themselves (those are
-    real result URLs, and code fetches every one anyway)."""
+    JSON, or an EMPTY list while the search tool did return results, fall back
+    to the URLs of the search results themselves (those are real result URLs,
+    and code fetches and verifies every one anyway).
+
+    The empty-list case is real: on 2026-11-15 the model ran all its searches
+    inside one filtering script, the script crashed, the search budget was
+    spent, and it answered {"candidates": []} with 40 results sitting unread in
+    the response. Two of six dry runs lost their whole pack that way."""
     import json
     text = "".join(b.get("text") or "" for b in content if b.get("type") == "text").strip()
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
@@ -270,7 +276,10 @@ def _candidates_from_response(content: List[Dict[str, Any]]) -> List[Dict[str, A
         except ValueError:
             continue
         if isinstance(obj, dict) and isinstance(obj.get("candidates"), list):
-            return [c for c in obj["candidates"] if isinstance(c, dict)]
+            picked = [c for c in obj["candidates"] if isinstance(c, dict) and c.get("url")]
+            if picked:
+                return picked
+            break
     return _search_result_urls(content)
 
 
@@ -308,6 +317,7 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
     messages: List[Dict[str, Any]] = [
         {"role": "user", "content": build_search_prompt(brand_cfg, topic, rcfg)}]
     content: List[Dict[str, Any]] = []
+    all_blocks: List[Dict[str, Any]] = []      # every turn, so a paused turn's results are kept
     searches = 0
     results_seen = 0
     for _turn in range(_MAX_PAUSE_CONTINUATIONS + 1):
@@ -332,6 +342,7 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
         gen.note_usage(j.get("model") or model, usage, "slipstream_research",
                        request_id=j.get("id"), web_searches=n)
         content = j.get("content") or []
+        all_blocks.extend(content)
         results_seen += len(_search_result_urls(content))
         stop = j.get("stop_reason")
         if stop == "pause_turn":
@@ -344,7 +355,10 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
         break
     else:
         raise ResearchError("search did not finish (still paused after the continuation limit)")
-    return {"candidates": _candidates_from_response(content), "searches": searches, "model": model,
+    final_text = [b for b in content if b.get("type") == "text"]
+    results = [b for b in all_blocks if b.get("type") == "web_search_tool_result"]
+    return {"candidates": _candidates_from_response(final_text + results),
+            "searches": searches, "model": model,
             "results_seen": results_seen}
 
 
