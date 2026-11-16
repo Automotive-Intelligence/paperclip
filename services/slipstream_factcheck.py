@@ -672,7 +672,7 @@ VERIFIER_SYSTEM = (
     "SOURCES.\n"
     '- kind "brand": a claim about the brand itself. It is SUPPORTED only if APPROVED BRAND '
     "FACTS states it, or a page of the brand's own site that is listed in that sentence's "
-    "LINKS states it.\n"
+    "LINKS, or under POST-LEVEL BRAND PAGES, states it.\n"
     "Verdicts:\n"
     '- "SUPPORTED": you MUST give "source" (the exact source URL, or the word facts) and '
     '"quote": a passage copied CHARACTER FOR CHARACTER from that source, 8 to 45 words, that '
@@ -687,8 +687,23 @@ VERIFIER_SYSTEM = (
 )
 
 
+def post_brand_pages(units: List[Unit], domain: str) -> List[str]:
+    """Internal hrefs of a block-format post's `links` block. Prose in that
+    format cannot carry a link, so these are the brand's own pages available to
+    every sentence, the same way the `sources` block is for outside claims."""
+    out: List[str] = []
+    for u in units:
+        if u.where != "links block":
+            continue
+        for href in u.links:
+            resolved = resolve_link(href, domain)
+            if resolved and resolved[1] and href not in out:
+                out.append(href)
+    return out
+
+
 def build_verifier_prompt(units: List[Unit], fetched: Dict[str, Fetched], facts_text: str,
-                          post_sources: List[str]) -> str:
+                          post_sources: List[str], brand_pages: Optional[List[str]] = None) -> str:
     lines = ["POST SENTENCES (id, where it sits, text, links in that sentence):"]
     for u in units:
         if u.surface == "meta" and u.where not in ("title",):
@@ -697,6 +712,8 @@ def build_verifier_prompt(units: List[Unit], fetched: Dict[str, Fetched], facts_
         lines.append(f"{u.uid} [{u.where}] {u.text}{link_s}")
     lines.append("")
     lines.append("POST-LEVEL SOURCES: " + (", ".join(post_sources) if post_sources else "(none)"))
+    if brand_pages:
+        lines.append("POST-LEVEL BRAND PAGES: " + ", ".join(brand_pages))
     lines.append("")
     lines.append("APPROVED BRAND FACTS (the only allowed support for claims about the brand):")
     lines.append(facts_text.strip() if (facts_text or "").strip() else "(none on file)")
@@ -720,8 +737,51 @@ def build_verifier_prompt(units: List[Unit], fetched: Dict[str, Fetched], facts_
     return "\n".join(lines)
 
 
+# A sentence that only points the reader at a page ("Book a discovery call",
+# "Reach out through the contact page") is navigation, not a claim. The
+# verifier used to list these as brand claims and fail them for want of a fact.
+# NARROW on purpose: the sentence must read as an invitation AND must not
+# assert anything. Anything that states what the brand or a page does, costs,
+# promises or achieves, or carries any figure, is still judged.
+_NAV_RE = re.compile(
+    r"\b(?:book|schedule|request|start with|use|visit|see|read|check out|head (?:over )?to|go to|"
+    r"reach out|get in touch|contact|talk (?:it |this |that )?through|ask (?:about|us)|"
+    r"bring (?:it|them|that|this|those|your)|learn more|find out more|take a look|explore)\b"
+    r"|\bis (?:the|a good) place to (?:ask|start|talk)\b"
+    r"|\bis where you can (?:ask|start|talk|book)\b", re.I)
+_NAV_ASSERT_RE = re.compile(
+    r"\b(?:we|our team|the (?:service|system|ai|assistant|product|platform|tool|software|page|team))\s+"
+    r"(?:will|can|does|do|is|are|has|have|offers?|provides?|includes?|answers?|books?|handles?|"
+    r"takes?|delivers?|builds?|sets?|gets?|makes?|helps?|runs?|works?)\b"
+    r"|\b(?:lays? out|outlin\w+|covers?|explains?|shows?|walks? (?:you )?through|details|describes?|"
+    r"offers?|provides?|includes?|delivers?|guarante\w+|promis\w+|free|pric\w+|costs?|fees?|"
+    r"discounts?|results?|proven|faster|fastest|instant\w*|same[- ]day|within|turnaround|"
+    r"no (?:contracts?|obligation|setup|commitment)|live in|up and running|increase\w*|boost\w*|"
+    r"sav(?:e|es|ed|ing)s?|more (?:leads|calls|customers|revenue|sales))\b"
+    r"|\$", re.I)
+_NAV_MAX_WORDS = 45
+
+
+def is_navigation_sentence(unit: Optional[Unit], domain: str = "") -> bool:
+    """True only for a pure call-to-action or pointer sentence: it invites the
+    reader to a page or a conversation, carries no outside link and no figure,
+    and asserts nothing about the brand or the world."""
+    if unit is None or not unit.text:
+        return False
+    text = unit.text
+    if len(text.split()) > _NAV_MAX_WORDS or not _NAV_RE.search(text):
+        return False
+    if _NAV_ASSERT_RE.search(text) or extract_figures(text):
+        return False
+    for href in unit.links:
+        resolved = resolve_link(href, domain)
+        if resolved and not resolved[1]:
+            return False                      # an outside link: this is a sourced statement
+    return True
+
+
 def evaluate_verifier(reply: Any, units: List[Unit], fetched: Dict[str, Fetched],
-                      facts_text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
+                      facts_text: str, domain: str = "") -> Tuple[List[str], List[Dict[str, Any]]]:
     """Turn the verifier's reply into violations + an audit record per claim.
     A SUPPORTED verdict is accepted only when CODE finds the quoted passage in
     the fetched source text (or the facts file). A quote the model made up is
@@ -759,10 +819,15 @@ def evaluate_verifier(reply: Any, units: List[Unit], fetched: Dict[str, Fetched]
                     final = "SUPPORTED" if qn in norm_cache[source] else "QUOTE_NOT_IN_SOURCE"
         elif verdict not in ("NOT_SUPPORTED", "UNVERIFIABLE"):
             final = "UNVERIFIABLE"
+        if final in ("NOT_SUPPORTED", "UNVERIFIABLE") and is_navigation_sentence(unit, domain):
+            # An invitation to a page, not a statement of fact. Only the verifier's
+            # own "no support" verdicts are waived: a SUPPORTED verdict whose quote
+            # code could not find still fails, navigation or not.
+            final = "NOT_A_CLAIM"
         records.append({"sentence_id": unit.uid if unit else "", "claim": claim,
                         "source": source or "", "verdict": final,
                         "quote": quote if final == "SUPPORTED" else ""})
-        if final == "SUPPORTED":
+        if final in ("SUPPORTED", "NOT_A_CLAIM"):
             continue
         reason = {
             "NOT_SUPPORTED": "claim is not supported by its source",
@@ -812,17 +877,51 @@ EDITOR_SYSTEM = (
 )
 
 
-def build_editor_prompt(post: Dict[str, Any], units: List[Unit], facts_text: str) -> str:
+def sourced_sentence_ids(claims: List[Dict[str, Any]]) -> set:
+    """Sentences whose EVERY judged claim the verifier marked SUPPORTED with a
+    code-confirmed quote from a fetched source or the facts file. Used only for
+    block formats, where prose cannot carry a link: such a sentence counts as
+    cited for the editor. A sentence with any unsupported claim is not in it."""
+    good, bad = set(), set()
+    for c in claims or []:
+        sid = c.get("sentence_id")
+        if not sid or c.get("verdict") == "NOT_A_CLAIM":
+            continue
+        (good if c.get("verdict") == "SUPPORTED" and c.get("source") else bad).add(sid)
+    return good - bad
+
+
+_EVIDENCE_PREFIX_RE = re.compile(r"^\s*\[[a-z][a-z ]{0,24}\]\s*")
+_EVIDENCE_SUFFIX_RE = re.compile(r"\s*\[link\]\s*$")
+
+
+def strip_prompt_markers(evidence: str) -> str:
+    """Remove the markers build_editor_prompt itself adds to each line ("[stat] "
+    in front, " [link]" behind). The editor copies its evidence from those
+    lines, markers included, and the markers are not part of the post."""
+    return _EVIDENCE_SUFFIX_RE.sub("", _EVIDENCE_PREFIX_RE.sub("", evidence or "")).strip()
+
+
+def build_editor_prompt(post: Dict[str, Any], units: List[Unit], facts_text: str,
+                        sourced_ids: Optional[set] = None) -> str:
     lines = [f"TITLE: {post.get('title', '')}", "", "RUBRIC (answer every id):"]
     for rid, question, _needs in EDITOR_RUBRIC:
         lines.append(f"- {rid}: {question}")
+    legend = "[link] marks a sentence that carries a source link"
+    if sourced_ids is not None:
+        # Block format: prose cannot hold a link. A sentence the fact-check step
+        # confirmed against one of the post's listed sources counts as cited.
+        legend += (", or one the fact-check step already confirmed, with a quoted passage, "
+                   "against a source listed in the post (this format cannot put a link inside "
+                   "a sentence, so treat both the same)")
     lines += ["", "APPROVED BRAND FACTS:",
               facts_text.strip() if (facts_text or "").strip() else "(none on file)",
-              "", "POST (one sentence per line; [link] marks a sentence that carries a source link):"]
+              "", f"POST (one sentence per line; {legend}):"]
     for u in units:
         if u.surface == "meta" and u.where != "title":
             continue
-        lines.append(f"[{u.where}] {u.text}{' [link]' if u.links else ''}")
+        cited = bool(u.links) or (sourced_ids is not None and u.uid in sourced_ids)
+        lines.append(f"[{u.where}] {u.text}{' [link]' if cited else ''}")
     return "\n".join(lines)
 
 
@@ -841,7 +940,7 @@ def evaluate_editor(reply: Any, units: List[Unit]) -> Tuple[List[str], List[Dict
         if item is None or not isinstance(item.get("pass"), bool):
             raise GateError(f"editor reply is missing a pass/fail answer for '{rid}'")
         passed = item["pass"]
-        evidence = _clean(str(item.get("evidence") or ""))
+        evidence = strip_prompt_markers(_clean(str(item.get("evidence") or "")))
         if rid == "no_em_dashes" and has_em_dash:
             passed = False
         if passed and needs_evidence:
@@ -935,16 +1034,22 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
         ed_v: List[str] = []
         if use_llm and not (skip_llm_on_deterministic_fail and det):
             llm = llm or default_llm(model)
-            ver_reply = llm(VERIFIER_SYSTEM, build_verifier_prompt(units, fetched, facts, post_sources))
-            ver_v, out["claims"] = evaluate_verifier(ver_reply, units, fetched, facts)
-            ed_reply = llm(EDITOR_SYSTEM, build_editor_prompt(post, units, facts))
+            domain = (cfg or {}).get("domain", "")
+            block_format = isinstance(post.get("body"), list)
+            brand_pages = post_brand_pages(units, domain) if block_format else []
+            ver_reply = llm(VERIFIER_SYSTEM, build_verifier_prompt(units, fetched, facts, post_sources,
+                                                                   brand_pages))
+            ver_v, out["claims"] = evaluate_verifier(ver_reply, units, fetched, facts, domain)
+            ed_reply = llm(EDITOR_SYSTEM, build_editor_prompt(
+                post, units, facts, sourced_sentence_ids(out["claims"]) if block_format else None))
             ed_v, out["editor"] = evaluate_editor(ed_reply, units)
             out["llm_ran"] = True
         claims = out["claims"]
         counts.update({
             "claims": len(claims),
             "claims_supported": sum(1 for c in claims if c["verdict"] == "SUPPORTED"),
-            "claims_not_supported": sum(1 for c in claims if c["verdict"] != "SUPPORTED"),
+            "claims_not_supported": sum(1 for c in claims
+                                        if c["verdict"] not in ("SUPPORTED", "NOT_A_CLAIM")),
             "editor_fails": sum(1 for e in out["editor"] if not e["pass"]),
         })
         out["violations"] = _dedupe(det + ver_v + ed_v)
