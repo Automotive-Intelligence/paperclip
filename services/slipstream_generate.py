@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import logging
 
@@ -41,9 +41,18 @@ class GenerationError(Exception):
     pass
 
 
-def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
+def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
+                   max_tokens: Optional[int] = None, timeout: int = 180,
+                   surface: str = "slipstream") -> Dict[str, Any]:
     """Call the LLM (Anthropic Messages) and parse a single JSON object from
-    its text response. Tolerates a ```json ... ``` fence."""
+    its text response. Tolerates a ```json ... ``` fence.
+
+    `model` defaults to the WRITER model. The fact-check gate
+    (services/slipstream_factcheck) passes a different model id here so the
+    verifier and editor never grade the writer's output with the writer's own
+    model, while sharing this transport and the spend ledger."""
+    model = model or _MODEL
+    max_tokens = max_tokens or _MAX_TOKENS
     key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not key:
         raise GenerationError("ANTHROPIC_API_KEY missing")
@@ -57,12 +66,12 @@ def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
             "content-type": "application/json",
         },
         json={
-            "model": _MODEL,
-            "max_tokens": _MAX_TOKENS,
+            "model": model,
+            "max_tokens": max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         },
-        timeout=180,
+        timeout=timeout,
     )
     if not r.ok:
         raise GenerationError(f"LLM {r.status_code}: {r.text[:300]}")
@@ -74,12 +83,12 @@ def _llm_json_once(system: str, user: str) -> Dict[str, Any]:
         from services.llm_ledger import record_usage
         u = j.get("usage") or {}
         record_usage(
-            j.get("model") or _MODEL,
+            j.get("model") or model,
             input_tokens=int(u.get("input_tokens") or 0),
             output_tokens=int(u.get("output_tokens") or 0),
             cache_creation_tokens=int(u.get("cache_creation_input_tokens") or 0),
             cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
-            persona="slipstream", surface="slipstream",
+            persona="slipstream", surface=surface,
             request_id=j.get("id"),
         )
     except Exception:
@@ -114,6 +123,42 @@ def _llm_json(system: str, user: str, *, retries: int = 2) -> Dict[str, Any]:
             last = e
             logger.warning("[slipstream] LLM attempt %d/%d failed: %s", attempt + 1, retries + 1, e)
     raise last
+
+
+def _fact_rules(brand_cfg: Dict[str, Any]) -> str:
+    """The fact contract appended to BOTH writer system prompts. The fact-check
+    gate (services/slipstream_factcheck) enforces every line of this in code or
+    with a second model, so a post that ignores it is HELD, not published."""
+    from services.slipstream_factcheck import load_facts
+    facts = load_facts(brand_cfg)
+    banned = ((brand_cfg.get("factcheck") or {}).get("banned")) or []
+    lines = [
+        "\nFACT RULES (a separate fact-check gate enforces these; a post that breaks one is held):\n"
+        "- Every number, percentage, dollar amount, duration or statistic MUST sit in the same "
+        "sentence as a link to the source that states it, and the figure must appear in that "
+        "source exactly as you write it. No source you are certain of means no figure: stay "
+        "qualitative.\n"
+        "- Only link a source you are certain exists at that exact URL and says what your sentence "
+        "says. A dead link or a link that does not support its sentence holds the post. Fewer "
+        "links that are right beat more links that are guesses.\n"
+        "- Do not use 'most', 'never', 'always', 'none', 'every' or 'usually' for a factual claim "
+        "without a source in that sentence.\n"
+        "- Never write first-person experience ('I have seen', 'in my store', 'we have seen', "
+        "'our clients'), product capability, price, timeline, turnaround or guarantee claims about "
+        "the brand unless they are in APPROVED BRAND FACTS below. With no fact available, stay "
+        "general or omit the claim. Never invent an anecdote, a client, or a result.\n"
+    ]
+    for rule in banned:
+        if rule.get("prompt"):
+            lines.append(f"- {rule['prompt']}\n")
+    if facts.strip():
+        lines.append("APPROVED BRAND FACTS (your ONLY source for any claim about the brand; you may "
+                     "use these sentences as written):\n" + facts.strip() + "\n")
+    else:
+        lines.append("APPROVED BRAND FACTS: none on file. Make NO claim about what the brand does, "
+                     "charges, promises or has experienced. Link to the money pages and let them "
+                     "speak.\n")
+    return "".join(lines)
 
 
 def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
@@ -171,6 +216,7 @@ def _system_prompt(brand_cfg: Dict[str, Any]) -> str:
         '  voice-locked drafts, no em-dashes. ALL FOUR are required: Book\'d and\n'
         '  Agent Empire have no LinkedIn or X account, so a post without facebook\n'
         '  and instagram copy reaches nobody at all for those brands.\n'
+        + _fact_rules(brand_cfg)
     )
 
 
@@ -223,6 +269,7 @@ def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
         '  voice-locked drafts, no em-dashes. ALL FOUR are required: Book\'d and\n'
         '  Agent Empire have no LinkedIn or X account, so a post without facebook\n'
         '  and instagram copy reaches nobody at all for those brands.\n'
+        + _fact_rules(brand_cfg)
     )
 
 
@@ -230,8 +277,10 @@ def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
     """Generate one post as a structured block array. Raises GenerationError on a
     malformed result. The Post is assembled + gated (validate_blocks) downstream."""
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    post = _llm_json(_system_prompt_ts(brand_cfg), user)
+    return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user))
 
+
+def _check_shape_ts(post: Dict[str, Any]) -> Dict[str, Any]:
     for field in _REQUIRED_FIELDS_TS:
         if field not in post:
             raise GenerationError(f"generated post missing field: {field}")
@@ -260,8 +309,10 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
         return _generate_post_ts(brand_cfg, topic)
 
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    post = _llm_json(_system_prompt(brand_cfg), user)
+    return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user))
 
+
+def _check_shape_mdx(post: Dict[str, Any]) -> Dict[str, Any]:
     for field in _REQUIRED_FIELDS:
         if field not in post:
             raise GenerationError(f"generated post missing field: {field}")
@@ -274,3 +325,34 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
             for k in ("linkedin", "x", "facebook", "instagram")):
         raise GenerationError("social drafts incomplete")
     return post
+
+
+def revise_post(brand_cfg: Dict[str, Any], topic: str, post: Dict[str, Any],
+                violations: List[str]) -> Dict[str, Any]:
+    """ONE revision pass by the WRITER model, driven by the fact-check gate's
+    violation list. The engine calls this at most once per run, then reruns the
+    whole gate; a post that still fails is HELD. Cutting an unsupported claim is
+    always an acceptable fix, and the slug and image prompts are pinned so the
+    revision cannot change what gets committed where."""
+    block = brand_cfg.get("format") in _BLOCK_FORMATS
+    system = _system_prompt_ts(brand_cfg) if block else _system_prompt(brand_cfg)
+    user = (
+        f"You wrote the post below for this topic: {topic}\n"
+        "A fact-check and editor gate HELD it. Fix every violation listed and return the FULL "
+        "corrected post as the same JSON object, with the same keys.\n\n"
+        "REVISION RULES:\n"
+        "- Cutting an unsupported claim, figure, link or sentence is always an acceptable fix, and "
+        "is the right fix whenever you cannot point to a source that states it.\n"
+        "- Do NOT add any new statistic, source link, brand claim or anecdote. Do not swap a dead "
+        "link for another link from memory.\n"
+        "- Keep \"slug\" and \"image_prompts\" exactly as they are, and keep every structure rule "
+        "from your instructions (required elements, in-body images, no em-dashes).\n\n"
+        "VIOLATIONS:\n" + "\n".join(f"- {v}" for v in violations) + "\n\n"
+        "THE POST YOU WROTE (JSON):\n" + json.dumps(post, ensure_ascii=False) + "\n\n"
+        "Return only the corrected JSON object."
+    )
+    revised = _llm_json(system, user)
+    revised = _check_shape_ts(revised) if block else _check_shape_mdx(revised)
+    revised["slug"] = post["slug"]
+    revised["image_prompts"] = post["image_prompts"]
+    return revised
