@@ -69,10 +69,14 @@ class Http:
         return r or R(404, "not found")
 
 
-def _search(*urls, searches=2):
-    def _s(cfg, topic, rcfg):
-        return {"candidates": [{"url": u, "title": f"title of {u}"} for u in urls],
+def _search(*urls, searches=2, retry=()):
+    """Fake search. The broadened retry returns `retry` (default: nothing new)."""
+    def _s(cfg, topic, rcfg, broaden=None):
+        _s.calls.append(broaden)
+        got = urls if broaden is None else retry
+        return {"candidates": [{"url": u, "title": f"title of {u}"} for u in got],
                 "searches": searches, "model": "research-model"}
+    _s.calls = []
     return _s
 
 
@@ -206,7 +210,7 @@ def test_candidate_and_source_caps_bound_the_work():
     http = Http()
     pack = _pack(cfg=cfg, http=http, search=_search(TRADE[0], NIST[0]))
     assert [s["url"] for s in pack["sources"]] == [NIST[0]]          # the primary one survives the cap
-    assert TRADE[0] not in http.calls and pack["mode"] == "qualitative"
+    assert TRADE[0] not in http.calls and pack["mode"] == "thin"
 
 
 # ---------------------------------------------------------------------------
@@ -249,19 +253,20 @@ def test_a_date_the_page_does_not_print_is_not_passed_on():
 # thin pack: qualitative, never invent
 # ---------------------------------------------------------------------------
 
-def test_thin_pack_switches_the_writer_to_qualitative_mode_instead_of_failing():
+def test_thin_pack_is_marked_thin_and_its_prompt_still_forbids_invention():
     pack = _pack(search=_search(NIST[0]))
-    assert pack["mode"] == "qualitative" and len(pack["sources"]) == 1
+    assert pack["mode"] == "thin" and len(pack["sources"]) == 1 and pack["retried"] is True
     prompt = rs.pack_prompt(pack, False)
     assert "THIN PACK" in prompt and "NO statistics" in prompt and "Do not fill the gap from memory" in prompt
     assert NIST[0] in prompt, "the one verified source may still be cited"
 
 
-def test_empty_search_gives_an_empty_qualitative_pack_without_an_extraction_call():
+def test_empty_search_gives_an_empty_thin_pack_without_an_extraction_call():
     llm = mock.Mock()
-    pack = _pack(search=_search(), llm=llm)
+    cfg = dict(_CFG, money_pages=[])           # no first-party pages either: nothing to extract from
+    pack = _pack(search=_search(), llm=llm, cfg=cfg)
     llm.assert_not_called()
-    assert pack["mode"] == "qualitative" and pack["sources"] == []
+    assert pack["mode"] == "thin" and pack["sources"] == []
     prompt = rs.pack_prompt(pack, True)
     assert "SOURCES YOU MAY CITE: none." in prompt and "no external links at all" in prompt
 
@@ -347,7 +352,7 @@ def test_default_search_uses_the_server_side_web_search_tool_with_a_cap(monkeypa
     assert body["model"] == "some-model" and "a topic" in body["messages"][0]["content"]
     assert "test-key" not in json.dumps(body)
     assert out == {"candidates": [{"url": NIST[0], "title": "t"}], "searches": 1, "model": "some-model",
-                   "results_seen": 0}
+                   "results_seen": 0, "fallback": False}
     assert "Return an empty list only when the searches found nothing relevant" in body["system"]
     assert gen.USAGE_LOG[-1]["web_searches"] == 1 and gen.USAGE_LOG[-1]["surface"] == "slipstream_research"
 
@@ -547,14 +552,16 @@ def test_research_error_on_a_gated_brand_holds_and_the_writer_never_runs(caplog)
     assert e2.order == ["research"] and out2["held"] is True and out2["reason"] == "research_error"
 
 
-def test_a_thin_pack_still_writes_in_qualitative_mode_rather_than_holding():
-    pack = _pack(search=_search())
+def test_a_thin_pack_holds_before_the_writer_is_paid_for(caplog):
+    pack = _pack(search=_search(NIST[0]))
     e = Engine(pack=pack)
     out = e.run()
-    assert e.order == ["research", "generate", "factcheck", "publish"]
-    assert e.generate_calls[0][1]["pack"]["mode"] == "qualitative"
-    assert out["ok"] is True and out["research"]["mode"] == "qualitative"
-    assert "No usable source was found" in e.pr_body
+    assert e.order == ["research"], "no writer, no gate, no images, no PR"
+    assert out["ok"] is False and out["held"] is True and out["reason"] == "thin_pack"
+    assert out["violations"] == ["not enough verified sources for this topic (1 usable, 2 needed, "
+                                 "after one broadened retry); post HELD before the writer ran"]
+    assert out["research"]["mode"] == "thin" and out["research"]["retried"] is True
+    assert [s["url"] for s in out["research"]["sources"]] == [NIST[0]]
 
 
 def test_the_one_revision_gets_the_same_pack():
@@ -590,8 +597,9 @@ def test_pr_body_lists_the_pack_sources_next_to_the_claims_table():
     body = e.pr_body
     assert "### Research before writing" in body and "### Fact-check gate" in body
     assert body.index("### Research before writing") < body.index("### Fact-check gate")
-    assert f"| {NIST[0]} | Pub | 1 | no |" in body
-    assert f"| {TRADE[0]} | Pub | 1 | yes |" in body
+    assert f"| {NIST[0]} | Pub | 1 | 0 | no |" in body
+    assert f"| {TRADE[0]} | Pub | 1 | 0 | yes |" in body
+    assert "first-party pages quoted: none" in body and "broadened retry: no" in body
     assert "| Claim | Source | Verdict |" in body and "web searches: 2" in body
     assert EM_DASH not in body
 
@@ -738,11 +746,15 @@ def test_only_a_run_with_a_pack_gets_the_larger_writer_budget(monkeypatch):
     seen = []
     monkeypatch.setattr(gen, "_llm_json_once", lambda s, u, **kw: seen.append(kw) or dict(_MDX))
     gen.generate_post(_CFG, "t")
-    gen.revise_post(_CFG, "t", dict(_MDX), ["v"])
-    assert seen == [{}, {}]
+    assert seen == [{}]
     gen.generate_post(_CFG, "t", pack=_pack())
+    assert seen[1:] == [{"max_tokens": 16000, "timeout": 420}]
+    # every revision gets real headroom, with or without a pack
+    gen.revise_post(_CFG, "t", dict(_MDX), ["v"])
     gen.revise_post(_CFG, "t", dict(_MDX), ["v"], pack=_pack())
-    assert seen[2:] == [{"max_tokens": 16000, "timeout": 420}] * 2
+    assert seen[2:] == [{"max_tokens": 32000, "timeout": 900}] * 2
+    gen.generate_post(_CFG, "t")
+    assert seen[-1] == {}, "the revision budget does not leak into the next call"
 
 
 def test_default_search_recovers_results_from_a_paused_turn_when_the_model_returns_nothing(monkeypatch):
@@ -753,3 +765,268 @@ def test_default_search_recovers_results_from_a_paused_turn_when_the_model_retur
     with mock.patch("requests.post", side_effect=[paused, final]):
         out = rs.default_search(_CFG, "t", rs._rcfg(_CFG))
     assert out["candidates"] == [{"url": TRADE[0], "title": "T"}] and out["results_seen"] == 1
+    assert out["fallback"] is True
+
+
+# ===========================================================================
+# Round 2: broadened retry, first-party pages, second-hand figures, revisions
+# ===========================================================================
+
+def test_thin_first_pass_retries_once_with_a_broadened_query_and_the_tried_urls():
+    search = _search(NIST[0], "https://dead.example/a", retry=(TRADE[0],))
+    http = Http(extra={"https://dead.example/": R(200, "root")})
+    pack = _pack(search=search, http=http)
+    assert len(search.calls) == 2 and search.calls[0] is None
+    assert search.calls[1] == [NIST[0], "https://dead.example/a"], "retry is told what was already tried"
+    assert pack["retried"] is True and pack["mode"] == "sourced" and pack["searches"] == 4
+    assert [s["url"] for s in pack["sources"]] == [NIST[0], TRADE[0]]
+
+
+def test_a_full_first_pass_does_not_pay_for_a_second_search():
+    search = _search(NIST[0], TRADE[0], retry=(BLOG[0],))
+    pack = _pack(search=search)
+    assert search.calls == [None] and pack["retried"] is False and pack["mode"] == "sourced"
+
+
+def test_retry_never_runs_more_than_once_and_ignores_urls_already_tried():
+    search = _search(NIST[0], retry=(NIST[0], NIST[0] + "#again"))
+    http = Http()
+    pack = _pack(search=search, http=http)
+    assert len(search.calls) == 2 and http.calls.count(NIST[0]) == 1
+    assert pack["mode"] == "thin" and pack["usable_sources"] == 1
+
+
+def test_a_search_error_on_the_retry_is_a_research_error_not_a_thin_pack():
+    def search(cfg, topic, rcfg, broaden=None):
+        if broaden is not None:
+            raise RuntimeError("api down")
+        return {"candidates": [{"url": NIST[0]}], "searches": 1}
+    with pytest.raises(rs.ResearchError, match="search failed"):
+        _pack(search=search)
+
+
+def test_broadened_search_prompt_asks_for_a_wider_search_and_lists_the_tried_urls():
+    first = rs.build_search_prompt(_CFG, "a topic", rs._rcfg(_CFG))
+    second = rs.build_search_prompt(_CFG, "a topic", rs._rcfg(_CFG), [NIST[0]])
+    assert "SECOND ATTEMPT" not in first
+    assert "SECOND ATTEMPT" in second and "BROADEN" in second and f"- {NIST[0]}" in second
+
+
+# ---------------------------------------------------------------- first party
+
+SERVICES_PAGE = ("Automotive Intelligence runs a fixed-scope diagnostic of how a dealership handles "
+                 "its internet leads. The diagnostic ends with a written findings report. "
+                 "Our assistant transfers every caller to a live person. ") + "More about the work. " * 30
+FP_QUOTES = {
+    "https://automotiveintelligence.io/services": [
+        "The diagnostic ends with a written findings report.",
+        "Our assistant transfers every caller to a live person.",
+        "We guarantee a 40 percent lift in closed deals."],            # not on the page
+}
+_BAN = [{"id": "no_transfer", "label": "transfer is not live", "patterns": [r"\btransfer(?:s|red|ring)?\b"]}]
+
+
+def _fp_pack(banned=()):
+    cfg = dict(_CFG, factcheck={"banned": list(banned)})
+    http = Http(extra={"https://automotiveintelligence.io/services": R(200, f"<p>{SERVICES_PAGE}</p>")})
+    return rs.build_source_pack(cfg, "a topic", http_get=http, search=_search(NIST[0], TRADE[0]),
+                                llm=_extract({**GOOD_QUOTES, **FP_QUOTES}), facts_text="")
+
+
+def test_brand_money_pages_are_offered_as_first_party_sources_with_confirmed_quotes():
+    seen = {}
+
+    def llm(system, user):
+        seen["user"] = user
+        return _extract({**GOOD_QUOTES, **FP_QUOTES})(system, user)
+    http = Http(extra={"https://automotiveintelligence.io/services": R(200, f"<p>{SERVICES_PAGE}</p>")})
+    pack = rs.build_source_pack(_CFG, "a topic", http_get=http, search=_search(NIST[0], TRADE[0]),
+                                llm=llm, facts_text="")
+    assert "=== FIRST-PARTY SOURCE https://automotiveintelligence.io/services ===" in seen["user"]
+    (page,) = [b for b in pack["brand_pages"] if b["path"] == "/services"]
+    texts = [q["text"] for q in page["quotes"]]
+    assert "The diagnostic ends with a written findings report." in texts
+    assert not any("40 percent" in t for t in texts), "a quote the page does not contain is discarded"
+    assert http.calls.count("https://automotiveintelligence.io/services") == 1, "fetched once, shared"
+    for block in (False, True):
+        prompt = rs.pack_prompt(pack, block)
+        assert "FIRST-PARTY PAGES" in prompt and "[/services]" in prompt
+        assert 'QUOTE: "The diagnostic ends with a written findings report."' in prompt
+        assert "The brand rules in your instructions still win" in prompt
+    assert "carries the internal link to that page" in rs.pack_prompt(pack, False)
+    assert "must be an item in the 'links' block" in rs.pack_prompt(pack, True)
+    assert rs.summarize(pack)["brand_pages"] == [{"path": "/services", "quotes": 2}]
+
+
+def test_a_first_party_quote_that_trips_a_banned_rule_is_never_offered():
+    """The site says it, the brand rule forbids the blog to say it: the rule wins."""
+    pack = _fp_pack(_BAN)
+    texts = [q["text"] for b in pack["brand_pages"] for q in b["quotes"]]
+    assert texts == ["The diagnostic ends with a written findings report."]
+    assert pack["brand_quotes_banned"] == 1
+    assert "transfers every caller" not in rs.pack_prompt(pack, False)
+
+
+def test_the_gate_still_bans_it_even_when_the_live_page_says_it():
+    cfg = dict(_CFG, factcheck={"banned": _BAN, "figure_allowlist": []})
+    http = Http(extra={"https://automotiveintelligence.io/services": R(200, f"<p>{SERVICES_PAGE}</p>")})
+    post = dict(_MDX, body_mdx="<AnswerFirst>Our assistant [transfers every caller](/services) to a live person.</AnswerFirst>")
+    r = fc.run_gate(post, cfg, http_get=http, use_llm=False, facts_text="")
+    assert r["ok"] is False and any("banned content [no_transfer]" in v for v in r["violations"])
+
+
+def test_without_first_party_text_the_writer_is_told_to_make_no_brand_statement():
+    pack = _pack()                       # the fake money pages hold no quotable text
+    assert pack["brand_pages"] == []
+    assert "No first-party page text is available" in rs.pack_prompt(pack, False)
+
+
+def test_first_party_pages_do_not_count_toward_the_minimum_sources():
+    cfg = dict(_CFG, factcheck={"banned": []})
+    http = Http(extra={"https://automotiveintelligence.io/services": R(200, f"<p>{SERVICES_PAGE}</p>")})
+    pack = rs.build_source_pack(cfg, "a topic", http_get=http, search=_search(),
+                                llm=_extract(FP_QUOTES), facts_text="")
+    assert pack["brand_pages"] and pack["sources"] == [] and pack["mode"] == "thin"
+
+
+# ---------------------------------------------------------------- second hand
+
+VENDOR = ("https://vendor.example/blog/speed", FILLER + "According to Harvard Business Review, firms "
+          "that respond within an hour are 7 times more likely to qualify the lead. In our own 2026 "
+          "audit of 53 stores, the average first reply took 9 hours. A Cox Automotive study found 61 "
+          "percent of shoppers expect a same-day answer. Leads should be worked from the raw export.")
+HBR = ("https://hbr.org/2011/03/the-short-life-of-online-sales-leads", FILLER + "Firms that tried to "
+       "contact potential customers within an hour were nearly 7 times as likely to qualify the lead.")
+VQ = [{"text": "According to Harvard Business Review, firms that respond within an hour are 7 times more "
+               "likely to qualify the lead.", "credited_to": ""},
+      {"text": "In our own 2026 audit of 53 stores, the average first reply took 9 hours.", "credited_to": ""},
+      {"text": "A Cox Automotive study found 61 percent of shoppers expect a same-day answer.",
+       "credited_to": "Cox Automotive"},
+      {"text": "Leads should be worked from the raw export.", "credited_to": "Somebody Else"}]
+
+
+def _sh_pack(*urls, quotes=None):
+    http = Http(pages=dict([NIST, TRADE, VENDOR, HBR]))
+    q = {VENDOR[0]: VQ, NIST[0]: GOOD_QUOTES[NIST[0]], TRADE[0]: GOOD_QUOTES[TRADE[0]],
+         HBR[0]: ["Firms that tried to contact potential customers within an hour were nearly 7 times "
+                  "as likely to qualify the lead."]}
+    q.update(quotes or {})
+
+    def llm(system, user):
+        return {"sources": [{"url": u, "publisher": {VENDOR[0]: "Vendor Inc", HBR[0]: "Harvard Business Review"}.get(u, "Pub"),
+                             "date": "", "quotes": v} for u, v in q.items()]}
+    return rs.build_source_pack(_CFG, "a topic", http_get=http, search=_search(*urls), llm=llm, facts_text="")
+
+
+def _vendor(pack):
+    return next(s for s in pack["sources"] if s["url"] == VENDOR[0])
+
+
+def test_a_figure_the_page_credits_to_someone_else_is_recorded_as_second_hand():
+    pack = _sh_pack(VENDOR[0], NIST[0], TRADE[0])
+    by_text = {q["text"][:22]: q for q in _vendor(pack)["quotes"]}
+    assert by_text["According to Harvard B"]["second_hand"] == "Harvard Business Review"   # code caught the phrasing
+    assert by_text["A Cox Automotive study"]["second_hand"] == "Cox Automotive"            # the model's label
+    assert by_text["In our own 2026 audit "]["second_hand"] == "", "the publisher's own data is first-hand"
+    assert by_text["Leads should be worked"]["second_hand"] == "", "no figure, so the rule does not apply"
+    prompt = rs.pack_prompt(pack, False)
+    assert "QUOTE (SECOND-HAND, the page credits this to Harvard Business Review; do NOT use its numbers)" in prompt
+    assert "QUOTE (SECOND-HAND, the page credits this to Cox Automotive; do NOT use its numbers)" in prompt
+    assert 'QUOTE: "In our own 2026 audit of 53 stores, the average first reply took 9 hours."' in prompt
+    assert "A quote marked SECOND-HAND carries a number its page credits to someone else" in prompt
+    summary = next(x for x in rs.summarize(pack)["sources"] if x["url"] == VENDOR[0])
+    assert len(summary["second_hand"]) == 2
+
+
+def test_second_hand_is_lifted_when_the_original_publisher_is_also_in_the_pack():
+    pack = _sh_pack(VENDOR[0], HBR[0], NIST[0])
+    by_text = {q["text"][:22]: q for q in _vendor(pack)["quotes"]}
+    assert by_text["According to Harvard B"]["original_in_pack"] is True
+    assert by_text["A Cox Automotive study"]["original_in_pack"] is False
+    prompt = rs.pack_prompt(pack, False)
+    assert "credits this to Harvard Business Review" not in prompt
+    assert "credits this to Cox Automotive" in prompt
+
+
+def test_a_publisher_citing_its_own_study_is_not_second_hand():
+    assert rs.second_hand_credit("According to BrightLocal, 88 percent of consumers read replies.",
+                                 "", "BrightLocal", "https://www.brightlocal.com/research/x") == ""
+    assert rs.second_hand_credit("88 percent of consumers read replies.", "BrightLocal Research",
+                                 "BrightLocal", "https://www.brightlocal.com/x") == ""
+    assert rs.second_hand_credit("88 percent of consumers read replies.", "Whitespark survey",
+                                 "", "https://whitespark.ca/x") == ""
+    assert rs.second_hand_credit("88 percent of consumers read replies.", "Gartner",
+                                 "BrightLocal", "https://www.brightlocal.com/x") == "Gartner"
+    assert rs.second_hand_credit("Consumers read replies.", "Gartner", "BrightLocal", "") == ""
+
+
+def test_a_source_holding_only_second_hand_figures_does_not_count_as_usable():
+    only = {VENDOR[0]: VQ[:1] + VQ[2:3]}
+    pack = _sh_pack(VENDOR[0], NIST[0], quotes=only)
+    assert len(pack["sources"]) == 2 and pack["usable_sources"] == 1 and pack["mode"] == "thin"
+
+
+def test_using_a_second_hand_number_in_the_post_is_a_violation():
+    pack = _sh_pack(VENDOR[0], NIST[0], TRADE[0])
+    post = dict(_MDX, body_mdx=(
+        f"<AnswerFirst>Stores took [9 hours on average]({VENDOR[0]}) to reply.</AnswerFirst>\n"
+        f"Fast firms are [7 times more likely]({VENDOR[0]}) to qualify a lead, and "
+        f"[61 percent]({VENDOR[0]}) of shoppers expect a same-day answer."))
+    v = rs.pack_violations(post, pack, _CFG["domain"])
+    assert len(v) == 2 and all(x.startswith("figure ") and "is second-hand" in x for x in v)
+    assert any("Harvard Business Review" in x for x in v) and any("Cox Automotive" in x for x in v)
+    assert not any("9 hours" in x for x in v), "the publisher's own figure is fine"
+    ok = _sh_pack(VENDOR[0], HBR[0], NIST[0])
+    post2 = dict(_MDX, body_mdx=f"<AnswerFirst>Fast firms are [7 times more likely]({VENDOR[0]}) to qualify.</AnswerFirst>")
+    assert rs.pack_violations(post2, ok, _CFG["domain"]) == [], "original is in the pack"
+
+
+def test_second_hand_number_is_caught_in_a_block_format_post_too():
+    pack = _sh_pack(VENDOR[0], NIST[0], TRADE[0])
+    post = dict(_BLOCKS, body=[{"type": "answer", "text": "Reply fast."},
+                               {"type": "p", "text": "About 61 percent of shoppers expect a same-day answer."},
+                               {"type": "sources", "items": [{"label": "Vendor", "href": VENDOR[0]}]}])
+    v = rs.pack_violations(post, pack, _CFG["domain"])
+    assert len(v) == 1 and 'figure "61 percent" is second-hand' in v[0]
+
+
+# ---------------------------------------------------------------- revisions
+
+def _empty_at_limit():
+    resp = mock.Mock(ok=True, status_code=200)
+    resp.json.return_value = {"id": "m", "model": "claude-sonnet-5", "stop_reason": "max_tokens",
+                              "content": [{"type": "thinking", "thinking": ""}],
+                              "usage": {"input_tokens": 10, "output_tokens": 32000}}
+    return resp
+
+
+def test_a_revision_gets_a_larger_budget_and_an_empty_reply_at_the_limit_is_not_retried(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with mock.patch("requests.post", return_value=_empty_at_limit()) as post:
+        with pytest.raises(gen.EmptyAtLimit, match="max_tokens=32000"):
+            gen.revise_post(_CFG, "t", dict(_MDX), ["v"], pack=_pack())
+    assert post.call_count == 1, "same request at the same limit is not paid for three times"
+    assert post.call_args.kwargs["json"]["max_tokens"] == 32000
+    assert gen._MAX_TOKENS_REVISE > gen._MAX_TOKENS_WITH_PACK > gen._MAX_TOKENS
+
+
+def test_generate_keeps_its_old_retry_behaviour_on_an_empty_reply(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with mock.patch("requests.post", return_value=_empty_at_limit()) as post:
+        with pytest.raises(gen.GenerationError, match="empty LLM response"):
+            gen.generate_post(_CFG, "t")
+    assert post.call_count == 3 and post.call_args.kwargs["json"]["max_tokens"] == 8000
+
+
+def test_an_empty_revision_is_a_hold_with_that_reason():
+    pack = _pack()
+    bad = _gate_ok(ok=False, violations=["dead source link (HTTP 404): https://x"])
+    e = Engine(pack=pack, gate=[bad])
+    e._revise = mock.Mock(side_effect=gen.EmptyAtLimit("empty LLM response (stop_reason=max_tokens, max_tokens=32000)"))
+    out = e.run()
+    assert out["ok"] is False and out["held"] is True and "publish" not in e.order
+    assert out["violations"] == [
+        "dead source link (HTTP 404): https://x",
+        "revision came back empty at the token limit (empty LLM response (stop_reason=max_tokens, "
+        "max_tokens=32000)); post HELD, original violations stand"]
+    assert out["factcheck"]["revised"] is False

@@ -8,6 +8,7 @@ services/slipstream_validate.validate_post before anything publishes.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -30,6 +31,13 @@ _MAX_TOKENS = 8000
 # that has a pack, so a brand that does not research keeps the old request.
 _MAX_TOKENS_WITH_PACK = 16000
 _TIMEOUT_WITH_PACK_S = 420
+# A revision reads the whole post, the violation list and the pack, reasons
+# over all of it, and must return the WHOLE post again. Measured 2026-11-15:
+# three revisions returned nothing at 8000, and one used 11,993 of 16,000. So a
+# revision gets real headroom, and an empty reply at the limit is not retried.
+# Only gated brands ever revise; a brand opted out of the gate never gets here.
+_MAX_TOKENS_REVISE = 32000
+_TIMEOUT_REVISE_S = 900
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
 # ts_posts_array (Worship Digital): a structured block array instead of an MDX string.
@@ -45,6 +53,12 @@ logger = logging.getLogger(__name__)
 
 class GenerationError(Exception):
     pass
+
+
+class EmptyAtLimit(GenerationError):
+    """The model used its whole output budget and returned no text
+    (stop_reason=max_tokens). Retrying the same request at the same limit only
+    pays for the same failure again."""
 
 
 # In-memory record of the model calls this process made (model, tokens, web
@@ -125,6 +139,8 @@ def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
     text = "".join(b.get("text") or "" for b in (j.get("content") or [])
                    if b.get("type") == "text").strip()
     if not text:
+        if j.get("stop_reason") == "max_tokens":
+            raise EmptyAtLimit(f"empty LLM response (stop_reason=max_tokens, max_tokens={max_tokens})")
         raise GenerationError(f"empty LLM response (stop_reason={j.get('stop_reason')})")
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
@@ -141,17 +157,32 @@ def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
         raise GenerationError(f"model did not return valid JSON: {e}")
 
 
+# Set by revise_post around its one call, so _llm_json keeps the plain
+# (system, user) signature every caller and test already uses.
+_REVISING: contextvars.ContextVar = contextvars.ContextVar("slipstream_revising", default=False)
+
+
 def _llm_json(system: str, user: str, *, retries: int = 2,
               with_pack: bool = False) -> Dict[str, Any]:
     """Retry the LLM call on transient errors / malformed JSON (models
     occasionally return finish_reason=error or a JSON syntax slip)."""
     last: Exception = GenerationError("no attempt")
+    revise = bool(_REVISING.get())
     for attempt in range(retries + 1):
         try:
+            if revise:
+                return _llm_json_once(system, user, max_tokens=_MAX_TOKENS_REVISE,
+                                      timeout=_TIMEOUT_REVISE_S)
             if with_pack:
                 return _llm_json_once(system, user, max_tokens=_MAX_TOKENS_WITH_PACK,
                                       timeout=_TIMEOUT_WITH_PACK_S)
             return _llm_json_once(system, user)
+        except EmptyAtLimit:
+            if revise:
+                raise                      # same request, same limit, same result: do not pay again
+            last = GenerationError("empty LLM response (stop_reason=max_tokens)")
+            logger.warning("[slipstream] LLM attempt %d/%d returned nothing at the token limit",
+                           attempt + 1, retries + 1)
         except GenerationError as e:
             last = e
             logger.warning("[slipstream] LLM attempt %d/%d failed: %s", attempt + 1, retries + 1, e)
@@ -412,7 +443,11 @@ def revise_post(brand_cfg: Dict[str, Any], topic: str, post: Dict[str, Any],
            "the pack.")
         + _pack_block(pack, block)
     )
-    revised = _llm_json(system, user) if pack is None else _llm_json(system, user, with_pack=True)
+    token = _REVISING.set(True)
+    try:
+        revised = _llm_json(system, user)
+    finally:
+        _REVISING.reset(token)
     revised = _check_shape_ts(revised) if block else _check_shape_mdx(revised)
     revised["slug"] = post["slug"]
     revised["image_prompts"] = post["image_prompts"]

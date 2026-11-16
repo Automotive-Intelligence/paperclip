@@ -23,10 +23,21 @@ Four steps, and the model is trusted in none of them:
 The pack also carries the brand's approved facts and a list of the brand's own
 URLs that code verified return 200, so internal links stop being invented.
 
-A THIN pack (fewer usable sources than `min_sources`) does not fail the run:
-the pack switches to "qualitative" mode and the writer is told to use no
-statistics and no external citation beyond the pack. A thin pack must never
-make the writer invent.
+A THIN pack (fewer usable sources than `min_sources`) gets ONE retry with a
+broadened search. If it is still thin the pack comes back in "thin" mode and
+the engine HOLDS before paying for the writer, with the reason "not enough
+verified sources for this topic". The 2026-11-15 dry runs showed a post written
+from a thin pack cannot pass the gate, so writing it only costs money.
+
+The pack also offers the brand's OWN money pages as first-party sources
+(verified quotes from the live site), so "we offer X" can be supported by the
+site itself. Banned-content rules still win: a first-party quote that trips a
+brand's banned rule is never offered, and the gate bans it regardless.
+
+A figure a page credits to someone else (a vendor blog repeating "according to
+Harvard Business Review") is recorded as SECOND-HAND. The writer may not use
+that number unless the original publisher is also in the pack, and code flags
+it if it does.
 
 A research ERROR is different: build_source_pack raises ResearchError and the
 engine HOLDS the post. It never falls back to writing from memory.
@@ -242,7 +253,18 @@ SEARCH_SYSTEM = (
 )
 
 
-def build_search_prompt(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any]) -> str:
+def build_search_prompt(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
+                        broaden: Optional[List[str]] = None) -> str:
+    retry = ""
+    if broaden is not None:
+        tried = "\n".join(f"- {u}" for u in broaden[:30]) or "- (none)"
+        retry = (
+            "\n\nSECOND ATTEMPT. The first search did not yield enough usable pages (they failed "
+            "to load, were blocked, or held nothing quotable). BROADEN the search: look at the "
+            "wider subject the topic sits in, the adjacent questions a reader would ask, the "
+            "underlying rule, standard or official documentation, and industry studies with "
+            "published figures. Use different queries than an obvious first try. Do NOT return "
+            "any of these already-tried URLs:\n" + tried)
     return (
         f"Blog topic: {topic}\n"
         f"The brand writing it: {brand_cfg.get('display_name') or brand_cfg.get('brand_key', '')} "
@@ -252,6 +274,7 @@ def build_search_prompt(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, A
         "the key definitions, any rule or policy involved, and any real published figure.\n"
         f"Do not return pages from {brand_cfg.get('domain', 'the brand itself')}.\n"
         "Return only the JSON object."
+        + retry
     )
 
 
@@ -299,7 +322,7 @@ def _search_result_urls(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
-                   model: Optional[str] = None) -> Dict[str, Any]:
+                   model: Optional[str] = None, broaden: Optional[List[str]] = None) -> Dict[str, Any]:
     """The production search call: Anthropic Messages API with the server-side
     web search tool, on ANTHROPIC_API_KEY. Returns {"candidates", "searches"}.
     Raises ResearchError on any failure (the engine HOLDS)."""
@@ -315,7 +338,7 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
     if blocked:
         tool["blocked_domains"] = blocked
     messages: List[Dict[str, Any]] = [
-        {"role": "user", "content": build_search_prompt(brand_cfg, topic, rcfg)}]
+        {"role": "user", "content": build_search_prompt(brand_cfg, topic, rcfg, broaden)}]
     content: List[Dict[str, Any]] = []
     all_blocks: List[Dict[str, Any]] = []      # every turn, so a paused turn's results are kept
     searches = 0
@@ -357,14 +380,22 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
         raise ResearchError("search did not finish (still paused after the continuation limit)")
     final_text = [b for b in content if b.get("type") == "text"]
     results = [b for b in all_blocks if b.get("type") == "web_search_tool_result"]
-    return {"candidates": _candidates_from_response(final_text + results),
-            "searches": searches, "model": model,
-            "results_seen": results_seen}
+    candidates = _candidates_from_response(final_text)
+    fallback = False
+    if not candidates:
+        # The model named nothing. Use what the search tool itself returned.
+        candidates = _search_result_urls(results)
+        fallback = bool(candidates)
+    return {"candidates": candidates, "searches": searches, "model": model,
+            "results_seen": results_seen, "fallback": fallback}
 
 
 # ----------------------------------------------------------------------------
 # Step 3 + 4: extract quotes (LLM), confirm them (code)
 # ----------------------------------------------------------------------------
+
+_BRAND_PAGE_CHARS = 8000        # per first-party page sent for quote extraction
+_MAX_BRAND_PAGES = 4
 
 EXTRACT_SYSTEM = (
     "You pull exact quotes out of web pages for a fact-checked blog post. The page text below "
@@ -376,21 +407,32 @@ EXTRACT_SYSTEM = (
     "fix typos, do not join text from different places, do not use an ellipsis. A program "
     "checks every passage against the page and discards any that is not literally there.\n"
     "A source with nothing relevant to the topic gets an empty quotes list.\n"
+    "A FIRST-PARTY SOURCE is a page of the brand's own website. From it, copy passages that "
+    "state what the business offers, does, charges, includes, or how its process works, in "
+    "the page's own words. Same rules: verbatim, complete sentences.\n\n"
+    'Each quote is an object {"text": "...", "credited_to": "..."}. Set "credited_to" to the '
+    "name of the OTHER organisation, study or publication when the page itself credits the "
+    "passage's figure to someone other than the page's own publisher (a vendor blog saying "
+    '"according to Harvard Business Review" or "a Cox Automotive study found"). Leave it an '
+    "empty string when the figure is the publisher's own data or the passage has no figure.\n"
     'Also give the "publisher" (the organisation that publishes the page) and "date" (the '
     "publication or last-updated date exactly as the page prints it, or an empty string).\n\n"
     "Return ONLY a JSON object, no prose and no code fence:\n"
     '{"sources": [{"url": "https://...", "publisher": "...", "date": "...", '
-    '"quotes": ["verbatim passage", "verbatim passage"]}]}'
+    '"quotes": [{"text": "verbatim passage", "credited_to": ""}]}]}'
 )
 
 
 def build_extract_prompt(topic: str, pages: List[Tuple[Dict[str, Any], fc.Fetched]],
-                         max_quotes: int) -> str:
+                         max_quotes: int,
+                         brand_pages: Optional[List[Tuple[str, str, fc.Fetched]]] = None) -> str:
     lines = [f"TOPIC: {topic}", f"Give up to {max_quotes} quotes per source.", ""]
     for cand, f in pages:
         # The same window the gate's verifier reads, so every pack quote sits
         # where the verifier can see it.
         lines.append(f"=== SOURCE {cand['url']} ===\n{f.text[:fc._PROMPT_SOURCE_CHARS]}")
+    for _path, url, f in brand_pages or []:
+        lines.append(f"=== FIRST-PARTY SOURCE {url} ===\n{f.text[:_BRAND_PAGE_CHARS]}")
     return "\n".join(lines)
 
 
@@ -404,14 +446,62 @@ def default_llm(model: Optional[str] = None) -> Callable[[str, str], Dict[str, A
     return _call
 
 
-def confirm_quotes(quotes: List[Any], page_text: str, max_quotes: int) -> Tuple[List[Dict[str, Any]], int]:
+# "according to X", "a study by X", "source: X": the page is repeating someone
+# else's number. Deliberately explicit phrasings only; the extraction model's
+# "credited_to" label covers the rest.
+_ATTRIB_RE = re.compile(
+    r"\b(?i:according to|reported by|cited by|citing|source:|data from|research (?:from|by)|"
+    r"(?:study|survey|report|audit|analysis|poll) (?:from|by))\s+(?i:the |a |an )?"
+    r"([A-Z][A-Za-z0-9&.'-]*(?:\s+(?:[A-Z][A-Za-z0-9&.'-]*|of|and|for|&)){0,5})")
+
+
+def _alnum(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def same_org(name: str, publisher: str, url: str = "") -> bool:
+    """Is `name` the page's own publisher? Loose on purpose (BrightLocal vs
+    'BrightLocal Research'), because a wrong 'second-hand' label throws away a
+    publisher's own data."""
+    n, pub = _alnum(name), _alnum(publisher)
+    if not n:
+        return True
+    if pub and (n in pub or pub in n):
+        return True
+    host = _alnum(fc._host(url).rsplit(".", 1)[0]) if url else ""
+    first = _alnum((name or "").split()[0]) if (name or "").split() else ""
+    return bool(host) and (n in host or host in n or (len(first) >= 4 and first in host))
+
+
+def second_hand_credit(text: str, credited_to: str, publisher: str, url: str) -> str:
+    """The name a figure-carrying quote is credited to when that is NOT the
+    page's own publisher, else ''. A quote with no figure is never second-hand:
+    the rule is about numbers."""
+    if not fc.extract_figures(text):
+        return ""
+    name = fc._clean(str(credited_to or ""))
+    if not name:
+        m = _ATTRIB_RE.search(text)
+        name = fc._clean(m.group(1)).rstrip(".,'") if m else ""
+    if not name or same_org(name, publisher, url):
+        return ""
+    return name
+
+
+def confirm_quotes(quotes: List[Any], page_text: str, max_quotes: int,
+                   publisher: str = "", url: str = "") -> Tuple[List[Dict[str, Any]], int]:
     """Keep only quotes that are LITERALLY in the fetched page text (same
-    normalisation as the gate's quote check). Returns (kept, discarded_count)."""
+    normalisation as the gate's quote check). Returns (kept, discarded_count).
+    Each kept quote records whether its figure is second-hand."""
     page_norm = fc._norm(page_text[:fc._PROMPT_SOURCE_CHARS])
     kept: List[Dict[str, Any]] = []
     discarded = 0
     seen = set()
     for q in quotes or []:
+        credited = ""
+        if isinstance(q, dict):
+            credited = str(q.get("credited_to") or "")
+            q = q.get("text")
         text = fc._clean(str(q or ""))
         qn = fc._norm(text)
         if len(qn) < fc._MIN_QUOTE_CHARS or qn not in page_norm:
@@ -420,10 +510,21 @@ def confirm_quotes(quotes: List[Any], page_text: str, max_quotes: int) -> Tuple[
         if qn in seen:
             continue
         seen.add(qn)
-        kept.append({"text": text, "figures": _dedupe([fg.raw for fg in fc.extract_figures(text)])})
+        kept.append({"text": text, "figures": _dedupe([fg.raw for fg in fc.extract_figures(text)]),
+                     "second_hand": second_hand_credit(text, credited, publisher, url)})
         if len(kept) >= max_quotes:
             break
     return kept, discarded
+
+
+def _blocked_second_hand(q: Dict[str, Any]) -> bool:
+    return bool(q.get("second_hand")) and not q.get("original_in_pack")
+
+
+def usable_source_count(sources: List[Dict[str, Any]]) -> int:
+    """Sources that give the writer something it may actually use: at least one
+    quote that is not a blocked second-hand figure."""
+    return sum(1 for s in sources if any(not _blocked_second_hand(q) for q in s.get("quotes") or []))
 
 
 # ----------------------------------------------------------------------------
@@ -474,6 +575,19 @@ def verified_internal_links(cfg: Dict[str, Any], http_get: Callable[[str], Any],
 # The stage
 # ----------------------------------------------------------------------------
 
+def _run_search(search, cfg, topic, rcfg, broaden=None) -> Dict[str, Any]:
+    try:
+        fn = search or default_search
+        found = fn(cfg, topic, rcfg) if broaden is None else fn(cfg, topic, rcfg, broaden=broaden)
+    except ResearchError:
+        raise
+    except Exception as e:
+        raise ResearchError(f"search failed: {type(e).__name__}: {e}"[:300])
+    if not isinstance(found, dict) or not isinstance(found.get("candidates"), list):
+        raise ResearchError("search returned no candidate list")
+    return found
+
+
 def build_source_pack(cfg: Dict[str, Any], topic: str, *,
                       http_get: Optional[Callable[[str], Any]] = None,
                       search: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -484,43 +598,62 @@ def build_source_pack(cfg: Dict[str, Any], topic: str, *,
 
     Raises ResearchError when research itself fails (search call error, model
     error, malformed reply). The caller HOLDS the post; it never writes from
-    memory. A search that simply finds little is NOT an error: the pack comes
-    back in "qualitative" mode."""
+    memory. A search that simply finds little is NOT an error: research retries
+    once with a broadened query, and if the pack is still thin it comes back
+    with mode "thin" and the caller holds before the writer runs."""
     rcfg = _rcfg(cfg)
     http_get = http_get or fc.default_http_get
     cache = link_cache if link_cache is not None else {}
     domain = str((cfg or {}).get("domain") or "")
-    try:
-        found = (search or default_search)(cfg, topic, rcfg)
-    except ResearchError:
-        raise
-    except Exception as e:
-        raise ResearchError(f"search failed: {type(e).__name__}: {e}"[:300])
-    if not isinstance(found, dict) or not isinstance(found.get("candidates"), list):
-        raise ResearchError("search returned no candidate list")
+    dom = domain.lower()[4:] if domain.lower().startswith("www.") else domain.lower()
+    facts = fc.load_facts(cfg) if facts_text is None else facts_text
+    banned = ((cfg or {}).get("factcheck") or {}).get("banned") or []
 
-    candidates, dropped = filter_candidates(found["candidates"], domain, rcfg)
-    for extra in candidates[rcfg["max_candidates"]:]:
-        dropped.append({"url": extra["url"], "reason": "over the per-post candidate cap"})
-    candidates = candidates[: rcfg["max_candidates"]]
+    # The brand's own site first: verified internal links, and the money pages
+    # as first-party sources.
+    internal = verified_internal_links(cfg, http_get, cache, rcfg["max_internal_links"])
+    first_party: List[Tuple[str, str, fc.Fetched]] = []
+    for path in [p for p in (cfg.get("money_pages") or []) if p in internal][:_MAX_BRAND_PAGES]:
+        f = cache.get(f"https://{dom}{path}")
+        if f is not None and usable_page(f) is None:
+            first_party.append((path, f"https://{dom}{path}", f))
 
-    pages: List[Tuple[Dict[str, Any], fc.Fetched]] = []
-    for cand in candidates:
-        url = cand["url"]
-        if url not in cache:
-            cache[url] = fc.check_link(url, http_get, internal=False)
-        why = usable_page(cache[url])
-        if why:
-            dropped.append({"url": url, "reason": why})
-            continue
-        pages.append((cand, cache[url]))
+    state: Dict[str, Any] = {"sources": [], "dropped": [], "discarded": 0, "searches": 0,
+                             "candidates": 0, "results_seen": 0, "fallback": False,
+                             "brand_pages": [], "brand_quotes_banned": 0, "model": None}
+    tried: List[str] = []
 
-    sources: List[Dict[str, Any]] = []
-    quotes_discarded = 0
-    if pages:
+    def harvest(found: Dict[str, Any], with_first_party: bool) -> None:
+        state["searches"] += int(found.get("searches") or 0)
+        state["candidates"] += len(found["candidates"])
+        state["results_seen"] += int(found.get("results_seen") or 0)
+        state["fallback"] = state["fallback"] or bool(found.get("fallback"))
+        state["model"] = found.get("model") or state["model"]
+        fresh = [c for c in found["candidates"] if isinstance(c, dict)
+                 and canonical_url(str(c.get("url") or "")) not in {canonical_url(t) for t in tried}]
+        candidates, dropped = filter_candidates(fresh, domain, rcfg)
+        for extra in candidates[rcfg["max_candidates"]:]:
+            dropped.append({"url": extra["url"], "reason": "over the per-post candidate cap"})
+        candidates = candidates[: rcfg["max_candidates"]]
+        state["dropped"].extend(dropped)
+        tried.extend(d["url"] for d in dropped)
+        pages: List[Tuple[Dict[str, Any], fc.Fetched]] = []
+        for cand in candidates:
+            url = cand["url"]
+            tried.append(url)
+            if url not in cache:
+                cache[url] = fc.check_link(url, http_get, internal=False)
+            why = usable_page(cache[url])
+            if why:
+                state["dropped"].append({"url": url, "reason": why})
+                continue
+            pages.append((cand, cache[url]))
+        brand_in = first_party if with_first_party else []
+        if not pages and not brand_in:
+            return
         try:
             reply = (llm or default_llm())(EXTRACT_SYSTEM, build_extract_prompt(
-                topic, pages, rcfg["max_quotes_per_source"]))
+                topic, pages, rcfg["max_quotes_per_source"], brand_in))
         except Exception as e:
             raise ResearchError(f"quote extraction failed: {type(e).__name__}: {e}"[:300])
         if not isinstance(reply, dict) or not isinstance(reply.get("sources"), list):
@@ -529,42 +662,85 @@ def build_source_pack(cfg: Dict[str, Any], topic: str, *,
                   for s in reply["sources"] if isinstance(s, dict)}
         for cand, f in pages:
             s = by_url.get(canonical_url(cand["url"])) or {}
-            quotes, bad = confirm_quotes(s.get("quotes") or [], f.text, rcfg["max_quotes_per_source"])
-            quotes_discarded += bad
+            publisher = (fc._clean(str(s.get("publisher") or "")) or cand.get("publisher")
+                         or fc._host(cand["url"]))
+            quotes, bad = confirm_quotes(s.get("quotes") or [], f.text, rcfg["max_quotes_per_source"],
+                                         publisher, cand["url"])
+            state["discarded"] += bad
             if not quotes:
-                dropped.append({"url": cand["url"], "reason": "no quote could be confirmed in the page text"})
+                state["dropped"].append({"url": cand["url"],
+                                         "reason": "no quote could be confirmed in the page text"})
                 continue
             date = fc._clean(str(s.get("date") or ""))
             if date and fc._norm(date) not in fc._norm(f.text):
                 date = ""                           # a date the page does not print is not passed on
-            sources.append({
-                "url": cand["url"],
-                "title": cand.get("title") or "",
-                "publisher": fc._clean(str(s.get("publisher") or "")) or cand.get("publisher")
-                             or fc._host(cand["url"]),
-                "date": date,
-                "primary": bool(cand.get("primary")),
-                "quotes": quotes,
+            state["sources"].append({
+                "url": cand["url"], "title": cand.get("title") or "", "publisher": publisher,
+                "date": date, "primary": bool(cand.get("primary")), "quotes": quotes,
                 "figures": _dedupe([fg for q in quotes for fg in q["figures"]]),
             })
-    for extra in sources[rcfg["max_sources"]:]:
-        dropped.append({"url": extra["url"], "reason": "over the per-post source cap"})
-    sources = sources[: rcfg["max_sources"]]
+        for path, url, f in brand_in:
+            s = by_url.get(canonical_url(url)) or {}
+            quotes, bad = confirm_quotes(s.get("quotes") or [], f.text[:_BRAND_PAGE_CHARS],
+                                         rcfg["max_quotes_per_source"])
+            state["discarded"] += bad
+            allowed = []
+            for q in quotes:
+                # A page of the brand's own site may describe something the brand's
+                # rules forbid the blog to mention. The rule wins: never offer it.
+                if fc.check_banned([fc.Unit(text=q["text"], where="first-party quote")], banned, facts):
+                    state["brand_quotes_banned"] += 1
+                    continue
+                q["second_hand"] = ""
+                allowed.append(q)
+            if allowed:
+                state["brand_pages"].append({"path": path, "url": url, "quotes": allowed})
 
-    internal = verified_internal_links(cfg, http_get, cache, rcfg["max_internal_links"])
-    facts = fc.load_facts(cfg) if facts_text is None else facts_text
-    mode = "sourced" if len(sources) >= rcfg["min_sources"] else "qualitative"
-    logger.info("[slipstream] %s research: %d source(s) in pack, %d dropped, %d quote(s) discarded, "
-                "%d internal link(s) verified, mode=%s", (cfg or {}).get("brand_key", "?"),
-                len(sources), len(dropped), quotes_discarded, len(internal), mode)
+    def settle() -> None:
+        """Resolve second-hand figures against the rest of the pack: if the
+        original publisher is itself a pack source, the number is usable."""
+        for s in state["sources"]:
+            for q in s["quotes"]:
+                if q.get("second_hand"):
+                    q["original_in_pack"] = any(
+                        o is not s and same_org(q["second_hand"], o.get("publisher", ""), o["url"])
+                        for o in state["sources"])
+
+    harvest(_run_search(search, cfg, topic, rcfg), True)
+    settle()
+    retried = False
+    if usable_source_count(state["sources"]) < rcfg["min_sources"]:
+        # Thin. ONE retry with a broadened query, never more: the search cap
+        # bounds cost at two rounds per post.
+        retried = True
+        logger.info("[slipstream] %s research thin (%d usable of %d needed); retrying once, broadened",
+                    (cfg or {}).get("brand_key", "?"), usable_source_count(state["sources"]),
+                    rcfg["min_sources"])
+        harvest(_run_search(search, cfg, topic, rcfg, broaden=_dedupe(tried)), False)
+        settle()
+
+    sources = sorted(state["sources"], key=lambda s: 0 if s["primary"] else 1)
+    for extra in sources[rcfg["max_sources"]:]:
+        state["dropped"].append({"url": extra["url"], "reason": "over the per-post source cap"})
+    sources = sources[: rcfg["max_sources"]]
+    state["sources"] = sources
+    settle()
+    usable = usable_source_count(sources)
+    mode = "sourced" if usable >= rcfg["min_sources"] else "thin"
+    logger.info("[slipstream] %s research: %d source(s) in pack (%d usable), %d dropped, %d quote(s) "
+                "discarded, %d internal link(s) verified, %d first-party page(s), retried=%s, mode=%s",
+                (cfg or {}).get("brand_key", "?"), len(sources), usable, len(state["dropped"]),
+                state["discarded"], len(internal), len(state["brand_pages"]), retried, mode)
     return {
-        "topic": topic, "mode": mode, "min_sources": rcfg["min_sources"],
-        "sources": sources, "facts": facts, "internal_links": internal,
-        "dropped": dropped, "quotes_discarded": quotes_discarded,
-        "searches": int(found.get("searches") or 0),
-        "candidates": len(found["candidates"]),
-        "search_results_seen": int(found.get("results_seen") or 0),
-        "model": found.get("model") or research_model(),
+        "topic": topic, "mode": mode, "min_sources": rcfg["min_sources"], "usable_sources": usable,
+        "sources": sources, "brand_pages": state["brand_pages"],
+        "brand_quotes_banned": state["brand_quotes_banned"],
+        "facts": facts, "internal_links": internal,
+        "dropped": state["dropped"], "quotes_discarded": state["discarded"],
+        "searches": state["searches"], "candidates": state["candidates"],
+        "search_results_seen": state["results_seen"], "search_fallback_used": state["fallback"],
+        "retried": retried,
+        "model": state["model"] or research_model(),
     }
 
 
@@ -578,7 +754,9 @@ def pack_prompt(pack: Dict[str, Any], block_format: bool) -> str:
     with a pack, the pack is the whole universe of citable sources."""
     sources = pack.get("sources") or []
     internal = pack.get("internal_links") or []
+    brand_pages = pack.get("brand_pages") or []
     qualitative = pack.get("mode") != "sourced"
+    any_second_hand = any(_blocked_second_hand(q) for s_ in sources for q in s_.get("quotes") or [])
     lines = [
         "\n\nVERIFIED SOURCE PACK. A program fetched every source below and confirmed each quote "
         "is on the page. These rules OVERRIDE any earlier instruction about external links or "
@@ -604,7 +782,8 @@ def pack_prompt(pack: Dict[str, Any], block_format: bool) -> str:
         "it. Write a range with the word 'to', never with a dash.\n"
         "- A sentence that carries an internal link is an invitation to that page and nothing "
         "else: it makes no claim about the world and no claim about what the brand does, offers "
-        "or achieves.\n"
+        "or achieves. The one exception is a sentence that restates a FIRST-PARTY quote from that "
+        "same page (see below).\n"
         "- The description, FAQ answers, image captions and alt text, pull quotes and ALL social "
         "drafts follow the same rules as the body. A summary line there ('X, Y and Z all affect "
         "your ranking') is a factual claim: say only what one pack quote says, in its terms, or "
@@ -638,6 +817,24 @@ def pack_prompt(pack: Dict[str, Any], block_format: bool) -> str:
             "no figures of any kind, and NO external citation beyond the sources listed here (if "
             "none are listed, the post has no external links at all, and no 'stat' or StatRow). "
             "Do not fill the gap from memory. A shorter, plainer post is correct.\n")
+    if any_second_hand:
+        lines.append(
+            "- A quote marked SECOND-HAND carries a number its page credits to someone else. Do "
+            "NOT use that number, and do not cite that page for it: the original publisher is not "
+            "in this pack. You may use the page's other quotes.\n")
+    if brand_pages:
+        lines.append(
+            "- FIRST-PARTY PAGES below are the brand's own live site. They, and APPROVED BRAND "
+            "FACTS, are the ONLY support for a statement about what the brand offers, does, "
+            "charges or how it works. Such a statement may only restate a first-party quote, "
+            + ("and that page must be an item in the 'links' block.\n" if block_format else
+               "in a sentence that carries the internal link to that page.\n")
+            + "- The brand rules in your instructions still win: if a rule tells you not to mention "
+            "something, do not mention it even if a page of the site does.\n")
+    else:
+        lines.append(
+            "- No first-party page text is available, so make no statement about what the brand "
+            "offers, does, charges or how it works beyond APPROVED BRAND FACTS.\n")
     if internal:
         lines.append("- Internal links: use ONLY these verified paths on the brand's own site, "
                      "copied exactly: " + ", ".join(internal) + "\n")
@@ -650,9 +847,19 @@ def pack_prompt(pack: Dict[str, Any], block_format: bool) -> str:
             meta = ", ".join(x for x in (s.get("publisher"), s.get("title"), s.get("date")) if x)
             lines.append(f"[{i}] {s['url']}\n    {meta}\n")
             for q in s.get("quotes") or []:
-                lines.append(f'    QUOTE: "{q["text"]}"\n')
+                if _blocked_second_hand(q):
+                    lines.append(f'    QUOTE (SECOND-HAND, the page credits this to {q["second_hand"]}; '
+                                 f'do NOT use its numbers): "{q["text"]}"\n')
+                else:
+                    lines.append(f'    QUOTE: "{q["text"]}"\n')
     else:
         lines.append("\nSOURCES YOU MAY CITE: none.\n")
+    if brand_pages:
+        lines.append("\nFIRST-PARTY PAGES (the brand's own site; link them by path):\n")
+        for b in brand_pages:
+            lines.append(f"[{b['path']}]\n")
+            for q in b.get("quotes") or []:
+                lines.append(f'    QUOTE: "{q["text"]}"\n')
     return "".join(lines)
 
 
@@ -685,7 +892,53 @@ def pack_violations(post: Dict[str, Any], pack: Dict[str, Any], domain: str) -> 
                     out.append(f"internal link is not on the verified internal link list: {href}")
             elif canonical_url(url) not in allowed:
                 out.append(f"source link is not in the verified source pack (cited from memory): {href}")
+    out.extend(_second_hand_violations(units, pack, domain))
     return out
+
+
+def _second_hand_violations(units: List[fc.Unit], pack: Dict[str, Any], domain: str) -> List[str]:
+    """A figure the post takes from a pack source where that page only repeats
+    someone else's number, and the original is not in the pack."""
+    first: Dict[str, set] = {}
+    second: Dict[str, Dict[Any, str]] = {}
+    for s in pack.get("sources") or []:
+        key = canonical_url(s["url"])
+        first[key], second[key] = set(), {}
+        for q in s.get("quotes") or []:
+            keys = [fg.key for fg in fc.extract_figures(q["text"])]
+            if _blocked_second_hand(q):
+                for k in keys:
+                    second[key][k] = q["second_hand"]
+            else:
+                first[key].update(keys)
+    if not any(second.values()):
+        return []
+    facts_idx = fc.index_text(pack.get("facts") or "")
+
+    def _pack_keys(links: List[str]) -> List[str]:
+        keys = []
+        for href in links:
+            resolved = fc.resolve_link(href, domain)
+            if resolved and not resolved[1] and canonical_url(resolved[0]) in first:
+                keys.append(canonical_url(resolved[0]))
+        return keys
+
+    post_level = _dedupe([k for u in units for k in _pack_keys(u.links)])
+    out: List[str] = []
+    for u in units:
+        if u.surface == "meta":
+            continue
+        cited = _pack_keys(u.links) or post_level      # block formats: the post's listed sources
+        if not cited:
+            continue
+        for fig in fc.extract_figures(u.text):
+            if (pack.get("facts") and fc.figure_in(fig, facts_idx)) or any(fig.key in first[k] for k in cited):
+                continue
+            name = next((second[k][fig.key] for k in cited if fig.key in second[k]), None)
+            if name:
+                out.append(f'figure "{fig.raw}" is second-hand: the cited page credits it to {name}, '
+                           f'and the original is not in the source pack: "{fc._short(u.text)}"')
+    return _dedupe(out)
 
 
 # ----------------------------------------------------------------------------
@@ -700,10 +953,19 @@ def summarize(pack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "ran": True, "mode": pack.get("mode"), "model": pack.get("model"),
         "searches": pack.get("searches", 0), "candidates": pack.get("candidates", 0),
         "search_results_seen": pack.get("search_results_seen", 0),
+        "search_fallback_used": bool(pack.get("search_fallback_used")),
+        "retried": bool(pack.get("retried")),
+        "usable_sources": pack.get("usable_sources", usable_source_count(pack.get("sources") or [])),
+        "min_sources": pack.get("min_sources"),
         "sources": [{"url": s["url"], "title": s.get("title", ""), "publisher": s.get("publisher", ""),
                      "date": s.get("date", ""), "primary": bool(s.get("primary")),
-                     "quotes": len(s.get("quotes") or []), "figures": list(s.get("figures") or [])}
+                     "quotes": len(s.get("quotes") or []), "figures": list(s.get("figures") or []),
+                     "second_hand": [f'{q["second_hand"]}: {q["text"]}' for q in s.get("quotes") or []
+                                     if _blocked_second_hand(q)]}
                     for s in pack.get("sources") or []],
+        "brand_pages": [{"path": b["path"], "quotes": len(b.get("quotes") or [])}
+                        for b in pack.get("brand_pages") or []],
+        "brand_quotes_banned": pack.get("brand_quotes_banned", 0),
         "dropped": list(pack.get("dropped") or []),
         "quotes_discarded": pack.get("quotes_discarded", 0),
         "internal_links": list(pack.get("internal_links") or []),
@@ -731,11 +993,17 @@ def pr_section(summary: Optional[Dict[str, Any]], post: Optional[Dict[str, Any]]
             f"- pack mode: {summary.get('mode')} ({len(sources)} verified source(s), "
             f"{len(summary.get('dropped') or [])} candidate(s) dropped, "
             f"{summary.get('quotes_discarded', 0)} unconfirmed quote(s) discarded)\n"
-            f"- verified internal links offered: {len(summary.get('internal_links') or [])}\n\n")
+            f"- broadened retry: {'yes' if summary.get('retried') else 'no'}, search-result "
+            f"fallback used: {'yes' if summary.get('search_fallback_used') else 'no'}\n"
+            f"- verified internal links offered: {len(summary.get('internal_links') or [])}, "
+            f"first-party pages quoted: "
+            f"{', '.join(b['path'] for b in summary.get('brand_pages') or []) or 'none'}\n\n")
     if not sources:
-        return head + "No usable source was found. The post was written with no statistics and no external citations.\n"
-    rows = ["| Source | Publisher | Verified quotes | Cited in post |", "|---|---|---|---|"]
+        return head + "No usable source was found.\n"
+    rows = ["| Source | Publisher | Verified quotes | Second-hand figures (not usable) | Cited in post |",
+            "|---|---|---|---|---|"]
     for s in sources:
         rows.append(f"| {fc._cell(s.get('url'))} | {fc._cell(s.get('publisher'))} | "
-                    f"{s.get('quotes', 0)} | {'yes' if s['url'] in used else 'no'} |")
+                    f"{s.get('quotes', 0)} | {len(s.get('second_hand') or [])} | "
+                    f"{'yes' if s['url'] in used else 'no'} |")
     return head + "\n".join(rows) + "\n"

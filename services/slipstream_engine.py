@@ -29,7 +29,7 @@ from datetime import timedelta
 from services.slipstream_assemble import assemble_mdx, assemble_ts_posts, assemble_tsx_post
 from services.slipstream_factcheck import (pr_table, resolve_factcheck_cfg,
                                            run_gate as run_factcheck, summarize as _fc_summary)
-from services.slipstream_generate import generate_post, revise_post
+from services.slipstream_generate import EmptyAtLimit, generate_post, revise_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
 from services.slipstream_research import (build_source_pack, pack_violations,
@@ -357,6 +357,17 @@ def _research_stage(cfg: Dict[str, Any], topic: str, link_cache: Dict[str, Any])
         pack = build_source_pack(cfg, topic, link_cache=link_cache)
         if not isinstance(pack, dict) or not isinstance(pack.get("sources"), list):
             raise ValueError("research returned no source pack")
+        if pack.get("mode") != "sourced":
+            # THIN after the one broadened retry. The 2026-11-15 dry runs showed a
+            # post written from a thin pack cannot pass the gate, so the writer
+            # and both gate passes would be money spent on a certain HOLD.
+            msg = (f"not enough verified sources for this topic "
+                   f"({pack.get('usable_sources', len(pack['sources']))} usable, "
+                   f"{pack.get('min_sources')} needed, after one broadened retry); "
+                   "post HELD before the writer ran")
+            logger.warning("[slipstream] %s HELD: %s", brand_key, msg)
+            return None, {"ok": False, "held": True, "reason": "thin_pack", "violations": [msg],
+                          "error": "not enough verified sources", "research": _research_summary(pack)}
         return pack, None
     except Exception as e:
         msg = (f"research failed (post HELD, never written from memory): "
@@ -425,6 +436,13 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
         revised["slug"] = post["slug"]
         revised["image_prompts"] = post["image_prompts"]
         reassembled = reassemble(revised) if reassemble else None
+    except EmptyAtLimit as e:
+        # The writer spent its whole output budget and returned no post. That is
+        # a HOLD with its own reason, never a silent retry loop.
+        logger.error("[slipstream] %s revision came back empty at the token limit", cfg.get("brand_key", "?"))
+        return post, None, _fc_summary([r1], False), \
+            list(r1["violations"]) + [f"revision came back empty at the token limit ({e}); "
+                                      "post HELD, original violations stand"]
     except Exception as e:
         logger.exception("[slipstream] %s revision after factcheck failed", cfg.get("brand_key", "?"))
         return post, None, _fc_summary([r1], False), \

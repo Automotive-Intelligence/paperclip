@@ -224,10 +224,18 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
           + (f"  reason={receipt.get('reason')}" if receipt.get("reason") else "")
           + (f"  error={receipt.get('error')}" if receipt.get("error") else ""))
     print(f"\nRESEARCH mode={research.get('mode')} searches={research.get('searches')} "
-          f"candidates={research.get('candidates')} quotes_discarded={research.get('quotes_discarded')}")
+          f"candidates={research.get('candidates')} results_seen={research.get('search_results_seen')} "
+          f"fallback_used={research.get('search_fallback_used')} retried={research.get('retried')} "
+          f"usable={research.get('usable_sources')} quotes_discarded={research.get('quotes_discarded')}")
+    for b in research.get("brand_pages") or []:
+        print(f"  FIRST-PARTY {b['path']} quotes={b['quotes']}")
+    if research.get("brand_quotes_banned"):
+        print(f"  FIRST-PARTY quotes withheld by a banned rule: {research['brand_quotes_banned']}")
     for s in research.get("sources") or []:
         print(f"  SOURCE  {'primary ' if s.get('primary') else ''}{s['url']}  "
               f"[{s.get('publisher')}] quotes={s.get('quotes')} figures={s.get('figures')}")
+        for sh in s.get("second_hand") or []:
+            print(f"    SECOND-HAND {sh}")
     for d in research.get("dropped") or []:
         print(f"  DROPPED {d['url']}  ({d['reason']})")
     print(f"  INTERNAL {', '.join(research.get('internal_links') or []) or '(none verified)'}")
