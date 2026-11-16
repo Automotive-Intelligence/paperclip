@@ -24,6 +24,12 @@ import requests
 _API_URL = "https://api.anthropic.com/v1/messages"
 _MODEL = os.getenv("SLIPSTREAM_CLAUDE_MODEL", "claude-sonnet-5")
 _MAX_TOKENS = 8000
+# With a source pack the prompt is much longer and the writer reasons over it
+# before answering. At 8000 the 2026-11-15 dry run spent the whole budget on
+# reasoning and returned no text (stop_reason=max_tokens). Used ONLY for a run
+# that has a pack, so a brand that does not research keeps the old request.
+_MAX_TOKENS_WITH_PACK = 16000
+_TIMEOUT_WITH_PACK_S = 420
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
 # ts_posts_array (Worship Digital): a structured block array instead of an MDX string.
@@ -135,12 +141,16 @@ def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
         raise GenerationError(f"model did not return valid JSON: {e}")
 
 
-def _llm_json(system: str, user: str, *, retries: int = 2) -> Dict[str, Any]:
+def _llm_json(system: str, user: str, *, retries: int = 2,
+              with_pack: bool = False) -> Dict[str, Any]:
     """Retry the LLM call on transient errors / malformed JSON (models
     occasionally return finish_reason=error or a JSON syntax slip)."""
     last: Exception = GenerationError("no attempt")
     for attempt in range(retries + 1):
         try:
+            if with_pack:
+                return _llm_json_once(system, user, max_tokens=_MAX_TOKENS_WITH_PACK,
+                                      timeout=_TIMEOUT_WITH_PACK_S)
             return _llm_json_once(system, user)
         except GenerationError as e:
             last = e
@@ -310,7 +320,10 @@ def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str,
     """Generate one post as a structured block array. Raises GenerationError on a
     malformed result. The Post is assembled + gated (validate_blocks) downstream."""
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user + _pack_block(pack, True)))
+    if pack is None:
+        return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user))
+    return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user + _pack_block(pack, True),
+                                     with_pack=True))
 
 
 def _check_shape_ts(post: Dict[str, Any]) -> Dict[str, Any]:
@@ -348,7 +361,10 @@ def generate_post(brand_cfg: Dict[str, Any], topic: str,
         return _generate_post_ts(brand_cfg, topic, pack)
 
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user + _pack_block(pack, False)))
+    if pack is None:
+        return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user))
+    return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user + _pack_block(pack, False),
+                                      with_pack=True))
 
 
 def _check_shape_mdx(post: Dict[str, Any]) -> Dict[str, Any]:
@@ -396,7 +412,7 @@ def revise_post(brand_cfg: Dict[str, Any], topic: str, post: Dict[str, Any],
            "the pack.")
         + _pack_block(pack, block)
     )
-    revised = _llm_json(system, user)
+    revised = _llm_json(system, user) if pack is None else _llm_json(system, user, with_pack=True)
     revised = _check_shape_ts(revised) if block else _check_shape_mdx(revised)
     revised["slug"] = post["slug"]
     revised["image_prompts"] = post["image_prompts"]

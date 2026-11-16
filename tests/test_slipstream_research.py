@@ -724,3 +724,16 @@ def test_cost_report_prices_tokens_and_web_searches():
         {"model": "mystery", "surface": "x", "input_tokens": 1, "output_tokens": 1}])
     assert r["total_usd"] == round(0.4 + 0.02 + 0.04 + 0.02 + 0.05, 4)
     assert r["unpriced_models"] == ["mystery"]
+
+
+def test_only_a_run_with_a_pack_gets_the_larger_writer_budget(monkeypatch):
+    """The old request (8000 tokens, 180s) is untouched for a brand that does
+    not research; a pack run gets room to reason over the pack and still answer."""
+    seen = []
+    monkeypatch.setattr(gen, "_llm_json_once", lambda s, u, **kw: seen.append(kw) or dict(_MDX))
+    gen.generate_post(_CFG, "t")
+    gen.revise_post(_CFG, "t", dict(_MDX), ["v"])
+    assert seen == [{}, {}]
+    gen.generate_post(_CFG, "t", pack=_pack())
+    gen.revise_post(_CFG, "t", dict(_MDX), ["v"], pack=_pack())
+    assert seen[2:] == [{"max_tokens": 16000, "timeout": 420}] * 2
