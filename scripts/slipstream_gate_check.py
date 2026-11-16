@@ -186,6 +186,14 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
         seen["posts"].append({"stage": "revision", "post": post})
         return post
 
+    real_repair = se.repair_post
+
+    def _repair(*a, **kw):
+        result = real_repair(*a, **kw)
+        if result.get("ok"):
+            seen["posts"].append({"stage": "repair", "post": result["post"]})
+        return result
+
     def _no_images(prompts, key):
         return {str((p or {}).get("name")): b"" for p in prompts or []}
 
@@ -203,6 +211,7 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
     with mock.patch.object(se, "build_source_pack", _pack), \
          mock.patch.object(se, "generate_post", _generate), \
          mock.patch.object(se, "revise_post", _revise), \
+         mock.patch.object(se, "repair_post", _repair), \
          mock.patch.object(se, "generate_images", _no_images), \
          mock.patch.object(se, "publish_post", _no_publish), \
          mock.patch.object(se, "create_article_draft",
@@ -248,6 +257,19 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
         print(f"\nFIRST-PASS VIOLATIONS sent to the writer ({len(seen['violations_sent_to_writer'])})")
         for i, v in enumerate(seen["violations_sent_to_writer"], 1):
             print(f"  {i}. {v}")
+    rep_ = fcr.get("repair")
+    if rep_:
+        print(f"\nREPAIR  ran={rep_.get('ran')} applied={rep_.get('applied')} targets={rep_.get('targets')} "
+              f"final_gate_passed={rep_.get('final_gate_passed')}")
+        if rep_.get("skipped"):
+            print(f"  SKIPPED {rep_['skipped']}")
+        for v in rep_.get("contract_violations") or []:
+            print(f"  CONTRACT {v}")
+        for c in rep_.get("changes") or []:
+            print(f"  {c['action'].upper()} [{c['where']}] rules={','.join(c.get('rules') or [])}")
+            print(f"    - {c['before']}")
+            if c.get("after"):
+                print(f"    + {c['after']}")
     print(f"\nFINAL VIOLATIONS ({len(receipt.get('violations') or [])})")
     for i, v in enumerate(receipt.get("violations") or [], 1):
         print(f"  {i}. {v}")
