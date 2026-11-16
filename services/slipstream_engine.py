@@ -32,6 +32,10 @@ from services.slipstream_factcheck import (pr_table, resolve_factcheck_cfg,
 from services.slipstream_generate import generate_post, revise_post
 from services.slipstream_github import merge_when_green, publish_post
 from services.slipstream_images import generate_images
+from services.slipstream_research import (build_source_pack, pack_violations,
+                                          pr_section as _research_pr_section,
+                                          research_enabled, resolve_research_cfg,
+                                          summarize as _research_summary)
 from services.slipstream_shopify import assemble_shopify_article, create_article_draft
 
 logger = logging.getLogger(__name__)
@@ -232,6 +236,10 @@ def _brand_cfg(brand_key: str) -> dict:
     # Fact-check gate config (banned content, facts file) lives in the top-level
     # `factcheck:` block: defaults for every brand plus per-brand additions.
     merged.setdefault("factcheck", resolve_factcheck_cfg(full, brand_key))
+    # Research-before-writing config (search caps, domain lists) lives in the
+    # top-level `research:` block. ON for gated brands, OFF for a brand opted
+    # out of the gate, unless a brand says otherwise.
+    merged.setdefault("research", resolve_research_cfg(full, brand_key))
     return merged
 
 
@@ -322,7 +330,8 @@ def _social_md(post: Dict[str, Any]) -> str:
 
 
 def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
-             factcheck: Optional[Dict[str, Any]] = None) -> str:
+             factcheck: Optional[Dict[str, Any]] = None,
+             research: Optional[Dict[str, Any]] = None) -> str:
     gate = "validate_blocks" if fmt == "ts_posts_array" else "validate_post"
     if factcheck and factcheck.get("ran"):
         gate += " + factcheck"
@@ -330,10 +339,52 @@ def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
             f"- format: `{fmt}`\n"
             f"- images: {image_count} (hero + in-body)\n- gates: passed ({gate})\n\n"
             "Vercel preview builds this PR = the build-gate. Review + merge to publish."
+            + _research_pr_section(research, post)
             + pr_table(factcheck))
 
 
-def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reassemble=None):
+def _research_stage(cfg: Dict[str, Any], topic: str, link_cache: Dict[str, Any]):
+    """Research before writing. Returns (pack, hold).
+
+    pack is None when research is off for this brand (the writer then gets
+    exactly the prompt it always got). `hold` is a ready HOLD receipt when
+    research itself failed on a brand that requires it: FAIL-CLOSED, the post is
+    never written from memory instead."""
+    if not research_enabled(cfg):
+        return None, None
+    brand_key = cfg.get("brand_key", "?")
+    try:
+        pack = build_source_pack(cfg, topic, link_cache=link_cache)
+        if not isinstance(pack, dict) or not isinstance(pack.get("sources"), list):
+            raise ValueError("research returned no source pack")
+        return pack, None
+    except Exception as e:
+        msg = (f"research failed (post HELD, never written from memory): "
+               f"{type(e).__name__}: {e}")[:400]
+        logger.exception("[slipstream] %s research failed; post HELD", brand_key)
+        return None, {"ok": False, "held": True, "reason": "research_error",
+                      "violations": [msg], "error": "research failed"}
+
+
+def _with_pack_check(r: Dict[str, Any], post: Dict[str, Any], cfg: Dict[str, Any],
+                     pack: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Add to one gate result (when the brand researched) the code check that
+    every link in the post came from the verified pack. It can only ADD
+    violations; it never clears one the gate raised."""
+    if pack is not None and not r.get("error"):
+        extra = pack_violations(post, pack, cfg.get("domain", ""))
+        if extra:
+            r = dict(r)
+            r["violations"] = extra + [v for v in (r.get("violations") or []) if v not in extra]
+            r["ok"] = False
+            r["counts"] = {**(r.get("counts") or {}), "links_outside_pack": len(extra),
+                           "violations": len(r["violations"])}
+    return r
+
+
+def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reassemble=None,
+                     pack: Optional[Dict[str, Any]] = None,
+                     link_cache: Optional[Dict[str, Any]] = None):
     """The fact-check + editor gate, with ONE writer revision.
 
     Returns (post, reassembled, summary, violations). `violations` empty means
@@ -351,9 +402,11 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
         logger.info("[slipstream] %s factcheck gate OFF for this brand by config",
                     cfg.get("brand_key", "?"))
         return post, None, None, []
-    cache: Dict[str, Any] = {}
+    # The research stage already fetched every pack source and every verified
+    # internal link into this cache, so the gate does not fetch them again.
+    cache: Dict[str, Any] = link_cache if link_cache is not None else {}
     try:
-        r1 = run_factcheck(post, cfg, link_cache=cache)
+        r1 = _with_pack_check(run_factcheck(post, cfg, link_cache=cache), post, cfg, pack)
     except Exception as e:  # run_gate never raises; this guards a broken import/stub
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
         return post, None, {"ran": True, "passed": False, "revised": False, "error": msg,
@@ -364,7 +417,11 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
         # The gate itself failed. A revision cannot fix that, so do not pay for one.
         return post, None, _fc_summary([r1], False), list(r1.get("violations") or ["factcheck gate error"])
     try:
-        revised = revise_post(cfg, topic, post, list(r1["violations"]))
+        if pack is not None:
+            # Same pack as the first draft: a revision cannot bring in a new source.
+            revised = revise_post(cfg, topic, post, list(r1["violations"]), pack=pack)
+        else:
+            revised = revise_post(cfg, topic, post, list(r1["violations"]))
         revised["slug"] = post["slug"]
         revised["image_prompts"] = post["image_prompts"]
         reassembled = reassemble(revised) if reassemble else None
@@ -377,7 +434,9 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
         return revised, None, _fc_summary([r1], True), \
             ["revised post failed the format gate"] + fmt_violations
     try:
-        r2 = run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True)
+        r2 = _with_pack_check(
+            run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True),
+            revised, cfg, pack)
     except Exception as e:
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
         return revised, None, _fc_summary([r1], True), [msg]
@@ -452,7 +511,15 @@ def run_brand(
         cfg = _brand_cfg(brand_key)
         fmt = cfg.get("format", "mdx")
         topic = topic or _next_topic(cfg, token)
-        post = generate_post(cfg, topic)
+        # RESEARCH BEFORE WRITING. For a gated brand the writer only ever sees
+        # sources that code fetched and quotes that code confirmed. A research
+        # failure HOLDS here; it never falls through to writing from memory.
+        link_cache: Dict[str, Any] = {}
+        pack, research_hold = _research_stage(cfg, topic, link_cache)
+        if research_hold is not None:
+            return research_hold
+        research = _research_summary(pack)
+        post = generate_post(cfg, topic, pack=pack) if pack is not None else generate_post(cfg, topic)
         factcheck: Optional[Dict[str, Any]] = None
         fc_violations: list = []
         # DO NOT buy images yet. Every image is a paid fal call, and the content gate
@@ -464,7 +531,8 @@ def run_brand(
         if cfg.get("format") == "shopify_article":
             # Shopify must hold images to assemble, so its fact-check runs FIRST,
             # on the text alone: a post that fails it never buys an image.
-            post, _, factcheck, fc_violations = _factcheck_stage(cfg, topic, post)
+            post, _, factcheck, fc_violations = _factcheck_stage(
+                cfg, topic, post, pack=pack, link_cache=link_cache)
             if not fc_violations:
                 images = generate_images(post["image_prompts"], cfg["business_key"])
         # Format branch: WD (ts_posts_array) serializes a Post into src/content/posts.ts;
@@ -498,7 +566,8 @@ def run_brand(
             # image is bought and before any PR exists. One writer revision, then
             # the whole gate again; still failing = HOLD with the reasons.
             if not violations and fmt != "shopify_article":
-                post, redo, factcheck, violations = _factcheck_stage(cfg, topic, post, _assemble)
+                post, redo, factcheck, violations = _factcheck_stage(
+                    cfg, topic, post, _assemble, pack=pack, link_cache=link_cache)
                 if redo is not None:
                     payload, tsx_files = redo[0], redo[1]
     except QueueExhausted as e:
@@ -519,6 +588,8 @@ def run_brand(
         held = {"ok": False, "held": True, "violations": violations, "slug": post.get("slug")}
         if factcheck is not None:
             held["factcheck"] = factcheck
+        if research is not None:
+            held["research"] = research
         return held
 
     slug = post["slug"]
@@ -540,6 +611,8 @@ def run_brand(
         res = _publish_shopify_draft(cfg, payload, slug, topic, token, dry_run)
         if factcheck is not None:
             res["factcheck"] = factcheck
+        if research is not None:
+            res["research"] = research
         return res
 
     # WD writes the whole posts.ts array file (+images) INSTEAD of the mdx/social.md
@@ -561,7 +634,7 @@ def run_brand(
     branch = f"slipstream/{slug}-{date_str}"
     try:
         pr_url = publish_post(cfg["repo"], branch, files, f"content: {post['title']}",
-                              _pr_body(post, len(images), fmt, factcheck), token)
+                              _pr_body(post, len(images), fmt, factcheck, research), token)
     except Exception as e:
         logger.exception("[slipstream] %s publish failed", brand_key)
         return {"ok": False, "held": False, "violations": [], "slug": slug,
@@ -571,6 +644,8 @@ def run_brand(
     result = {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
     if factcheck is not None:
         result["factcheck"] = factcheck
+    if research is not None:
+        result["research"] = research
 
     # auto_merge is a HARD CEILING from config: a brand with `auto_merge: false`
     # NEVER squash-merges automatically, even if a caller passes auto_merge=True.

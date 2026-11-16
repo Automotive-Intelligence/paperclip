@@ -30,3 +30,18 @@ def _offline_factcheck_gate(monkeypatch):
     monkeypatch.setattr(se, "run_factcheck", lambda post, cfg, **kw: {
         "ok": True, "violations": [], "error": None, "claims": [], "editor": [],
         "links": [], "counts": {}, "model": "test-stub", "llm_ran": False})
+
+
+@pytest.fixture(autouse=True)
+def _offline_research_stage(monkeypatch):
+    """run_brand now researches before writing (web search + page fetches) for
+    every gated brand. Unit tests must do neither, so by default research is
+    switched off here. Tests of the research stage call
+    services.slipstream_research directly with fake HTTP and a fake LLM, and
+    tests of the engine wiring re-patch se.research_enabled / se.build_source_pack.
+    This stub exists ONLY in tests: production has no bypass switch."""
+    try:
+        from services import slipstream_engine as se
+    except Exception:
+        return
+    monkeypatch.setattr(se, "research_enabled", lambda cfg: False)
