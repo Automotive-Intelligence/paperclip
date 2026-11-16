@@ -660,3 +660,67 @@ def test_real_research_and_real_gate_share_one_fetch_per_url(monkeypatch):
     assert http.calls.count(NIST[0]) == 1 and http.calls.count("https://automotiveintelligence.io/services") == 1
     assert out["factcheck"]["counts"]["figures_checked"] == 1
     assert out["factcheck"]["counts"]["figures_unmatched"] == 0
+
+
+# ---------------------------------------------------------------------------
+# the end-to-end dry-run script
+# ---------------------------------------------------------------------------
+
+def _script():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "scripts", "slipstream_gate_check.py")
+    spec = importlib.util.spec_from_file_location("slipstream_gate_check_research", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_dry_run_write_runs_research_write_gate_and_publishes_nothing(monkeypatch, capsys, tmp_path):
+    script = _script()
+    pack = _pack()
+    forbidden = mock.Mock(side_effect=AssertionError("a dry run must not publish"))
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "tok")
+    monkeypatch.setattr(se, "_brand_cfg", lambda b: _CFG)
+    monkeypatch.setattr(se, "research_enabled", rs.research_enabled)
+    monkeypatch.setattr(se, "build_source_pack", lambda cfg, topic, **kw: pack)
+    monkeypatch.setattr(se, "generate_post", lambda cfg, topic, pack=None: dict(_MDX))
+    monkeypatch.setattr(se, "assemble_mdx", lambda p, d: ("MDX", []))
+    monkeypatch.setattr(se, "_next_topic", lambda cfg, token: "next queue topic")
+    monkeypatch.setattr(se, "generate_images", forbidden)
+    monkeypatch.setattr(se, "publish_post", forbidden)
+    monkeypatch.setattr(se, "_checkoff_topic", forbidden)
+    monkeypatch.setattr(se, "merge_when_green", forbidden)
+    monkeypatch.setattr(se, "_distribute_social", forbidden)
+    code = script.main(["--write", "--brand", "autointelligence", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    forbidden.assert_not_called()
+    assert code == 0 and "VERDICT PASS" in out and "TOPIC   next queue topic" in out
+    assert f"SOURCE  primary {NIST[0]}" in out and "COST    about $0.00" in out
+    saved = json.loads((tmp_path / "autointelligence.json").read_text())
+    assert saved["topic"] == "next queue topic" and saved["pack"]["mode"] == "sourced"
+    assert "### Research before writing" in saved["pr_body"]
+
+
+def test_dry_run_write_reports_a_hold_with_the_violations(monkeypatch, capsys):
+    script = _script()
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "tok")
+    monkeypatch.setattr(se, "_brand_cfg", lambda b: _CFG)
+    monkeypatch.setattr(se, "research_enabled", rs.research_enabled)
+    monkeypatch.setattr(se, "build_source_pack", mock.Mock(side_effect=rs.ResearchError("search LLM 529")))
+    code = script.main(["--write", "--brand", "autointelligence", "--topic", "t"])
+    out = capsys.readouterr().out
+    assert code == 1 and "VERDICT HOLD  reason=research_error" in out
+    assert "research failed (post HELD, never written from memory): ResearchError: search LLM 529" in out
+
+
+def test_cost_report_prices_tokens_and_web_searches():
+    script = _script()
+    r = script.cost_report([
+        {"model": "claude-opus-5-5", "surface": "slipstream_research", "input_tokens": 100_000,
+         "output_tokens": 1_000, "web_searches": 4},
+        {"model": "claude-sonnet-5", "surface": "slipstream", "input_tokens": 10_000, "output_tokens": 5_000},
+        {"model": "mystery", "surface": "x", "input_tokens": 1, "output_tokens": 1}])
+    assert r["total_usd"] == round(0.4 + 0.02 + 0.04 + 0.02 + 0.05, 4)
+    assert r["unpriced_models"] == ["mystery"]
