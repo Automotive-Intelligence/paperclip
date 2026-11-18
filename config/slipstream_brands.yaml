@@ -110,8 +110,8 @@ factcheck:
 # `threshold` comes from scripts/slipstream_ai_detect_calibrate.py; see
 # docs/slipstream_ai_detect_calibration.md. Per-brand overrides: ai_detect.brands.<key>.
 ai_detect:
-  enabled: false          # OFF until Michael accepts the calibration report
-  threshold: null         # set from calibration: at most 1 in 20 human pieces flags
+  enabled: false          # OFF. The 2026-11-18 calibration found NO usable threshold.
+  threshold: null         # target: at most 1 in 20 human pieces flags. Not met; see the report.
   min_words: 250
   chunk_tokens: 600       # model context is about 768 tokens
   overlap_tokens: 50

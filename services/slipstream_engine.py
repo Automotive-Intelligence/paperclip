@@ -5,6 +5,10 @@ HOLDS on any gate violation. Every stage is an importable module function so it
 is testable in isolation and observable in railway logs. Fire it on demand via
 POST /admin/run-slipstream/{brand}; schedule it MWF once proven.
 
+AI-detection check (services/slipstream_ai_detect, OFF by default): the flag means
+"reads machine-made, needs a human edit pass," not "AI, reject." It never holds a
+post. Calibration: docs/slipstream_ai_detect_calibration.md.
+
 "Publish" depends on where the brand lives. Repo brands (mdx, ts_posts_array) get
 a PR that is merged on a green Vercel build. Storefront brands (shopify_article,
 i.e. Paper & Purpose) have no repo at all: they get an UNPUBLISHED Shopify article

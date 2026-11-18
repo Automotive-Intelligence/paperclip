@@ -161,6 +161,16 @@ def cmd_report(a) -> None:
     thr = pick_threshold(hs)
     out = {"threshold": thr, "human": rate(hs, thr), "ai": rate(as_, thr),
            "human_n": len(hs), "ai_n": len(as_)}
+    # Separation: the chance a random AI draft scores HIGHER than a random human
+    # piece. 1.0 is perfect, 0.5 is a coin flip, under 0.5 means it reads them
+    # backwards. Python decides: the check is only usable when the threshold both
+    # holds the human flag rate AND still catches at least half the AI drafts.
+    out["separation"] = round(sum((x > y) + 0.5 * (x == y) for x in as_ for y in hs)
+                              / max(1, len(as_) * len(hs)), 4)
+    out["usable"] = bool(out["human"][2] <= MAX_HUMAN_FLAG_RATE and out["ai"][2] >= 0.5)
+    out["verdict"] = ("USABLE as a soft signal at this threshold" if out["usable"] else
+                      "NOT USABLE: no threshold keeps human flags at or under 1 in 20 while "
+                      "catching at least half the AI drafts. Leave ai_detect.enabled false.")
     # Honest check: pick the line on every other human piece, test it on the rest.
     odd, even = hs[1::2], hs[0::2]
     t_odd, t_even = pick_threshold(odd), pick_threshold(even)
