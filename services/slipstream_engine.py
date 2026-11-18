@@ -26,6 +26,9 @@ import yaml
 
 from datetime import timedelta
 
+from services.slipstream_ai_detect import (check_post as run_ai_detect, log_result as _ai_log,
+                                           pr_section as _ai_pr_section, resolve_ai_detect_cfg,
+                                           FLAG_MEANING as _AI_FLAG_MEANING)
 from services.slipstream_assemble import assemble_mdx, assemble_ts_posts, assemble_tsx_post
 from services.slipstream_factcheck import (pr_table, resolve_factcheck_cfg,
                                            run_gate as run_factcheck, summarize as _fc_summary)
@@ -232,6 +235,8 @@ def _brand_cfg(brand_key: str) -> dict:
     # Fact-check gate config (banned content, facts file) lives in the top-level
     # `factcheck:` block: defaults for every brand plus per-brand additions.
     merged.setdefault("factcheck", resolve_factcheck_cfg(full, brand_key))
+    # AI-detection SOFT SIGNAL config (top-level `ai_detect:` block). Never a gate.
+    merged.setdefault("ai_detect", resolve_ai_detect_cfg(full, brand_key))
     return merged
 
 
@@ -321,8 +326,53 @@ def _social_md(post: Dict[str, Any]) -> str:
             f"## X\n\n{s.get('x','')}\n")
 
 
+def _ai_detect_stage(cfg: Dict[str, Any], post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """AI-detection SOFT SIGNAL on the post body. Never a gate.
+
+    Returns the result dict, or None when the check is off for this brand. It
+    cannot hold or fail a post: whatever happens in here (the model is missing,
+    the process is killed, it times out, this function itself has a bug) the
+    caller publishes exactly as it would have. A flag means "reads machine-made,
+    needs a human edit pass", never "AI, reject"."""
+    try:
+        r = run_ai_detect(post, cfg)
+        if not r or r.get("status") == "off":
+            return None
+        _ai_log(cfg.get("brand_key", "?"), post.get("slug", "?"), r)
+        return r
+    except Exception as e:  # noqa: BLE001 - a soft signal never sinks a publish
+        logger.error("[slipstream] %s AI-detection check crashed (publishing proceeds, post "
+                     "not scored): %s", cfg.get("brand_key", "?"), e)
+        return {"ran": False, "status": "unavailable", "flagged": False,
+                "error": f"{type(e).__name__}: {e}"[:300]}
+
+
+def _route_ai_flag(cfg: Dict[str, Any], post: Dict[str, Any], ai: Optional[Dict[str, Any]],
+                   url: str) -> bool:
+    """A FLAGGED post is routed to a human edit pass by filing one line in the
+    CEO Brief's "Needs you" ledger, linked to the PR / draft. Best-effort and
+    after the fact: the post is already on its way out when this runs."""
+    if not ai or not ai.get("flagged"):
+        return False
+    try:
+        from services import brief_items
+        brand = cfg.get("brand_key", "?")
+        return brief_items.add(
+            "edit", f"Blog post {_AI_FLAG_MEANING}: {post.get('title', post.get('slug'))}"[:200],
+            fingerprint=f"ai-detect:{brand}:{post.get('slug')}", brand=brand,
+            detail=(f"AI-detection score {ai.get('score'):.2f} at threshold "
+                    f"{ai.get('threshold'):.2f}. Chunks to edit first: "
+                    f"{ai.get('flagged_chunks') or 'none above the line on their own'}. "
+                    "Soft signal only: the post was not held."),
+            url=url)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[slipstream] could not file the AI-detection edit item (non-fatal): %s", e)
+        return False
+
+
 def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
-             factcheck: Optional[Dict[str, Any]] = None) -> str:
+             factcheck: Optional[Dict[str, Any]] = None,
+             ai_detect: Optional[Dict[str, Any]] = None) -> str:
     gate = "validate_blocks" if fmt == "ts_posts_array" else "validate_post"
     if factcheck and factcheck.get("ran"):
         gate += " + factcheck"
@@ -330,7 +380,7 @@ def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
             f"- format: `{fmt}`\n"
             f"- images: {image_count} (hero + in-body)\n- gates: passed ({gate})\n\n"
             "Vercel preview builds this PR = the build-gate. Review + merge to publish."
-            + pr_table(factcheck))
+            + pr_table(factcheck) + _ai_pr_section(ai_detect))
 
 
 def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reassemble=None):
@@ -523,6 +573,11 @@ def run_brand(
 
     slug = post["slug"]
 
+    # AI-DETECTION SOFT SIGNAL. Every gate has already passed. This scores the
+    # body and reports; it can not hold, delay past its own timeout, or fail the
+    # post. Off unless ai_detect.enabled is true in config.
+    ai_detect = _ai_detect_stage(cfg, post)
+
     # Gate passed, so the post is going out: NOW it is worth paying for images.
     # (Shopify already generated them above, because it needs them to assemble.)
     if not images:
@@ -540,6 +595,10 @@ def run_brand(
         res = _publish_shopify_draft(cfg, payload, slug, topic, token, dry_run)
         if factcheck is not None:
             res["factcheck"] = factcheck
+        if ai_detect is not None:
+            res["ai_detect"] = ai_detect
+            if res.get("ok") and not res.get("dry_run"):
+                _route_ai_flag(cfg, post, ai_detect, str(res.get("admin_url") or ""))
         return res
 
     # WD writes the whole posts.ts array file (+images) INSTEAD of the mdx/social.md
@@ -561,7 +620,7 @@ def run_brand(
     branch = f"slipstream/{slug}-{date_str}"
     try:
         pr_url = publish_post(cfg["repo"], branch, files, f"content: {post['title']}",
-                              _pr_body(post, len(images), fmt, factcheck), token)
+                              _pr_body(post, len(images), fmt, factcheck, ai_detect), token)
     except Exception as e:
         logger.exception("[slipstream] %s publish failed", brand_key)
         return {"ok": False, "held": False, "violations": [], "slug": slug,
@@ -571,6 +630,9 @@ def run_brand(
     result = {"ok": True, "pr_url": pr_url, "slug": slug, "image_count": len(images), "violations": []}
     if factcheck is not None:
         result["factcheck"] = factcheck
+    if ai_detect is not None:
+        result["ai_detect"] = ai_detect
+        result["ai_detect_routed"] = _route_ai_flag(cfg, post, ai_detect, pr_url)
 
     # auto_merge is a HARD CEILING from config: a brand with `auto_merge: false`
     # NEVER squash-merges automatically, even if a caller passes auto_merge=True.

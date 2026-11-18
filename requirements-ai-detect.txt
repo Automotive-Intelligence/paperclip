@@ -1,0 +1,12 @@
+# Optional: the Slipstream AI-detection soft signal (services/slipstream_ai_detect.py).
+# NOT in requirements.txt on purpose. The app runs without these; the check then
+# reports "unavailable" and publishing proceeds. Add `-r requirements-ai-detect.txt`
+# to requirements.txt only when the check is switched on for the live pipeline.
+# The extra index pulls the CPU-only torch wheel on Linux (about 200 MB) instead of
+# the default CUDA build (several GB of GPU libraries this service cannot use).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+transformers>=4.44,<5
+sentencepiece
+protobuf
+safetensors

@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS brief_items (
 );
 """
 
-KINDS = ("sonar", "postal", "portal", "lead", "failure")
+KINDS = ("sonar", "postal", "portal", "lead", "failure", "edit")
 
 
 def _ensure() -> None:

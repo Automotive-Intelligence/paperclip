@@ -99,6 +99,24 @@ factcheck:
           patterns:
             - '\b(?:church(?:es)?|ministr(?:y|ies)|pastors?|congregations?|parish(?:es)?|sermons?|scriptures?|bible|biblical|gospel|prayers?|pray(?:s|ed|ing)?|christ|christians?|christianity|jesus|god|godly|faith|faith[- ]based|faithful(?:ly)?|believers?|blessed|blessings?|kingdom|tithes?|worship(?:ers?|ping)?(?!\s+digital))\b'
 
+# AI-DETECTION SOFT SIGNAL (services/slipstream_ai_detect.py). NOT A GATE.
+# The flag means "reads machine-made, needs a human edit pass", not "AI, reject".
+# Scores the BODY of blog posts and long-form only (min_words). Social posts and
+# ad copy are never scored: too short for any detector to judge. A flagged post
+# still publishes; it gets a section in the PR body listing the chunks to edit
+# and one "Needs you" line in the CEO Brief. If the check cannot run, publishing
+# proceeds and the PR body says the post was not scored.
+# Model: desklib/ai-text-detector-v1.01 (open source, MIT, CPU, no API, no key).
+# `threshold` comes from scripts/slipstream_ai_detect_calibrate.py; see
+# docs/slipstream_ai_detect_calibration.md. Per-brand overrides: ai_detect.brands.<key>.
+ai_detect:
+  enabled: false          # OFF until Michael accepts the calibration report
+  threshold: null         # set from calibration: at most 1 in 20 human pieces flags
+  min_words: 250
+  chunk_tokens: 600       # model context is about 768 tokens
+  overlap_tokens: 50
+  timeout_s: 240          # the longest a run will wait on the check before moving on
+
 # Zernio account ids per brand+platform, used by slipstream_engine._distribute_social.
 # THESE ARE LOAD-BEARING FOR SAFETY, not a convenience. publish_to_zernio treats a
 # missing account id as "post to EVERY connected account on this platform", so a
