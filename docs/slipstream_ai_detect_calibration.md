@@ -43,12 +43,14 @@ Score runs from 0 (reads human) to 1 (reads machine-made).
    writes. The two highest scores (0.92 and 1.00) are two of the five July drafts, from
    the engine's first weeks; most later drafts score low. Only one draft in the
    set was written after the writer moved to Claude on 2026-10-26 (score 0.11).
-2. **The human set scored as machine-made, and that set's origin is not proven.**
-   The posts were published before ChatGPT existed, which is why they were
-   treated as human. But they are uniform 1,250 to 1,450 word SEO articles, and
-   content tools built on GPT-3 were on sale in 2021. Two readings fit: the
-   detector wrongly flags plain SEO prose written by people, or those posts were
-   not fully human-written. This test cannot tell which.
+2. **The detector flags human-written SEO blog prose as machine-made.** The
+   posts were published before ChatGPT existed, and Michael confirmed on
+   2026-11-18 that they were written by real writers hired through a content
+   service on Upwork. All 78 scored 0.77 or higher. That is a false-flag rate of
+   78 in 78 at the 0.50 line on exactly the kind of writing a blog publishes:
+   uniform 1,250 to 1,450 word SEO articles. We did not watch the writers work,
+   so a writer using a 2021 writing tool cannot be ruled out for any single
+   post, but it does not explain every post scoring this high.
 3. **The scoring code is not the cause.** The same pieces scored with the exact
    method on the model card give the same answers, the model card's own AI
    example scores 0.90, and the model file matches the published checksum.
@@ -57,13 +59,18 @@ Score runs from 0 (reads human) to 1 (reads machine-made).
    chunk (0.45). That is too few pieces, and speech is not blog prose, so it is not a
    calibration set.
 
-## What it would take to enable
+## Verdict: do not enable
 
-- A human set whose origin is certain: 20 or more pieces of 250+ words that
-  Michael wrote himself. Put them as `.txt` files in a `human/` folder and rerun
-  `score` and `report`.
-- Even then, expect a low catch rate on engine drafts (see point 1). The
-  editorial checklist and the fact-check + editor gate stay the real guardrails.
+With the human set confirmed human, this is a final result for this detector on
+our content, not an open question. It fails both halves of the job: it flags
+human blog writing nearly every time, and it passes most engine drafts (point 1).
+A different human set would not rescue it, because the 78 posts already show it
+cannot tell hired-writer blog prose from machine prose. The editorial checklist
+and the fact-check + editor gate stay the real guardrails.
+
+To test a different detector later, put 20 or more human pieces of 250+ words as
+`.txt` files in a `human/` folder, engine drafts in `ai/`, and rerun `score` and
+`report`. The rule stays the same: at most 1 in 20 human pieces flags.
 
 ## How it was run
 
