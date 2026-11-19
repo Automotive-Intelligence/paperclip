@@ -61,12 +61,30 @@ Score runs from 0 (reads human) to 1 (reads machine-made).
 
 ## Verdict: do not enable
 
-With the human set confirmed human, this is a final result for this detector on
-our content, not an open question. It fails both halves of the job: it flags
-human blog writing nearly every time, and it passes most engine drafts (point 1).
-A different human set would not rescue it, because the 78 posts already show it
-cannot tell hired-writer blog prose from machine prose. The editorial checklist
-and the fact-check + editor gate stay the real guardrails.
+The check is scrapped (Michael, 2026-11-18). It fails on the engine drafts
+alone, whatever the truth about the human set:
+
+| Flag line | Engine drafts caught (of 70) |
+|---|---|
+| 0.50 | 9 |
+| 0.30 | 25 |
+| 0.20 | 30 |
+| 0.10 | 43 |
+
+The engine drafts are machine-written for certain, and the line would have to
+sit near 0.20 to catch even half of them. The only certainly human text on hand
+(four spoken transcripts) scored up to 0.17, with one chunk at 0.45, so a line
+that low would very likely flag human writing too.
+
+- If the hired writers wrote by hand, the detector also flags human blog prose
+  78 times in 78.
+- If some of them used 2021 writing tools, the detector may have been right
+  about those posts, and the best case is still a check that misses about half
+  of what the engine writes.
+
+No set of 20+ pieces written by Michael himself exists to settle which, so the
+question stays open and the check stays off. The editorial checklist and the
+fact-check + editor gate stay the real guardrails.
 
 To test a different detector later, put 20 or more human pieces of 250+ words as
 `.txt` files in a `human/` folder, engine drafts in `ai/`, and rerun `score` and
