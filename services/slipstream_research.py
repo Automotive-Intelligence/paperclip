@@ -74,6 +74,10 @@ _DEFAULTS: Dict[str, Any] = {
     "max_internal_links": 14,
     "blocked_domains": [],
     "preferred_domains": [],
+    # Plain-words guidance for the search step about kinds of site to stay away
+    # from for this brand (for example a brand's direct competitors). Empty by
+    # default; set per brand in config or passed for a single run.
+    "avoid_sources": "",
 }
 _MIN_PAGE_CHARS = 400
 _LOGIN_WALL_RE = re.compile(
@@ -116,6 +120,7 @@ def resolve_research_cfg(full_cfg: Dict[str, Any], brand_key: str) -> Dict[str, 
     for k in ("blocked_domains", "preferred_domains"):
         out[k] = _dedupe([str(d).strip().lower() for d in
                           list(defaults.get(k) or []) + list(brand.get(k) or []) if str(d).strip()])
+    out["avoid_sources"] = str(brand.get("avoid_sources") or defaults.get("avoid_sources") or "").strip()
     gated = fc.resolve_factcheck_cfg(full_cfg, brand_key)["enabled"]
     explicit = brand.get("enabled")
     out["enabled"] = explicit if isinstance(explicit, bool) else gated
@@ -274,6 +279,8 @@ def build_search_prompt(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, A
         "the key definitions, any rule or policy involved, and any real published figure.\n"
         f"Do not return pages from {brand_cfg.get('domain', 'the brand itself')}.\n"
         "Return only the JSON object."
+        + (f"\n\nFOR THIS BRAND, DO NOT RETURN: {rcfg['avoid_sources']}"
+           if str(rcfg.get("avoid_sources") or "").strip() else "")
         + retry
     )
 

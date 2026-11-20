@@ -179,12 +179,25 @@ def cost_report(usage_log: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"by_surface": rows, "total_usd": round(total, 4), "unpriced_models": sorted(set(unpriced))}
 
 
-def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
-    """research -> write -> gate through the real run_brand, with every
-    publishing side effect replaced. Returns the exit code."""
+# Expected OUTPUT tokens per call, by ledger surface, for the pre-call estimate.
+_EXPECTED_OUT_BY_SURFACE = {"slipstream": 12000, "slipstream_factcheck": 9000,
+                            "slipstream_research": 6000, "slipstream_repair": 6000}
+_SEARCH_ESTIMATE_USD = 0.30
+_RUN_RESERVE_USD = 2.50          # do not START a run unless this much is left under the cap
+
+
+def run_dry(brand: str, topic: str = "", research_overrides: Dict[str, Any] = None,
+            budget: "Budget" = None) -> Dict[str, Any]:
+    """research -> write -> gate (one revision, repair) through the real
+    run_brand, with every publishing side effect replaced. Returns everything
+    the run produced. `research_overrides` changes the brand's research config
+    for THIS run only (extra blocked_domains are added, other keys replace).
+    With a `budget`, every model call is estimated first and refused if it
+    would cross the cap."""
     from unittest import mock
     from services import slipstream_engine as se
     from services import slipstream_generate as gen
+    from services import slipstream_research as rs
 
     seen: Dict[str, Any] = {"posts": []}
     real_pack, real_generate, real_revise = se.build_source_pack, se.generate_post, se.revise_post
@@ -225,8 +238,39 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
             raise RuntimeError(f"dry run must never call {name}")
         return _f
 
-    gen.USAGE_LOG.clear()
-    with mock.patch.object(se, "build_source_pack", _pack), \
+    real_cfg, real_once, real_search = se._brand_cfg, gen._llm_json_once, rs.default_search
+
+    def _cfg(key):
+        cfg = real_cfg(key)
+        if research_overrides and key == brand:
+            r = dict(cfg.get("research") or {})
+            for k, v in research_overrides.items():
+                r[k] = list(r.get(k) or []) + [d for d in v if d not in (r.get(k) or [])] \
+                    if k == "blocked_domains" else v
+            cfg = {**cfg, "research": r}
+        return cfg
+
+    def _once(system, user, **kw):
+        if budget is not None:
+            model = kw.get("model") or gen._MODEL
+            surface = kw.get("surface", "slipstream")
+            price = next((v for k, v in _PRICES.items() if model.startswith(k)), (4.0, 20.0))
+            out_tokens = min(int(kw.get("max_tokens") or gen._MAX_TOKENS),
+                             _EXPECTED_OUT_BY_SURFACE.get(surface, 9000))
+            est = ((len(system) + len(user)) / 3.5 * price[0] + out_tokens * price[1]) / 1e6
+            budget.check(surface, est)
+        return real_once(system, user, **kw)
+
+    def _search(*a, **kw):
+        if budget is not None:
+            budget.check("search", _SEARCH_ESTIMATE_USD)
+        return real_search(*a, **kw)
+
+    usage_start = len(gen.USAGE_LOG)
+    with mock.patch.object(se, "_brand_cfg", _cfg), \
+         mock.patch.object(gen, "_llm_json_once", _once), \
+         mock.patch.object(rs, "default_search", _search), \
+         mock.patch.object(se, "build_source_pack", _pack), \
          mock.patch.object(se, "generate_post", _generate), \
          mock.patch.object(se, "revise_post", _revise), \
          mock.patch.object(se, "repair_post", _repair), \
@@ -241,8 +285,22 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
             cfg = se._brand_cfg(brand)
             topic = se._next_topic(cfg, os.getenv("SLIPSTREAM_GH_TOKEN", "").strip())
         receipt = se.run_brand(brand, topic=topic, auto_merge=False, dry_run=True)
+        cfg_used = _cfg(brand)
 
-    cost = cost_report(gen.USAGE_LOG)
+    usage = list(gen.USAGE_LOG[usage_start:])
+    stopped = "BudgetStop" in json.dumps(receipt, default=str)
+    return {"brand": brand, "topic": topic, "receipt": receipt, "pack": seen.get("pack"),
+            "posts": seen["posts"], "pr_body": seen.get("pr_body"),
+            "violations_sent_to_writer": seen.get("violations_sent_to_writer"),
+            "cost": cost_report(usage), "usage": usage, "stopped_by_cap": stopped, "cfg": cfg_used}
+
+
+def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
+    """run_dry for one brand, printed for a person. Returns the exit code."""
+    from services import slipstream_generate as gen
+    gen.USAGE_LOG.clear()
+    run = run_dry(brand, topic)
+    receipt, topic, seen, cost = run["receipt"], run["topic"], run, run["cost"]
     passed = bool(receipt.get("ok"))
     research = receipt.get("research") or {}
     print(f"BRAND   {brand}")
@@ -300,10 +358,7 @@ def dry_run_write(brand: str, topic: str = "", out_dir: str = "") -> int:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, f"{brand}.json"), "w", encoding="utf-8") as fh:
-            json.dump({"brand": brand, "topic": topic, "receipt": receipt, "pack": seen.get("pack"),
-                       "posts": seen["posts"], "pr_body": seen.get("pr_body"),
-                       "violations_sent_to_writer": seen.get("violations_sent_to_writer"),
-                       "cost": cost, "usage": list(gen.USAGE_LOG)}, fh, indent=2, default=str)
+            json.dump({k: v for k, v in run.items() if k != "cfg"}, fh, indent=2, default=str)
         print(f"\nSAVED   {os.path.join(out_dir, brand + '.json')}")
     return 0 if passed else 1
 
@@ -339,6 +394,14 @@ class Budget:
         price = next((v for k, v in _PRICES.items() if model.startswith(k)), (4.0, 20.0))
         tokens_in = (len(system) + len(user)) / 3.5          # conservative chars per token
         return (tokens_in * price[0] + _EXPECTED_OUT[kind] * price[1]) / 1e6
+
+    def check(self, kind: str, estimate: float) -> None:
+        """Refuse (raise) if `estimate` would take the round over the cap."""
+        if self.total() + estimate > self.cap:
+            self.log.append({"kind": kind, "estimate": round(estimate, 3), "allowed": False})
+            raise BudgetStop(f"{kind} call estimated at ${estimate:.2f} would take the round to "
+                             f"${self.total() + estimate:.2f}, over the ${self.cap:.2f} cap")
+        self.log.append({"kind": kind, "estimate": round(estimate, 3), "allowed": True})
 
     def guard(self, kind: str, model: str, call):
         def _call(system: str, user: str):
@@ -699,12 +762,129 @@ def repair_from_receipt(path: str, out_dir: str = "", cap: float = 1.0, spent: f
     return 0 if passed else 1
 
 
+# ----------------------------------------------------------------------------
+# --bank: produce a set of researched drafts and index them
+# ----------------------------------------------------------------------------
+
+def _bank_row(run: Dict[str, Any], path_md: str) -> Dict[str, Any]:
+    receipt = run["receipt"]
+    fcr = receipt.get("factcheck") or {}
+    counts = fcr.get("counts") or {}
+    research = receipt.get("research") or {}
+    sources = research.get("sources") or []
+    failing = {f["text"] for f in fcr.get("failures") or [] if f.get("text")}
+    if receipt.get("ok"):
+        verdict = "PASS"
+    elif run.get("stopped_by_cap"):
+        verdict = "STOPPED (spend cap)"
+    elif receipt.get("reason"):
+        verdict = f"HOLD ({receipt['reason']}, no draft)"
+    elif not run.get("posts"):
+        verdict = "HOLD (no draft)"
+    else:
+        verdict = "HOLD (draft banked, needs editor)"
+    return {"brand": run["brand"], "topic": run["topic"], "verdict": verdict,
+            "claims": f"{counts.get('claims_supported', 0)} of {counts.get('claims', 0)}",
+            "failing_sentences": len(failing), "violations": len(receipt.get("violations") or []),
+            "sources": f"{len(sources)} ({sum(1 for s in sources if s.get('primary'))} primary)",
+            "cost": run["cost"]["total_usd"], "path": path_md if run.get("posts") else "",
+            "repair": "applied" if (fcr.get("repair") or {}).get("applied") else
+                      ("skipped" if (fcr.get("repair") or {}).get("skipped") else
+                       ("rejected" if (fcr.get("repair") or {}).get("ran") else "not needed" if receipt.get("ok") else "none"))}
+
+
+def write_bank_index(out_dir: str, rows: List[Dict[str, Any]], notes: List[str], cap: float) -> str:
+    spent = sum(r["cost"] for r in rows)
+    lines = ["# Slipstream draft bank, 2026-11-19", "",
+             "Researched drafts produced by the dry-run path (research, write, gate with one revision, "
+             "targeted repair). **Nothing here is published.** No images were generated, no pull request "
+             "was opened on any brand site, and no topic was checked off in any queue.", "",
+             f"- Drafts banked: {sum(1 for r in rows if r['path'])} of {len(rows)} runs. "
+             f"Passed the gate outright: {sum(1 for r in rows if r['verdict'] == 'PASS')}.",
+             f"- Measured spend: ${spent:.2f} of the ${cap:.2f} cap (price table as cached 2026-11-03, "
+             "not an invoice).",
+             "- A draft marked 'needs editor' was HELD by the fact-check gate. Its .md file ends with a "
+             "NEEDS EDITOR section listing each failing sentence, the rule and the quote it cites.", "",
+             "| Brand | Topic | Verdict | Claims supported | Failing sentences | Sources | Repair | Cost | File |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['brand']} | {r['topic']} | {r['verdict']} | {r['claims']} | "
+                     f"{r['failing_sentences']} | {r['sources']} | {r['repair']} | ${r['cost']:.2f} | "
+                     f"{r['path'] or '(none)'} |")
+    if notes:
+        lines += ["", "## Notes", ""] + [f"- {n}" for n in notes]
+    path = os.path.join(out_dir, "INDEX.md")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return path
+
+
+def bank_drafts(plan_path: str) -> int:
+    """Run the plan's (brand, topic) pairs in order, saving each draft and
+    rewriting INDEX.md after every run. Stops cleanly before a run the cap
+    cannot cover."""
+    from services import slipstream_engine as se
+    from services import slipstream_generate as gen
+    with open(plan_path, "r", encoding="utf-8") as fh:
+        plan = json.load(fh)
+    out_dir, cap = plan["out"], float(plan.get("cap", 20.0))
+    notes = list(plan.get("notes") or [])
+    os.makedirs(out_dir, exist_ok=True)
+    gen.USAGE_LOG.clear()
+    budget = Budget(cap, float(plan.get("spent", 0.0)))
+    rows: List[Dict[str, Any]] = []
+    for job in plan["runs"]:
+        brand, topic = job["brand"], job["topic"]
+        if budget.total() + _RUN_RESERVE_USD > cap:
+            notes.append(f"NOT RUN (spend cap): {brand}: {topic}. ${budget.total():.2f} spent; a run "
+                         f"needs up to ${_RUN_RESERVE_USD:.2f} of headroom.")
+            continue
+        overrides = {k: job[k] for k in ("blocked_domains", "avoid_sources") if job.get(k)}
+        try:
+            run = run_dry(brand, topic, overrides or None, budget)
+        except Exception as e:
+            notes.append(f"FAILED to run {brand}: {topic}: {type(e).__name__}: {e}")
+            write_bank_index(out_dir, rows, notes, cap)
+            continue
+        cfg = run.pop("cfg")
+        receipt = run["receipt"]
+        post = run["posts"][-1]["post"] if run["posts"] else None
+        slug = (post or {}).get("slug") or re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:70]
+        bdir = os.path.join(out_dir, brand)
+        os.makedirs(bdir, exist_ok=True)
+        with open(os.path.join(bdir, f"{slug}.json"), "w", encoding="utf-8") as fh:
+            json.dump(run, fh, indent=2, default=str)
+        path_md = os.path.join(bdir, f"{slug}.md")
+        if post:
+            fcr = receipt.get("factcheck") or {}
+            md = readable_markdown(post, cfg, fcr.get("repair") or {})
+            if not receipt.get("ok"):
+                md = md.replace("NOT PUBLISHED. This is a dry-run result that passed the fact-check gate.",
+                                "NOT PUBLISHED. This draft was HELD by the fact-check gate. See NEEDS EDITOR "
+                                "at the end.")
+                md += se.needs_editor_section(post, receipt.get("violations") or [], fcr, run.get("pack"), cfg)
+            with open(path_md, "w", encoding="utf-8") as fh:
+                fh.write(md)
+        row = _bank_row(run, path_md)
+        rows.append(row)
+        if overrides:
+            notes.append(f"{brand}: {topic}: run-time research preference applied ("
+                         + "; ".join(f"{k}={v}" for k, v in overrides.items()) + ")")
+        write_bank_index(out_dir, rows, notes, cap)
+        print(f"{row['verdict']:<36} ${row['cost']:.2f}  total ${budget.total():.2f}  {brand}: {topic}", flush=True)
+    index = write_bank_index(out_dir, rows, notes, cap)
+    print(f"INDEX   {index}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("post", nargs="?", help="path to a PR diff, an .mdx post, or a generator .json")
     ap.add_argument("--brand", help="brand key in config/slipstream_brands.yaml")
     ap.add_argument("--from-receipt", default="", metavar="RECEIPT",
                     help="repair a post an earlier --write run saved (pack re-check, repair, final gate; paid)")
+    ap.add_argument("--bank", default="", metavar="PLAN",
+                    help="produce the researched drafts listed in PLAN.json and index them (paid; nothing is published)")
     ap.add_argument("--cap", type=float, default=1.0, help="with --from-receipt: spend cap in USD for the round")
     ap.add_argument("--spent", type=float, default=0.0,
                     help="with --from-receipt: USD already spent this round by earlier runs")
@@ -716,6 +896,12 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="", help="with --write: directory for the saved pack, post and receipt")
     args = ap.parse_args(argv)
 
+    if args.bank:
+        try:
+            return bank_drafts(args.bank)
+        except Exception as e:
+            print(f"bank run failed: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
     if args.from_receipt:
         try:
             return repair_from_receipt(args.from_receipt, args.out, args.cap, args.spent)

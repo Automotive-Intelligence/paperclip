@@ -416,3 +416,128 @@ def test_publish_post_sends_draft_true_only_when_asked():
 def test_needs_editor_section_without_sentence_detail_still_lists_the_reasons():
     text = se.needs_editor_section(POST, ["factcheck gate error: boom"], {"failures": []}, None, CFG)
     assert "## NEEDS EDITOR" in text and "- factcheck gate error: boom" in text and "Failing sentences" not in text
+
+
+# ---------------------------------------------------------------------------
+# 5. per-run research preference and the draft bank runner
+# ---------------------------------------------------------------------------
+
+def test_avoid_sources_is_empty_by_default_and_reaches_the_search_prompt_when_set():
+    from services import slipstream_research as rs
+    se._load_cfg.cache_clear()
+    for brand in ("aiphoneguy", "worshipdigital", "autointelligence"):
+        assert se._brand_cfg(brand)["research"]["avoid_sources"] == ""
+    cfg = {"brand_key": "aiphoneguy", "domain": "theaiphoneguy.com"}
+    plain = rs.build_search_prompt(cfg, "t", rs._rcfg(cfg))
+    assert "DO NOT RETURN" not in plain
+    told = rs.build_search_prompt(cfg, "t", {**rs._rcfg(cfg), "avoid_sources": "sites of competing answering services"})
+    assert "FOR THIS BRAND, DO NOT RETURN: sites of competing answering services" in told
+    full = {"research": {"brands": {"x": {"avoid_sources": "competitors"}}}}
+    assert rs.resolve_research_cfg(full, "x")["avoid_sources"] == "competitors"
+    assert rs.resolve_research_cfg(full, "y")["avoid_sources"] == ""
+
+
+def _gate_script():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "slipstream_gate_check.py")
+    spec = importlib.util.spec_from_file_location("slipstream_gate_check_bank", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bank_runner_saves_each_draft_indexes_it_and_publishes_nothing(tmp_path, monkeypatch, capsys):
+    import json
+    from services import slipstream_generate as gen
+    from services import slipstream_research as rs
+    G = _gate_script()
+    seen_cfg = []
+    never = mock.Mock(side_effect=AssertionError("the bank must not publish, buy images or touch a queue"))
+    cfg = dict(CFG, research={"enabled": True, "blocked_domains": ["reddit.com"], "avoid_sources": ""})
+
+    def pack(c, topic, **kw):
+        seen_cfg.append(c["research"])
+        return dict(PACK, mode="sourced", topic=topic, model="m", searches=2)
+
+    gates = {"A topic that passes": {"ok": True, "violations": [], "error": None, "claims": [], "editor": [],
+                                     "links": [], "model": "m", "llm_ran": True, "failures": [],
+                                     "counts": {"claims": 4, "claims_supported": 4}}}
+    topics = []
+
+    def gen_post(c, topic, pack=None):
+        topics.append(topic)
+        return dict(POST, slug="post-" + str(len(topics)))
+
+    def gate_fn(post, c, **kw):
+        g = gates.get(topics[-1])
+        if g:
+            return dict(g)
+        h = held_gate(post)
+        h["counts"] = {"claims": 3, "claims_supported": 1}
+        return h
+
+    monkeypatch.setenv("SLIPSTREAM_GH_TOKEN", "tok")
+    monkeypatch.setattr(se, "_brand_cfg", lambda b: cfg)
+    monkeypatch.setattr(se, "research_enabled", lambda c: True)
+    monkeypatch.setattr(se, "build_source_pack", pack)
+    monkeypatch.setattr(se, "generate_post", gen_post)
+    monkeypatch.setattr(se, "revise_post", lambda *a, **k: dict(POST, slug="post-" + str(len(topics))))
+    monkeypatch.setattr(se, "assemble_mdx", lambda p, d: ("MDX", []))
+    monkeypatch.setattr(se, "run_factcheck", gate_fn)
+    monkeypatch.setattr(gen, "_llm_json_once", never)
+    monkeypatch.setattr(rs, "default_search", never)
+    for name in ("generate_images", "publish_post", "_checkoff_topic", "merge_when_green", "_distribute_social", "_next_topic"):
+        monkeypatch.setattr(se, name, never)
+    out = tmp_path / "bank"
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"out": str(out), "cap": 20, "notes": ["skipped: a brand-facts topic"], "runs": [
+        {"brand": "autointelligence", "topic": "A topic that passes"},
+        {"brand": "autointelligence", "topic": "A topic that holds", "blocked_domains": ["rival.example"],
+         "avoid_sources": "competitor vendor sites"}]}))
+    code = G.main(["--bank", str(plan)])
+    never.assert_not_called()
+    assert code == 0
+    assert seen_cfg[0]["blocked_domains"] == ["reddit.com"] and seen_cfg[0]["avoid_sources"] == ""
+    assert seen_cfg[1]["blocked_domains"] == ["reddit.com", "rival.example"]
+    assert seen_cfg[1]["avoid_sources"] == "competitor vendor sites", "the preference applies to that run only"
+    assert cfg["research"]["blocked_domains"] == ["reddit.com"], "the brand config is not mutated"
+    index = (out / "INDEX.md").read_text()
+    assert "Drafts banked: 2 of 2 runs. Passed the gate outright: 1." in index and "Nothing here is published" in index
+    assert "| autointelligence | A topic that passes | PASS | 4 of 4 | 0 |" in index
+    assert "| autointelligence | A topic that holds | HOLD (draft banked, needs editor) | 1 of 3 | 2 |" in index
+    assert "- skipped: a brand-facts topic" in index and "run-time research preference applied" in index
+    assert EM_DASH not in index
+    passed_md = (out / "autointelligence" / "post-1.md").read_text()
+    held_md = (out / "autointelligence" / "post-2.md").read_text()
+    assert "passed the fact-check gate" in passed_md and "NEEDS EDITOR" not in passed_md
+    assert "This draft was HELD by the fact-check gate" in held_md and "## NEEDS EDITOR" in held_md
+    assert "**[body]** Every dealer has already been fined for missing one." in held_md
+    assert f'cited quote: "{QUOTE}"' in held_md
+    saved = json.loads((out / "autointelligence" / "post-2.json").read_text())
+    assert saved["topic"] == "A topic that holds" and saved["pack"]["mode"] == "sourced" and saved["posts"]
+
+
+def test_bank_runner_does_not_start_a_run_the_cap_cannot_cover(tmp_path, monkeypatch):
+    import json
+    G = _gate_script()
+    never = mock.Mock(side_effect=AssertionError("no run may start"))
+    monkeypatch.setattr(se, "run_brand", never)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"out": str(tmp_path / "bank"), "cap": 20, "spent": 18.0,
+                                "runs": [{"brand": "worshipdigital", "topic": "T"}]}))
+    assert G.main(["--bank", str(plan)]) == 0
+    never.assert_not_called()
+    index = (tmp_path / "bank" / "INDEX.md").read_text()
+    assert "NOT RUN (spend cap): worshipdigital: T. $18.00 spent" in index and "Drafts banked: 0 of 0 runs" in index
+
+
+def test_budget_check_refuses_a_call_inside_a_run():
+    from services import slipstream_generate as gen
+    G = _gate_script()
+    gen.USAGE_LOG.clear()
+    b = G.Budget(cap=1.0, spent_before=0.9)
+    b.check("slipstream", 0.05)
+    with pytest.raises(G.BudgetStop, match="over the \\$1.00 cap"):
+        b.check("search", 0.30)
+    assert [x["allowed"] for x in b.log] == [True, False]
