@@ -274,7 +274,9 @@ brands:
     # is the whole reason it sat off the engine. `shopify_article` publishes through
     # the Admin API (services/slipstream_shopify.py) instead of opening a PR.
     domain: paperandpurpose.co
-    enabled: true    # NOTE: `enabled` is what the MWF cron iterates (app.py _run_slipstream_mwf),
+    enabled: false   # OFF 2026-11-19 (Michael): drafts are not being used (34 drafts in Shopify, none ever edited
+                     # or published). On-demand still works via POST /admin/run-slipstream/paperandpurpose.
+                     # NOTE: `enabled` is what the MWF cron iterates (app.py _run_slipstream_mwf),
                      # so this brand produces a DRAFT every Mon/Wed/Fri. Drafts only, never live.
                      # Set false to keep P&P on-demand only via POST /admin/run-slipstream.
     format: shopify_article
