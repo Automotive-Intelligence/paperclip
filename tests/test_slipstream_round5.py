@@ -541,3 +541,43 @@ def test_budget_check_refuses_a_call_inside_a_run():
     with pytest.raises(G.BudgetStop, match="over the \\$1.00 cap"):
         b.check("search", 0.30)
     assert [x["allowed"] for x in b.log] == [True, False]
+
+
+def test_bank_runner_resumes_and_keeps_earlier_drafts_in_the_index(tmp_path, monkeypatch):
+    import json
+    G = _gate_script()
+    out = tmp_path / "bank"
+    (out / "worshipdigital").mkdir(parents=True)
+    earlier = {"brand": "worshipdigital", "topic": "Old topic", "posts": [{"stage": "draft", "post": POST}],
+               "cost": {"total_usd": 1.5}, "receipt": {"ok": False, "violations": ["v"], "factcheck": {
+                   "counts": {"claims": 4, "claims_supported": 3}, "failures": [{"text": "x"}]}, "research": {"sources": []}}}
+    failed = {"brand": "autointelligence", "topic": "Retry me", "posts": [], "cost": {"total_usd": 0.55},
+              "receipt": {"ok": False, "reason": "research_error", "error": "research failed", "violations": ["v"]}}
+    (out / "worshipdigital" / "old.json").write_text(json.dumps(earlier))
+    (out / "autointelligence").mkdir()
+    (out / "autointelligence" / "retry-me.json").write_text(json.dumps(failed))
+    monkeypatch.setattr(G, "run_dry", lambda brand, topic, overrides, budget: {
+        "brand": brand, "topic": topic, "posts": [{"stage": "draft", "post": dict(POST, slug="new-one")}], "pack": PACK,
+        "cost": {"total_usd": 1.2}, "stopped_by_cap": False, "cfg": CFG,
+        "receipt": {"ok": True, "violations": [], "factcheck": {"counts": {"claims": 5, "claims_supported": 5}},
+                    "research": {"sources": []}}})
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"out": str(out), "cap": 20, "spent": 2.05,
+                                "runs": [{"brand": "autointelligence", "topic": "Retry me"}]}))
+    assert G.main(["--bank", str(plan)]) == 0
+    index = (out / "INDEX.md").read_text()
+    assert "| worshipdigital | Old topic | HOLD (draft banked, needs editor) | 3 of 4 | 1 |" in index
+    assert "| autointelligence | Retry me | PASS | 5 of 5 | 0 |" in index
+    assert "research_error" not in index.split("## Notes")[0], "the failed attempt's row is replaced"
+    assert "an earlier attempt in this round did not produce a draft (research failed); it cost $0.55" in index
+    assert (out / "autointelligence" / "retry-me-attempt1.json").exists()
+    assert (out / "autointelligence" / "new-one.md").exists()
+
+
+def test_quote_extraction_has_room_for_a_full_pack():
+    from services import slipstream_generate as gen
+    from services import slipstream_research as rs
+    seen = {}
+    with mock.patch.object(gen, "_llm_json_once", side_effect=lambda s, u, **kw: seen.update(kw) or {"sources": []}):
+        rs.default_llm("m")("sys", "user")
+    assert seen["max_tokens"] == 16000 and seen["surface"] == "slipstream_research"

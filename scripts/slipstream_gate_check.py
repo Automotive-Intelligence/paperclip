@@ -793,8 +793,11 @@ def _bank_row(run: Dict[str, Any], path_md: str) -> Dict[str, Any]:
                        ("rejected" if (fcr.get("repair") or {}).get("ran") else "not needed" if receipt.get("ok") else "none"))}
 
 
-def write_bank_index(out_dir: str, rows: List[Dict[str, Any]], notes: List[str], cap: float) -> str:
-    spent = sum(r["cost"] for r in rows)
+def write_bank_index(out_dir: str, rows: List[Dict[str, Any]], notes: List[str], cap: float,
+                     spent: float = None) -> str:
+    """`spent` is the round total when it is more than the rows add up to (an
+    attempt that was run again still cost money)."""
+    spent = max(sum(r["cost"] for r in rows), spent or 0.0)
     lines = ["# Slipstream draft bank, 2026-11-19", "",
              "Researched drafts produced by the dry-run path (research, write, gate with one revision, "
              "targeted repair). **Nothing here is published.** No images were generated, no pull request "
@@ -832,7 +835,26 @@ def bank_drafts(plan_path: str) -> int:
     os.makedirs(out_dir, exist_ok=True)
     gen.USAGE_LOG.clear()
     budget = Budget(cap, float(plan.get("spent", 0.0)))
+    # Resume: drafts already saved in this folder stay in the index. A saved
+    # run for a (brand, topic) this plan runs again is replaced by the new one.
+    rerun = {(j["brand"], j["topic"]) for j in plan["runs"]}
     rows: List[Dict[str, Any]] = []
+    old_files = []
+    for brand_dir in sorted(os.listdir(out_dir)):
+        full = os.path.join(out_dir, brand_dir)
+        if os.path.isdir(full):
+            old_files += [os.path.join(full, f) for f in os.listdir(full)
+                          if f.endswith(".json") and not f.endswith("-attempt1.json")]
+    for path in sorted(old_files, key=os.path.getmtime):
+        with open(path, "r", encoding="utf-8") as fh:
+            old = json.load(fh)
+        if (old.get("brand"), old.get("topic")) in rerun:
+            os.replace(path, path[:-5] + "-attempt1.json")
+            notes.append(f"{old.get('brand')}: {old.get('topic')}: an earlier attempt in this round did not "
+                         f"produce a draft ({(old.get('receipt') or {}).get('error')}); it cost "
+                         f"${(old.get('cost') or {}).get('total_usd', 0):.2f} and was run again.")
+            continue
+        rows.append(_bank_row(old, path[:-5] + ".md"))
     for job in plan["runs"]:
         brand, topic = job["brand"], job["topic"]
         if budget.total() + _RUN_RESERVE_USD > cap:
@@ -868,11 +890,13 @@ def bank_drafts(plan_path: str) -> int:
         row = _bank_row(run, path_md)
         rows.append(row)
         if overrides:
-            notes.append(f"{brand}: {topic}: run-time research preference applied ("
-                         + "; ".join(f"{k}={v}" for k, v in overrides.items()) + ")")
-        write_bank_index(out_dir, rows, notes, cap)
+            notes.append(f"{brand}: {topic}: run-time research preference applied: "
+                         f"{len(overrides.get('blocked_domains') or [])} competitor domains blocked for this "
+                         f"run only" + (f"; search told to avoid: {overrides['avoid_sources']}"
+                                        if overrides.get("avoid_sources") else ""))
+        write_bank_index(out_dir, rows, notes, cap, budget.total())
         print(f"{row['verdict']:<36} ${row['cost']:.2f}  total ${budget.total():.2f}  {brand}: {topic}", flush=True)
-    index = write_bank_index(out_dir, rows, notes, cap)
+    index = write_bank_index(out_dir, rows, list(dict.fromkeys(notes)), cap, budget.total())
     print(f"INDEX   {index}")
     return 0
 

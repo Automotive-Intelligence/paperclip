@@ -401,6 +401,7 @@ def default_search(brand_cfg: Dict[str, Any], topic: str, rcfg: Dict[str, Any],
 # Step 3 + 4: extract quotes (LLM), confirm them (code)
 # ----------------------------------------------------------------------------
 
+_EXTRACT_MAX_TOKENS = 16000
 _BRAND_PAGE_CHARS = 8000        # per first-party page sent for quote extraction
 _MAX_BRAND_PAGES = 4
 
@@ -448,8 +449,11 @@ def default_llm(model: Optional[str] = None) -> Callable[[str, str], Dict[str, A
     model = model or research_model()
 
     def _call(system: str, user: str) -> Dict[str, Any]:
-        return gen._llm_json_once(system, user, model=model, max_tokens=8000,
-                                  timeout=300, surface="slipstream_research")
+        # 16000, not 8000: with first-party pages and the credited_to field the
+        # reply for a full pack ran past 8000 tokens on 2026-11-19 and came back
+        # as cut-off JSON, which (correctly) held the run as a research error.
+        return gen._llm_json_once(system, user, model=model, max_tokens=_EXTRACT_MAX_TOKENS,
+                                  timeout=420, surface="slipstream_research")
     return _call
 
 
