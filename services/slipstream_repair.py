@@ -276,16 +276,48 @@ def _quotes_for(unit: fc.Unit, pack: Optional[Dict[str, Any]], domain: str,
     return out[:_MAX_QUOTES_PER_UNIT]
 
 
+def sole_body_fields(conts: List[Container], targets: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    """{field id: heading text} for failing fields in a section where EVERY
+    body field is failing. Deleting them all would leave the heading with no
+    body, which the contract rejects, so the model has to be told up front.
+    (First live repair, 2026-11-19: both paragraphs under the closing heading
+    failed, the model deleted both, and the whole repair was thrown away.)"""
+    def index(c: Container) -> Tuple[str, int]:
+        return (str(c.path[0]), c.path[1]) if c.path[0] in ("body_mdx", "body") and len(c.path) > 1 else ("", -1)
+
+    sections: List[Tuple[str, List[Container]]] = []
+    for c in conts:
+        kind, _i = index(c)
+        if not kind or not c.units:
+            continue
+        if all(u.where == "heading" for u in c.units):
+            sections.append((c.units[0].text, []))
+        elif sections and c.editable and any(u.surface == "body" for u in c.units) \
+                and not all(u.where == "image caption" for u in c.units):
+            sections[-1][1].append(c)
+    out: Dict[str, str] = {}
+    for heading, body in sections:
+        if body and all(all(u.uid in targets for u in c.units) for c in body):
+            for c in body:
+                out[c.cid] = heading
+    return out
+
+
 def build_repair_prompt(conts: List[Container], targets: Dict[str, List[Dict[str, Any]]],
                         groups: List[List[str]], pack: Optional[Dict[str, Any]], domain: str,
                         post_level: List[str]) -> str:
     group_of = {uid: f"G{i}" for i, g in enumerate(groups, 1) for uid in g}
+    sole = sole_body_fields(conts, targets)
     lines = ["Repair ONLY the failing sentences in these fields.", ""]
     for c in conts:
         failing = [u for u in c.units if u.uid in targets]
         if not failing:
             continue
         lines.append(f"=== FIELD {c.cid} ({failing[0].where}) ===")
+        if c.cid in sole:
+            lines.append(f'SECTION WARNING: every sentence under the heading "{sole[c.cid]}" is failing. '
+                         "If you delete them all, the heading is left with no body and the whole repair "
+                         "is thrown away. REWRITE at least one sentence of this section instead of deleting it.")
         lines.append("RAW TEXT:")
         lines.append(c.raw)
         for u in failing:

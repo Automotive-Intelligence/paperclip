@@ -977,3 +977,30 @@ def test_dry_run_script_prints_the_repair_diff(monkeypatch, capsys):
     assert "REPAIR  ran=True applied=True targets=1 final_gate_passed=True" in out
     assert "DELETED [body] rules=claim\n    - Every dealer in the country" in out
     assert "REWRITTEN [faq answer] rules=editor:no_invented_timelines\n    - It takes two weeks.\n    + The page gives no timeline." in out
+
+
+def test_the_model_is_warned_when_every_sentence_under_a_heading_is_failing():
+    """Found on the first live repair: both paragraphs under the closing
+    heading failed, the model deleted both, and the contract threw the whole
+    repair away. The contract stays; the prompt now says so up front."""
+    post = dict(POST, body_mdx=MDX.replace(START_FIELD, FILLER))
+    seen = []
+    run(post=post, fails=[failure(post, "The truth is", rule="editor:no_filler_or_hype")],
+        edits={cid(post, "The truth is"): ""}, seen=seen)
+    assert ('SECTION WARNING: every sentence under the heading "Where should a dealer start?" is failing.'
+            in seen[0]) and "REWRITE at least one sentence of this section" in seen[0]
+    # a section with a passing sentence left gets no warning
+    seen2 = []
+    run(seen=seen2)
+    assert "SECTION WARNING" not in seen2[0]
+    # block format: both paragraphs under the last h2 failing
+    bp = dict(BLOCK_POST, body=BLOCK_POST["body"][:11] + [
+        {"type": "p", "text": "Request a quote to talk it through."}, {"type": "p", "text": "We do it all for you."}]
+        + BLOCK_POST["body"][12:])
+    conts = rp.containers(bp)
+    targets = {u.uid: [{"rule": "claim", "violation": "v"}] for c in conts for u in c.units
+               if u.text in ("Request a quote to talk it through.", "We do it all for you.")}
+    sole = rp.sole_body_fields(conts, targets)
+    assert set(sole.values()) == {"What next?"} and len(sole) == 2
+    one = dict(list(targets.items())[:1])
+    assert rp.sole_body_fields(conts, one) == {}
