@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Editor items a sentence-level edit can fix. The other two (answers_title,
 # concrete_specific) are about something the post LACKS; repair may not add.
 REPAIRABLE_EDITOR = {"no_filler_or_hype", "no_unsupported_absolutes", "no_invented_timelines",
-                     "no_em_dashes", "operator_voice"}
+                     "no_em_dashes", "operator_voice", "pitch_within_rules"}
 _GROUP_OVERLAP = 0.6
 _MAX_QUOTES_PER_UNIT = 8
 
@@ -188,7 +188,8 @@ def group_copies(units: List[fc.Unit]) -> List[List[str]]:
 
 
 def plan(failures: List[Dict[str, Any]], conts: List[Container], claims_judged: int,
-         max_fail_ratio: float) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[str]]:
+         max_fail_ratio: float, max_style_ratio: float = 0.75
+         ) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[str]]:
     """({uid: [failures]}, skip_reason). skip_reason is set when the pass must
     not run: nothing addressable, a failure no sentence edit can fix, or too
     many failing sentences."""
@@ -214,10 +215,23 @@ def plan(failures: List[Dict[str, Any]], conts: List[Container], claims_judged: 
     # the post's sentences instead.
     judged = int(claims_judged or 0)
     base = judged or sum(1 for c in conts for u in c.units if u.surface != "meta") or 1
-    if len(targets) / base > max_fail_ratio:
-        of = f"{judged} judged claims" if judged else f"{base} sentences"
-        return {}, (f"{len(targets)} failing sentences against {of} is more than the repair limit "
-                    f"({max_fail_ratio:.0%}); a post this far off is held, not patched")
+    of = f"{judged} judged claims" if judged else f"{base} sentences"
+    # Two counts, two limits. A sentence with a failed CLAIM (verifier or a code
+    # check: figure, link, banned, pack) is a factual problem: more than a third
+    # of the claims failing means the post is wrong, not rough. A sentence that
+    # only breaks an editor STYLE rule is cheap to reword or cut, so those are
+    # counted on their own against a larger limit. (Until 2026-11-19 both were
+    # one count, and the editor naming every style line pushed posts with 9 and
+    # 21 percent failing claims over the claim limit.)
+    claim_units = [uid for uid, fs in targets.items()
+                   if any(not str(f.get("rule") or "").startswith("editor:") for f in fs)]
+    style_units = [uid for uid in targets if uid not in claim_units]
+    if len(claim_units) / base > max_fail_ratio:
+        return {}, (f"{len(claim_units)} sentences with a failing claim against {of} is more than the "
+                    f"repair limit ({max_fail_ratio:.0%}); a post this far off is held, not patched")
+    if len(style_units) / base > max_style_ratio:
+        return {}, (f"{len(style_units)} sentences failing only an editor style rule against {of} is "
+                    f"more than the style repair limit ({max_style_ratio:.0%}); held, not patched")
     return targets, None
 
 
@@ -615,7 +629,8 @@ def repair_post(post: Dict[str, Any], gate_result: Dict[str, Any], cfg: Dict[str
         failures = list(gate_result.get("failures") or []) + list(extra_failures or [])
         conts = containers(post)
         claims = (gate_result.get("counts") or {}).get("claims") or len(gate_result.get("claims") or [])
-        targets, skip = plan(failures, conts, claims, float(fcfg.get("repair_max_fail_ratio") or 1 / 3))
+        targets, skip = plan(failures, conts, claims, float(fcfg.get("repair_max_fail_ratio") or 1 / 3),
+                             float(fcfg.get("repair_max_style_ratio") or 0.75))
         if skip:
             out["skipped"] = skip
             return out

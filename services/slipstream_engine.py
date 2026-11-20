@@ -346,6 +346,96 @@ def _pr_body(post: Dict[str, Any], image_count: int, fmt: str = "mdx",
             + _repair_pr_section((factcheck or {}).get("repair")))
 
 
+def needs_editor_section(post: Dict[str, Any], violations: list, factcheck: Optional[Dict[str, Any]],
+                         pack: Optional[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+    """The NEEDS EDITOR worklist for a held post kept as a draft: each failing
+    sentence, the rule it broke, and the pack quote(s) it cites, so a person can
+    finish the post by hand. Plain markdown; used in the draft PR body and by
+    the dry-run script."""
+    from services.slipstream_repair import _quotes_for
+    from services import slipstream_factcheck as _fc
+    lines = ["\n\n## NEEDS EDITOR\n",
+             "**This post did NOT pass the fact-check gate. Do not merge it as it stands.** "
+             "It is kept as a draft so a person can finish it. Fix or cut each sentence below, "
+             "then re-run the gate (`scripts/slipstream_gate_check.py`) before publishing. "
+             "Images have not been generated for it.\n"]
+    failures = list((factcheck or {}).get("failures") or [])
+    try:
+        units, post_level = _fc.extract_post(post)
+    except Exception:
+        units, post_level = [], []
+    by_text = {u.text: u for u in units}
+    seen: Dict[str, Dict[str, Any]] = {}
+    for f in failures:
+        if not f.get("text"):
+            continue
+        row = seen.setdefault(f["text"], {"where": f.get("where", ""), "rules": [], "violations": []})
+        if f["rule"] not in row["rules"]:
+            row["rules"].append(f["rule"])
+        if f["violation"] not in row["violations"]:
+            row["violations"].append(f["violation"])
+    if seen:
+        lines.append(f"### Failing sentences ({len(seen)})\n")
+        for i, (text, row) in enumerate(seen.items(), 1):
+            lines.append(f"{i}. **[{row['where']}]** {text}")
+            lines.append(f"   - rule: {', '.join(row['rules'])}")
+            unit = by_text.get(text)
+            quotes = _quotes_for(unit, pack, cfg.get("domain", ""), post_level) if unit is not None else []
+            if any(not r.startswith("editor:") for r in row["rules"]):
+                for q in quotes[:3]:
+                    lines.append(f'   - cited quote: "{q}"')
+                if not quotes:
+                    lines.append("   - cited quote: none (no pack source is linked to this sentence)")
+            lines.append("")
+    covered = {v for row in seen.values() for v in row["violations"]}
+    rest = [v for v in violations if v not in covered]
+    if rest:
+        lines.append(f"### Other reasons it was held ({len(rest)})\n")
+        lines += [f"- {v}" for v in rest]
+    if not seen and not rest:
+        lines.append("- (the gate gave no sentence-level detail)")
+    return "\n".join(lines) + "\n"
+
+
+def _held_draft_pr(cfg: Dict[str, Any], post: Dict[str, Any], violations: list,
+                   factcheck: Optional[Dict[str, Any]], research: Optional[Dict[str, Any]],
+                   pack: Optional[Dict[str, Any]], assemble, fmt: str, date_str: str,
+                   token: str) -> Dict[str, Any]:
+    """Open a DRAFT pull request for a held post. Never raises, never merges,
+    never buys images, never checks off the topic, never schedules social.
+    Returns the keys to add to the HOLD receipt."""
+    brand_key = cfg.get("brand_key", "?")
+    if fmt == "shopify_article" or not cfg.get("repo"):
+        return {"draft_pr": None, "draft_pr_note": "on_hold: draft_pr needs a repo brand; post held"}
+    try:
+        payload, tsx_files, fmt_violations = assemble(post)
+        if fmt_violations or (not payload and not tsx_files):
+            return {"draft_pr": None, "draft_pr_note": "held post does not pass the format gate, so no "
+                                                       "draft was written: " + "; ".join(fmt_violations or [])}
+        slug = post["slug"]
+        if fmt == "ts_posts_array":
+            files: Dict[str, Any] = {cfg["posts_file"]: payload}
+        elif fmt == "tsx_post":
+            files = dict(tsx_files or {})
+        else:
+            files = {f"{cfg['blog_dir']}/{slug}.mdx": payload,
+                     f"{cfg['blog_dir']}/{slug}.social.md": _social_md(post)}
+        body = ("**NEEDS EDITOR. HELD by the fact-check gate. Draft only: do not merge until every "
+                "item under NEEDS EDITOR is fixed and the gate passes.**\n\n"
+                f"- slug: `{slug}`\n- format: `{fmt}`\n- images: none generated (held post)\n"
+                + needs_editor_section(post, violations, factcheck, pack, cfg)
+                + _research_pr_section(research, post) + pr_table(factcheck)
+                + _repair_pr_section((factcheck or {}).get("repair")))
+        url = publish_post(cfg["repo"], f"slipstream-draft/{slug}-{date_str}", files,
+                           f"[NEEDS EDITOR] content: {post['title']}", body, token, draft=True)
+        logger.warning("[slipstream] %s HELD post kept as a DRAFT PR for a human editor: %s", brand_key, url)
+        return {"draft_pr": url, "published": False,
+                "draft_pr_note": "held post kept as a GitHub draft PR; never auto-merged, no social"}
+    except Exception as e:
+        logger.exception("[slipstream] %s could not open the draft PR for a held post", brand_key)
+        return {"draft_pr": None, "draft_pr_note": f"draft PR failed ({type(e).__name__}: {e}); post held"}
+
+
 def _research_stage(cfg: Dict[str, Any], topic: str, link_cache: Dict[str, Any]):
     """Research before writing. Returns (pack, hold).
 
@@ -424,8 +514,12 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
     # Sentences the verifier SUPPORTED with a code-confirmed quote are carried to
     # the later passes while they stay byte-identical (same text, same links).
     verdicts: Dict[Any, Any] = {}
+    # The editor's verdict on a line is carried the same way, so an unchanged
+    # line cannot pass on one look and fail on the next.
+    edits: Dict[Any, Any] = {}
     try:
-        r1 = _with_pack_check(run_factcheck(post, cfg, link_cache=cache, verdict_cache=verdicts),
+        r1 = _with_pack_check(run_factcheck(post, cfg, link_cache=cache, verdict_cache=verdicts,
+                                            editor_cache=edits),
                               post, cfg, pack)
     except Exception as e:  # run_gate never raises; this guards a broken import/stub
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
@@ -463,7 +557,7 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
     try:
         r2 = _with_pack_check(
             run_factcheck(revised, cfg, link_cache=cache, skip_llm_on_deterministic_fail=True,
-                          verdict_cache=verdicts),
+                          verdict_cache=verdicts, editor_cache=edits),
             revised, cfg, pack)
     except Exception as e:
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
@@ -473,11 +567,12 @@ def _factcheck_stage(cfg: Dict[str, Any], topic: str, post: Dict[str, Any], reas
         return revised, reassembled, summary, []
     if r2.get("error") or (cfg.get("factcheck") or {}).get("repair_pass") is False:
         return revised, None, summary, list(r2.get("violations") or ["factcheck gate failed"])
-    return _repair_stage(cfg, revised, [r1, r2], reassemble, pack, cache, verdicts)
+    return _repair_stage(cfg, revised, [r1, r2], reassemble, pack, cache, verdicts, edits)
 
 
 def _repair_stage(cfg: Dict[str, Any], revised: Dict[str, Any], passes: list, reassemble,
-                  pack: Optional[Dict[str, Any]], cache: Dict[str, Any], verdicts: Dict[Any, Any]):
+                  pack: Optional[Dict[str, Any]], cache: Dict[str, Any], verdicts: Dict[Any, Any],
+                  edits: Optional[Dict[Any, Any]] = None):
     """The LAST step: one targeted repair of the sentences that still fail after
     the revision, then the full gate one final time. No loop.
 
@@ -514,7 +609,8 @@ def _repair_stage(cfg: Dict[str, Any], revised: Dict[str, Any], passes: list, re
     if fmt_violations:
         return repaired, None, summary, ["repaired post failed the format gate"] + fmt_violations
     try:
-        r3 = _with_pack_check(run_factcheck(repaired, cfg, link_cache=cache, verdict_cache=verdicts),
+        r3 = _with_pack_check(run_factcheck(repaired, cfg, link_cache=cache, verdict_cache=verdicts,
+                                            editor_cache=edits if edits is not None else {}),
                               repaired, cfg, pack)
     except Exception as e:
         msg = f"factcheck gate error (post HELD, never published unchecked): {type(e).__name__}: {e}"
@@ -672,6 +768,13 @@ def run_brand(
             held["factcheck"] = factcheck
         if research is not None:
             held["research"] = research
+        # HUMAN-FINISH MODE (on_hold: draft_pr). The held post is kept as a
+        # GitHub DRAFT pull request with a NEEDS EDITOR worklist, instead of
+        # being thrown away. It is still a HOLD: this function returns here, so
+        # nothing below (images, merge, check-off, social) can ever run for it.
+        if str(cfg.get("on_hold") or "hold").strip().lower() == "draft_pr":
+            held.update(_held_draft_pr(cfg, post, violations, factcheck, research, pack,
+                                       _assemble, fmt, date_str, token))
         return held
 
     slug = post["slug"]

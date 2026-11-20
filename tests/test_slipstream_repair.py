@@ -492,19 +492,19 @@ def test_copies_must_get_the_same_fix():
 def test_too_many_failing_sentences_skips_repair():
     llm = mock.Mock()
     cfg = dict(CFG, factcheck=dict(CFG["factcheck"], repair_max_fail_ratio=1 / 3))
-    out = rp.repair_post(POST, gate_result(POST, *std_fails(), claims=6), cfg, pack=PACK, llm=llm)
+    out = rp.repair_post(POST, gate_result(POST, *std_fails(), claims=5), cfg, pack=PACK, llm=llm)
     llm.assert_not_called()
     assert out["ran"] is False and out["ok"] is False and out["post"] is POST
-    assert out["skipped"] == ("3 failing sentences against 6 judged claims is more than the repair limit "
-                              "(33%); a post this far off is held, not patched")
-    ok = rp.repair_post(POST, gate_result(POST, *std_fails(), claims=9), cfg, pack=PACK, llm=fields_llm(good_edits()))
+    assert out["skipped"] == ("2 sentences with a failing claim against 5 judged claims is more than the "
+                              "repair limit (33%); a post this far off is held, not patched")
+    ok = rp.repair_post(POST, gate_result(POST, *std_fails(), claims=6), cfg, pack=PACK, llm=fields_llm(good_edits()))
     assert ok["ok"] is True, "exactly a third is still repairable"
 
 
 def test_threshold_falls_back_to_sentences_when_no_claim_was_judged():
     cfg = dict(CFG, factcheck=dict(CFG["factcheck"], repair_max_fail_ratio=0.1))
     out = rp.repair_post(POST, gate_result(POST, *std_fails(), claims=0), cfg, pack=PACK, llm=mock.Mock())
-    assert "failing sentences against" in out["skipped"] and "sentences is more than" in out["skipped"]
+    assert "sentences with a failing claim against" in out["skipped"] and "sentences is more than" in out["skipped"]
 
 
 @pytest.mark.parametrize("rid", ["answers_title", "concrete_specific"])
@@ -596,6 +596,10 @@ def test_an_editor_fail_about_the_whole_post_names_no_sentence():
 # carry-forward of verified sentences
 # ---------------------------------------------------------------------------
 
+def _supported(cache):
+    return {k: v for k, v in cache.items() if isinstance(v, list)}
+
+
 CLEAN = dict(POST, body_mdx=f"<AnswerFirst>{GOOD}</AnswerFirst>\n\nStart with the systems you already own. {NAV}",
              social={"linkedin": "Read the post."})
 
@@ -603,16 +607,18 @@ CLEAN = dict(POST, body_mdx=f"<AnswerFirst>{GOOD}</AnswerFirst>\n\nStart with th
 def test_a_supported_sentence_is_not_judged_again_while_it_is_identical():
     cache, seen = {}, []
     r1 = gate(CLEAN, [supported(CLEAN, "Dealers must keep")], cache=cache, seen=seen)
-    assert r1["ok"] is True and len(cache) == 1 and r1["counts"]["claims_carried"] == 0
-    # second pass: the verifier now (wrongly) rejects it. It is never asked.
-    flip = [{**supported(CLEAN, "Dealers must keep"), "verdict": "NOT_SUPPORTED", "quote": ""}]
+    assert r1["ok"] is True and len(_supported(cache)) == 1 and r1["counts"]["claims_carried"] == 0
+    # second pass on a new line added to the post: the verifier would now (wrongly)
+    # reject the old sentence. It is never shown it.
+    added = dict(CLEAN, body_mdx=CLEAN["body_mdx"] + "\n\nCheck the list each quarter.")
+    flip = [{**supported(added, "Dealers must keep"), "verdict": "NOT_SUPPORTED", "quote": ""}]
     seen.clear()
-    r2 = gate(CLEAN, flip, cache=cache, seen=seen)
+    r2 = gate(added, flip, cache=cache, seen=seen)
     verifier_prompt = seen[0][1]
     assert seen[0][0] == fc.VERIFIER_SYSTEM
     assert "Dealers must keep a written inventory of the customer data they hold. LINKS" not in verifier_prompt
-    assert "Start with the systems you already own." in verifier_prompt, "unjudged sentences are still sent"
-    assert r2["ok"] is True and r2["counts"]["claims_carried"] == 1 and r2["carried"] == 1
+    assert "Check the list each quarter." in verifier_prompt, "a new sentence is judged"
+    assert r2["ok"] is True and r2["counts"]["claims_carried"] == 1
     assert r2["claims"][0]["verdict"] == "SUPPORTED" and r2["claims"][0]["carried"] is True
     assert f"=== SOURCE {SRC} ===" not in verifier_prompt, "a source no remaining sentence can use is not resent"
 
@@ -630,7 +636,7 @@ def test_carried_verdict_is_dropped_the_moment_the_sentence_changes():
     changed = dict(CLEAN, body_mdx=CLEAN["body_mdx"].replace("of the customer data they hold", "of all customer data"))
     r = gate(changed, [], cache=cache, seen=seen)
     assert "Dealers must keep a written inventory of all customer data." in seen[0][1]
-    assert r["counts"]["claims_carried"] == 0 and r["carried"] == 0
+    assert r["counts"]["claims_carried"] == 0
 
 
 def test_carried_verdict_is_dropped_the_moment_the_link_changes():
@@ -643,7 +649,7 @@ def test_carried_verdict_is_dropped_the_moment_the_link_changes():
         return R(200, "<p>" + "Something else entirely. " * 40 + "</p>") if url == other else http(url)
     r = fc.run_gate(relinked, CFG, http_get=http2, facts_text="", verdict_cache=cache,
                     llm=lambda s, u: (seen.append(u) or {"claims": []}) if s == fc.VERIFIER_SYSTEM else editor_reply())
-    assert f"LINKS: {other}" in seen[0] and r["carried"] == 0
+    assert f"LINKS: {other}" in seen[0] and r["counts"]["claims_carried"] == 0
 
 
 def test_carried_verdict_is_dropped_when_the_source_no_longer_holds_the_quote():
@@ -654,7 +660,7 @@ def test_carried_verdict_is_dropped_when_the_source_no_longer_holds_the_quote():
         return R(200, "<p>" + "The page was rewritten. " * 40 + "</p>") if url == SRC else http(url)
     r = fc.run_gate(CLEAN, CFG, http_get=http2, facts_text="", verdict_cache=cache,
                     llm=lambda s, u: (seen.append(u) or {"claims": []}) if s == fc.VERIFIER_SYSTEM else editor_reply())
-    assert "Dealers must keep a written inventory" in seen[0] and r["carried"] == 0
+    assert "Dealers must keep a written inventory" in seen[0] and r["counts"]["claims_carried"] == 0
 
 
 def test_a_sentence_with_any_unsupported_claim_is_never_carried_and_a_later_fail_evicts_it():
@@ -662,13 +668,13 @@ def test_a_sentence_with_any_unsupported_claim_is_never_carried_and_a_later_fail
     two = [supported(CLEAN, "Dealers must keep"),
            {**supported(CLEAN, "Dealers must keep"), "claim": "second", "verdict": "UNVERIFIABLE", "quote": ""}]
     gate(CLEAN, two, cache=cache)
-    assert cache == {}
+    assert _supported(cache) == {}
     gate(CLEAN, [supported(CLEAN, "Dealers must keep")], cache=cache)
-    assert len(cache) == 1
+    assert len(_supported(cache)) == 1
     made_up = [{**supported(CLEAN, "Dealers must keep"), "quote": "A passage the page does not contain at all."}]
     fresh = {}
     gate(CLEAN, made_up, cache=fresh)
-    assert fresh == {}, "a SUPPORTED verdict whose quote code could not find is not remembered"
+    assert _supported(fresh) == {}, "a SUPPORTED verdict whose quote code could not find is not remembered"
 
 
 def test_when_every_judged_sentence_is_carried_the_verifier_is_not_called():
@@ -928,7 +934,7 @@ def test_real_repair_and_real_gate_end_to_end_through_run_brand(monkeypatch):
     assert "fined" not in body and "The truth is" not in body and "Start with the systems you already own." in body
     assert "### Repair pass" in published["body"]
     assert f["counts"]["claims_carried"] >= 1
-    assert "Dealers must keep a written inventory" not in verifier_calls[-1], "carried sentences are not re-judged"
+    assert len(verifier_calls) == 2, "the final pass ran on carried verdicts; the verifier was not asked a third time"
 
 
 def test_opted_out_brand_never_reaches_the_repair_pass():

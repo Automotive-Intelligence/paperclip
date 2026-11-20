@@ -35,6 +35,10 @@ factcheck:
     repair_max_fail_ratio: 0.34
     # HOLD if a repair leaves the body under this many words.
     repair_min_words: 600
+    # Sentences that fail ONLY an editor style rule are counted on their own,
+    # against this larger share of the judged claims (style lines are cheap to
+    # reword or cut; failed claims are not).
+    repair_max_style_ratio: 0.75
     # Tokens that look like numbers but are not statistics.
     figure_allowlist: ["24/7"]
     banned:
@@ -238,6 +242,12 @@ zernio_accounts:
     facebook: "6a67e85911e357f89d7e4155"
     instagram: "6a67e8e011e357f89d7e4722"
 
+# HUMAN-FINISH MODE, per brand: `on_hold: draft_pr` (default `hold`, and NOT set
+# for any brand below). With it, a post the gate HOLDS is not thrown away: the
+# engine opens a GitHub DRAFT pull request titled "[NEEDS EDITOR] ..." whose body
+# lists every failing sentence, the rule it broke and the quote it cites, so a
+# person can finish it by hand. It is still a HOLD: never auto-merged (whatever
+# auto_merge says), no images bought, no topic check-off, no social.
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence

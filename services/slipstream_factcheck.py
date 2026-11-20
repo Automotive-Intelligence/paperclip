@@ -91,6 +91,9 @@ def resolve_factcheck_cfg(full_cfg: Dict[str, Any], brand_key: str) -> Dict[str,
         "repair_pass": _pick(brand, defaults, "repair_pass", True) is not False,
         "repair_max_fail_ratio": _num(_pick(brand, defaults, "repair_max_fail_ratio", None), 1 / 3),
         "repair_min_words": int(_num(_pick(brand, defaults, "repair_min_words", None), 600)),
+        # Editor STYLE lines are counted on their own, against a larger limit:
+        # a style line is cheap to reword or cut, a failed claim is not.
+        "repair_max_style_ratio": _num(_pick(brand, defaults, "repair_max_style_ratio", None), 0.75),
     }
 
 
@@ -921,6 +924,22 @@ def verdict_key(unit: Unit) -> Tuple[str, Tuple[str, ...], str]:
     return (unit.text, tuple(unit.links), unit.where)
 
 
+NO_CLAIM = "NO_CLAIM"       # cache value: the verifier was shown this sentence and listed no claim
+
+
+def remember_no_claims(cache: Dict[Any, Any], units: List[Unit], shown_ids: set,
+                       records: List[Dict[str, Any]]) -> None:
+    """A sentence the verifier was SHOWN and listed no checkable claim for is
+    remembered as such, the same way a SUPPORTED one is. Without this, an
+    untouched sentence could be read as 'no claim' on one pass and as a failing
+    claim on the next (two did, on 2026-11-19). Keyed on the exact text and
+    links, so any change is judged fresh."""
+    judged = {r.get("sentence_id") for r in records}
+    for u in units:
+        if u.uid in shown_ids and u.uid not in judged and verdict_key(u) not in cache:
+            cache[verdict_key(u)] = NO_CLAIM
+
+
 def remember_verdicts(cache: Dict[Any, List[Dict[str, Any]]], units: List[Unit],
                       records: List[Dict[str, Any]]) -> None:
     """Store sentences whose EVERY judged claim is SUPPORTED. A sentence with
@@ -951,7 +970,10 @@ def carry_forward(cache: Optional[Dict[Any, List[Dict[str, Any]]]], units: List[
     carried: List[Dict[str, Any]] = []
     for u in units:
         recs = cache.get(verdict_key(u))
-        if not recs:
+        if recs == NO_CLAIM:
+            skip.add(u.uid)           # seen before, unchanged, no claim: not shown again
+            continue
+        if not recs or not isinstance(recs, list):
             continue
         ok = True
         for r in recs:
@@ -984,7 +1006,9 @@ EDITOR_RUBRIC: List[Tuple[str, str, bool]] = [
                           "from a generic search result (a sourced number, a named system, a real "
                           "process detail from doing the work).", True),
     ("no_filler_or_hype", "There is no filler or hype: no padding, no sentence that only restates "
-                          "its heading, no inflated or sales-pitch line.", False),
+                          "its heading, no inflated or sales-pitch line. (A plain brand pitch or "
+                          "call-to-action sentence that meets the pitch_within_rules item is NOT "
+                          "hype; do not fail it here.)", False),
     ("no_unsupported_absolutes", "No factual sentence leans on an absolute or frequency word "
                                  "('most', 'never', 'always', 'none', 'every', 'usually') without a "
                                  "source link in that sentence.", False),
@@ -993,8 +1017,27 @@ EDITOR_RUBRIC: List[Tuple[str, str, bool]] = [
     ("no_em_dashes", "There are no em-dashes anywhere.", False),
     ("operator_voice", "It reads like an operator who does this work wrote it: specific and plain, "
                        "no template phrasing, no outsider framing such as 'the vendor' or 'most "
-                       "agencies'.", False),
+                       "agencies'. (A plain brand pitch or call-to-action sentence that meets the "
+                       "pitch_within_rules item is acceptable; do not fail it here.)", False),
 ]
+_PITCH_RULE = [
+    # What the brand's OWN pitch or call-to-action sentence may say, written down
+    # so the editor judges it against a rule and not taste. The banned-content
+    # rules are separate code checks and apply to these sentences like any other.
+    ("pitch_within_rules", "Every sentence that pitches the brand or invites the reader to contact "
+                           "it stays inside this rule: it may name the service and invite the "
+                           "reader to get in touch, book a call or read a page of the brand's "
+                           "site. It may NOT state a result, a number, a price, a timeline or a "
+                           "capability, unless that line is marked [link] or the statement is in "
+                           "APPROVED BRAND FACTS. A post with no pitch sentence passes.", False),
+]
+EDITOR_RUBRIC[-1:-1] = _PITCH_RULE          # operator_voice stays the last item
+
+# Rubric items that are about individual LINES. Their verdict on an unchanged
+# line is carried between passes (see stabilize_editor). The other items judge
+# the post as a whole and are answered fresh every pass.
+EDITOR_LINE_RULES = ("no_filler_or_hype", "no_unsupported_absolutes", "no_invented_timelines",
+                     "operator_voice", "pitch_within_rules")
 
 EDITOR_SYSTEM = (
     "You are the editor for a blog post that a DIFFERENT AI model wrote. You are strict. A model "
@@ -1115,6 +1158,76 @@ def evaluate_editor(reply: Any, units: List[Unit],
     return violations, records
 
 
+def stabilize_editor(violations: List[str], records: List[Dict[str, Any]],
+                     failures: List[Dict[str, Any]], units: List[Unit],
+                     cache: Dict[Any, set]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Carry the editor's LINE verdicts between passes, so an unchanged line
+    cannot pass on one look and fail on the next (its count of failing lines
+    moved between two identical calls on 2026-11-19).
+
+    `cache` maps a line (exact text + links) to the set of line rules it failed
+    when the editor last judged it; an empty set means it was judged clean.
+      * an unchanged line that was clean for a rule cannot be newly failed on it;
+      * an unchanged line that failed a rule still fails it, named or not;
+      * a new or changed line is judged fresh, and so are the whole-post items.
+    Returns the adjusted (violations, failures) and updates records and cache."""
+    by_id = {u.uid: u for u in units}
+    questions = {rid: q for rid, q, _n in EDITOR_RUBRIC}
+    rec_by_id = {r["id"]: r for r in records}
+    shown = [u for u in units if not (u.surface == "meta" and u.where != "title")]
+    out_fail = [f for f in failures if f["rule"].split(":", 1)[-1] not in EDITOR_LINE_RULES]
+    out_viol = list(violations)
+    for rid in EDITOR_LINE_RULES:
+        rule = f"editor:{rid}"
+        mine = [f for f in failures if f["rule"] == rule]
+        named = [f for f in mine if f["uid"] in by_id]
+        whole_post = [f for f in mine if f["uid"] not in by_id]      # a fail that names no line
+        keep: List[Dict[str, Any]] = []
+        for f in named:
+            before = cache.get(verdict_key(by_id[f["uid"]]))
+            if before is not None and rid not in before:
+                continue                      # judged clean before, unchanged: stays clean
+            keep.append(f)
+        kept_ids = {f["uid"] for f in keep}
+        old = next((v for v in out_viol if v.startswith(f"editor: {rid} ")), None)
+        for u in shown:
+            before = cache.get(verdict_key(u))
+            if before and rid in before and u.uid not in kept_ids:
+                msg = old or f'editor: {rid} FAIL ({questions[rid]}) evidence: "{_short(u.text)}"'
+                _fail(keep, u, rule, msg, carried=True)
+                kept_ids.add(u.uid)
+        remaining = keep + whole_post
+        if remaining:
+            first = by_id.get(remaining[0]["uid"])
+            msg = old if old and (whole_post or any(_short(by_id[f["uid"]].text) in old for f in keep
+                                                    if f["uid"] in by_id)) else (
+                f'editor: {rid} FAIL ({questions[rid]}) evidence: "{_short(first.text if first else "")}"')
+            for f in remaining:
+                f["violation"] = msg
+            if old:
+                out_viol[out_viol.index(old)] = msg
+            else:
+                out_viol.append(msg)
+            if rid in rec_by_id:
+                rec_by_id[rid]["pass"] = False
+                rec_by_id[rid]["sentence_ids"] = [f["uid"] for f in keep]
+        elif old:
+            out_viol.remove(old)              # every line it named had already been judged clean
+            if rid in rec_by_id:
+                rec_by_id[rid]["pass"] = True
+                rec_by_id[rid]["sentence_ids"] = []
+                rec_by_id[rid]["carried_clean"] = True
+        out_fail.extend(remaining)
+    failing: Dict[str, set] = {}
+    for f in out_fail:
+        rid = f["rule"].split(":", 1)[-1]
+        if rid in EDITOR_LINE_RULES and f["uid"] in by_id:
+            failing.setdefault(f["uid"], set()).add(rid)
+    for u in shown:
+        cache[verdict_key(u)] = set(failing.get(u.uid, set()))
+    return _dedupe(out_viol), out_fail
+
+
 # ----------------------------------------------------------------------------
 # Default LLM transport (a different model than the writer)
 # ----------------------------------------------------------------------------
@@ -1156,7 +1269,8 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
              link_cache: Optional[Dict[str, Fetched]] = None,
              use_llm: bool = True,
              skip_llm_on_deterministic_fail: bool = False,
-             verdict_cache: Optional[Dict[Any, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+             verdict_cache: Optional[Dict[Any, List[Dict[str, Any]]]] = None,
+             editor_cache: Optional[Dict[Any, set]] = None) -> Dict[str, Any]:
     """Run the whole gate on one generated post (either body shape).
 
     Returns {"ok", "violations", "error", "claims", "editor", "links", "counts",
@@ -1221,9 +1335,14 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
             out["carried"] = len(skip_ids)
             if verdict_cache is not None:
                 remember_verdicts(verdict_cache, units, out["claims"])
+                remember_no_claims(verdict_cache, units, {u.uid for u in to_judge}, out["claims"])
             ed_reply = llm(EDITOR_SYSTEM, build_editor_prompt(
                 post, units, facts, sourced_sentence_ids(out["claims"]) if block_format else None))
-            ed_v, out["editor"] = evaluate_editor(ed_reply, units, failures)
+            ed_sink: List[Dict[str, Any]] = []
+            ed_v, out["editor"] = evaluate_editor(ed_reply, units, ed_sink)
+            if editor_cache is not None:
+                ed_v, ed_sink = stabilize_editor(ed_v, out["editor"], ed_sink, units, editor_cache)
+            failures.extend(ed_sink)
             out["llm_ran"] = True
         claims = out["claims"]
         counts.update({
@@ -1263,6 +1382,9 @@ def summarize(results: List[Dict[str, Any]], revised: bool) -> Dict[str, Any]:
         "counts": dict(last.get("counts") or {}),
         "first_pass_violations": len((results[0].get("violations") or [])) if results else 0,
         "claims": list(last.get("claims") or []),
+        # Which sentence broke which rule on the last pass: the human editor's
+        # worklist when a held post is kept as a draft.
+        "failures": [dict(f) for f in last.get("failures") or []],
     }
 
 

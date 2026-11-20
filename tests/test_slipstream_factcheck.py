@@ -49,6 +49,7 @@ def editor_ok(first_line, specific_line):
         {"id": "no_unsupported_absolutes", "pass": True, "evidence": ""},
         {"id": "no_invented_timelines", "pass": True, "evidence": ""},
         {"id": "no_em_dashes", "pass": True, "evidence": ""},
+        {"id": "pitch_within_rules", "pass": True, "evidence": ""},
         {"id": "operator_voice", "pass": True, "evidence": ""},
     ]}
 
@@ -537,7 +538,7 @@ def test_every_rubric_item_must_be_answered_or_the_post_holds():
 def test_rubric_covers_the_seven_required_items():
     assert [r[0] for r in fc.EDITOR_RUBRIC] == [
         "answers_title", "concrete_specific", "no_filler_or_hype", "no_unsupported_absolutes",
-        "no_invented_timelines", "no_em_dashes", "operator_voice"]
+        "no_invented_timelines", "no_em_dashes", "pitch_within_rules", "operator_voice"]
 
 
 # ------------------------------------------------------------------ kill-safe + model separation
