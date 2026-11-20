@@ -1004,3 +1004,44 @@ def test_the_model_is_warned_when_every_sentence_under_a_heading_is_failing():
     assert set(sole.values()) == {"What next?"} and len(sole) == 2
     one = dict(list(targets.items())[:1])
     assert rp.sole_body_fields(conts, one) == {}
+
+
+def test_the_model_is_warned_before_deleting_the_only_required_component():
+    """Found on the second live repair: the post's only PullQuote was flagged
+    as filler, the model deleted it, and the format gate held the post."""
+    post = dict(POST, body_mdx=MDX + f"\n\n<PullQuote>{FILLER}</PullQuote>")
+    units = [u for c in rp.containers(post) for u in c.units if u.text == FILLER]
+    f = {"uid": units[1].uid, "where": units[1].where, "surface": units[1].surface, "text": FILLER,
+         "rule": "editor:no_filler_or_hype", "violation": "editor: no_filler_or_hype FAIL"}
+    pq = next(c.cid for c in rp.containers(post) if c.raw.startswith("<PullQuote>"))
+    seen = []
+    rp.repair_post(post, gate_result(post, f), CFG, pack=PACK, llm=fields_llm({pq: ""}, seen))
+    assert "REQUIRED ELEMENT WARNING: this field is the post's only <PullQuote>" in seen[0]
+    assert "do not delete it" in seen[0]
+    two = dict(post, body_mdx=post["body_mdx"] + "\n\n<PullQuote>Another one.</PullQuote>")
+    seen2 = []
+    units2 = [u for c in rp.containers(two) for u in c.units if u.text == FILLER]
+    f2 = dict(f, uid=units2[1].uid)
+    rp.repair_post(two, gate_result(two, f2), CFG, pack=PACK, llm=fields_llm({}, seen2))
+    assert "REQUIRED ELEMENT WARNING" not in seen2[0], "a second PullQuote means this one may go"
+    # block format: the only quote block
+    conts = rp.containers(BLOCK_POST)
+    q = next(c for c in conts if c.path == ("body", 9, "text"))
+    assert rp.sole_required_fields(BLOCK_POST, conts, {u.uid: [] for u in q.units}) == {q.cid: "'quote' block"}
+    assert rp.sole_required_fields(BLOCK_POST, conts, {}) == {}
+
+
+def test_change_record_pairs_a_rewrite_with_the_sentence_it_came_from():
+    """Two failing neighbours: the first is deleted, the second reworded. The
+    record must not call the first one 'rewritten' into the second's text."""
+    a = "See the report for the full detail on penalties this year."
+    b = "A review can walk through this against your own numbers before you change anything."
+    post = dict(POST, body_mdx=MDX.replace(FILLER, f"{a} {b}"))
+    fails = [failure(post, "See the report"), failure(post, "A review can walk")]
+    new_b = "A review can look at your own numbers before you change anything."
+    out = run(post=post, fails=fails,
+              edits={cid(post, "See the report"): f"{new_b} List each system and who can open it. {NAV}"})
+    assert out["ok"] is True, out["violations"]
+    by_before = {c["before"]: c for c in out["changes"]}
+    assert by_before[a]["action"] == "deleted" and by_before[a]["after"] == ""
+    assert by_before[b]["action"] == "rewritten" and by_before[b]["after"] == new_b

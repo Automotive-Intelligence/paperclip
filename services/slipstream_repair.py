@@ -303,11 +303,45 @@ def sole_body_fields(conts: List[Container], targets: Dict[str, List[Dict[str, A
     return out
 
 
+_REQUIRED_MDX = ("AnswerFirst", "EntityDefinition", "PullQuote", "Callout")
+_REQUIRED_BLOCKS = ("answer", "definition", "callout", "quote")
+
+
+def sole_required_fields(post: Dict[str, Any], conts: List[Container],
+                         targets: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    """{field id: element name} for a failing field that holds the post's ONLY
+    instance of an element the format gate requires, where every sentence in it
+    is failing. Deleting it passes the sentence contract and then fails the
+    format gate. (Second live repair, 2026-11-19: the only PullQuote was
+    flagged as filler, the model deleted it, and the post held on
+    "missing required component: <PullQuote>".)"""
+    out: Dict[str, str] = {}
+    all_failing = lambda c: bool(c.units) and all(u.uid in targets for u in c.units)   # noqa: E731
+    if isinstance(post.get("body_mdx"), str):
+        body = post["body_mdx"]
+        for comp in _REQUIRED_MDX:
+            if len(re.findall(rf"<{comp}\b", body)) != 1:
+                continue
+            for c in conts:
+                if c.path[0] == "body_mdx" and re.search(rf"<{comp}\b", c.raw) and all_failing(c):
+                    out[c.cid] = f"<{comp}>"
+    elif isinstance(post.get("body"), list):
+        for t in _REQUIRED_BLOCKS:
+            idx = [i for i, b in enumerate(post["body"]) if isinstance(b, dict) and b.get("type") == t]
+            if len(idx) != 1:
+                continue
+            for c in conts:
+                if c.path[:2] == ("body", idx[0]) and c.path[-1] == "text" and all_failing(c):
+                    out[c.cid] = f"'{t}' block"
+    return out
+
+
 def build_repair_prompt(conts: List[Container], targets: Dict[str, List[Dict[str, Any]]],
                         groups: List[List[str]], pack: Optional[Dict[str, Any]], domain: str,
-                        post_level: List[str]) -> str:
+                        post_level: List[str], post: Optional[Dict[str, Any]] = None) -> str:
     group_of = {uid: f"G{i}" for i, g in enumerate(groups, 1) for uid in g}
     sole = sole_body_fields(conts, targets)
+    required = sole_required_fields(post, conts, targets) if post else {}
     lines = ["Repair ONLY the failing sentences in these fields.", ""]
     for c in conts:
         failing = [u for u in c.units if u.uid in targets]
@@ -318,6 +352,10 @@ def build_repair_prompt(conts: List[Container], targets: Dict[str, List[Dict[str
             lines.append(f'SECTION WARNING: every sentence under the heading "{sole[c.cid]}" is failing. '
                          "If you delete them all, the heading is left with no body and the whole repair "
                          "is thrown away. REWRITE at least one sentence of this section instead of deleting it.")
+        if c.cid in required:
+            lines.append(f"REQUIRED ELEMENT WARNING: this field is the post's only {required[c.cid]}, and the "
+                         "format requires one. If you empty or delete it the repaired post is held. REWRITE "
+                         "its sentence so it no longer breaks the rule; do not delete it.")
         lines.append("RAW TEXT:")
         lines.append(c.raw)
         for u in failing:
@@ -522,8 +560,18 @@ def check_contract(old: Dict[str, Any], new: Dict[str, Any], failing: Dict[str, 
         new_links = {h for u in n for h in u.links} - {h for u in o for h in u.links}
         if new_links:
             v.append(f"repair introduced a link the sentence did not have: {', '.join(sorted(new_links))}")
+        # Pair each new sentence with the old one it most resembles, so the
+        # reviewer's record says which sentence was rewritten and which was cut.
+        pairs: Dict[int, str] = {}
+        free = list(range(len(o)))
+        for nu in n:
+            if not free:
+                break
+            best = max(free, key=lambda k: difflib.SequenceMatcher(None, o[k].text, nu.text).ratio())
+            pairs[best] = nu.text
+            free.remove(best)
         for k, u in enumerate(o):
-            after = n[k].text if k < len(n) else ""
+            after = pairs.get(k, "")
             status[u.uid] = "rewritten" if after else "deleted"
             changes.append({"action": status[u.uid], "where": u.where, "before": u.text,
                             "after": after, "rules": rules(u)})
@@ -576,7 +624,7 @@ def repair_post(post: Dict[str, Any], gate_result: Dict[str, Any], cfg: Dict[str
         groups = group_copies([u for u in units if u.uid in targets])
         domain = (cfg or {}).get("domain", "")
         _, post_level = fc.extract_post(post)
-        prompt = build_repair_prompt(conts, targets, groups, pack, domain, post_level)
+        prompt = build_repair_prompt(conts, targets, groups, pack, domain, post_level, post)
         out["ran"] = True
         reply = (llm or default_llm())(REPAIR_SYSTEM, prompt)
         if not isinstance(reply, dict) or not isinstance(reply.get("fields"), list):
