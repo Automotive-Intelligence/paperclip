@@ -8,6 +8,7 @@ services/slipstream_validate.validate_post before anything publishes.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -24,6 +25,19 @@ import requests
 _API_URL = "https://api.anthropic.com/v1/messages"
 _MODEL = os.getenv("SLIPSTREAM_CLAUDE_MODEL", "claude-sonnet-5")
 _MAX_TOKENS = 8000
+# With a source pack the prompt is much longer and the writer reasons over it
+# before answering. At 8000 the 2026-11-15 dry run spent the whole budget on
+# reasoning and returned no text (stop_reason=max_tokens). Used ONLY for a run
+# that has a pack, so a brand that does not research keeps the old request.
+_MAX_TOKENS_WITH_PACK = 16000
+_TIMEOUT_WITH_PACK_S = 420
+# A revision reads the whole post, the violation list and the pack, reasons
+# over all of it, and must return the WHOLE post again. Measured 2026-11-15:
+# three revisions returned nothing at 8000, and one used 11,993 of 16,000. So a
+# revision gets real headroom, and an empty reply at the limit is not retried.
+# Only gated brands ever revise; a brand opted out of the gate never gets here.
+_MAX_TOKENS_REVISE = 32000
+_TIMEOUT_REVISE_S = 900
 
 _REQUIRED_FIELDS = ("title", "description", "slug", "body_mdx", "image_prompts", "social")
 # ts_posts_array (Worship Digital): a structured block array instead of an MDX string.
@@ -39,6 +53,48 @@ logger = logging.getLogger(__name__)
 
 class GenerationError(Exception):
     pass
+
+
+class EmptyAtLimit(GenerationError):
+    """The model used its whole output budget and returned no text
+    (stop_reason=max_tokens). Retrying the same request at the same limit only
+    pays for the same failure again."""
+
+
+# In-memory record of the model calls this process made (model, tokens, web
+# searches). The dry-run script reads it to report what a run cost. Bounded, so
+# a long-lived service never grows it without limit.
+USAGE_LOG: List[Dict[str, Any]] = []
+
+
+def note_usage(model: str, usage: Dict[str, Any], surface: str, *,
+               request_id: Optional[str] = None, web_searches: int = 0) -> None:
+    """Meter one Messages API call: the spend ledger plus USAGE_LOG. Never
+    raises: a ledger failure must not break a post."""
+    u = usage or {}
+    try:
+        USAGE_LOG.append({"model": model, "surface": surface,
+                          "input_tokens": int(u.get("input_tokens") or 0),
+                          "output_tokens": int(u.get("output_tokens") or 0),
+                          "cache_creation_tokens": int(u.get("cache_creation_input_tokens") or 0),
+                          "cache_read_tokens": int(u.get("cache_read_input_tokens") or 0),
+                          "web_searches": int(web_searches or 0)})
+        del USAGE_LOG[:-500]
+    except Exception:
+        pass
+    try:
+        from services.llm_ledger import record_usage
+        record_usage(
+            model,
+            input_tokens=int(u.get("input_tokens") or 0),
+            output_tokens=int(u.get("output_tokens") or 0),
+            cache_creation_tokens=int(u.get("cache_creation_input_tokens") or 0),
+            cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
+            persona="slipstream", surface=surface,
+            request_id=request_id,
+        )
+    except Exception:
+        pass
 
 
 def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
@@ -79,23 +135,12 @@ def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
     # Meter it. This engine is the fleet's largest LLM spender and, until
     # 2026-08-30, wrote nothing to the ledger -- the daily spend email read
     # "$0.00" against real burn. Never lets a ledger failure break a post.
-    try:
-        from services.llm_ledger import record_usage
-        u = j.get("usage") or {}
-        record_usage(
-            j.get("model") or model,
-            input_tokens=int(u.get("input_tokens") or 0),
-            output_tokens=int(u.get("output_tokens") or 0),
-            cache_creation_tokens=int(u.get("cache_creation_input_tokens") or 0),
-            cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
-            persona="slipstream", surface=surface,
-            request_id=j.get("id"),
-        )
-    except Exception:
-        pass
+    note_usage(j.get("model") or model, j.get("usage") or {}, surface, request_id=j.get("id"))
     text = "".join(b.get("text") or "" for b in (j.get("content") or [])
                    if b.get("type") == "text").strip()
     if not text:
+        if j.get("stop_reason") == "max_tokens":
+            raise EmptyAtLimit(f"empty LLM response (stop_reason=max_tokens, max_tokens={max_tokens})")
         raise GenerationError(f"empty LLM response (stop_reason={j.get('stop_reason')})")
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
@@ -112,13 +157,32 @@ def _llm_json_once(system: str, user: str, *, model: Optional[str] = None,
         raise GenerationError(f"model did not return valid JSON: {e}")
 
 
-def _llm_json(system: str, user: str, *, retries: int = 2) -> Dict[str, Any]:
+# Set by revise_post around its one call, so _llm_json keeps the plain
+# (system, user) signature every caller and test already uses.
+_REVISING: contextvars.ContextVar = contextvars.ContextVar("slipstream_revising", default=False)
+
+
+def _llm_json(system: str, user: str, *, retries: int = 2,
+              with_pack: bool = False) -> Dict[str, Any]:
     """Retry the LLM call on transient errors / malformed JSON (models
     occasionally return finish_reason=error or a JSON syntax slip)."""
     last: Exception = GenerationError("no attempt")
+    revise = bool(_REVISING.get())
     for attempt in range(retries + 1):
         try:
+            if revise:
+                return _llm_json_once(system, user, max_tokens=_MAX_TOKENS_REVISE,
+                                      timeout=_TIMEOUT_REVISE_S)
+            if with_pack:
+                return _llm_json_once(system, user, max_tokens=_MAX_TOKENS_WITH_PACK,
+                                      timeout=_TIMEOUT_WITH_PACK_S)
             return _llm_json_once(system, user)
+        except EmptyAtLimit:
+            if revise:
+                raise                      # same request, same limit, same result: do not pay again
+            last = GenerationError("empty LLM response (stop_reason=max_tokens)")
+            logger.warning("[slipstream] LLM attempt %d/%d returned nothing at the token limit",
+                           attempt + 1, retries + 1)
         except GenerationError as e:
             last = e
             logger.warning("[slipstream] LLM attempt %d/%d failed: %s", attempt + 1, retries + 1, e)
@@ -273,11 +337,24 @@ def _system_prompt_ts(brand_cfg: Dict[str, Any]) -> str:
     )
 
 
-def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
+def _pack_block(pack: Optional[Dict[str, Any]], block_format: bool) -> str:
+    """The verified source pack as prompt text, or '' when the brand does not
+    research before writing (then every prompt is exactly what it was before)."""
+    if pack is None:
+        return ""
+    from services.slipstream_research import pack_prompt
+    return pack_prompt(pack, block_format)
+
+
+def _generate_post_ts(brand_cfg: Dict[str, Any], topic: str,
+                      pack: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Generate one post as a structured block array. Raises GenerationError on a
     malformed result. The Post is assembled + gated (validate_blocks) downstream."""
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user))
+    if pack is None:
+        return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user))
+    return _check_shape_ts(_llm_json(_system_prompt_ts(brand_cfg), user + _pack_block(pack, True),
+                                     with_pack=True))
 
 
 def _check_shape_ts(post: Dict[str, Any]) -> Dict[str, Any]:
@@ -300,16 +377,25 @@ def _check_shape_ts(post: Dict[str, Any]) -> Dict[str, Any]:
     return post
 
 
-def generate_post(brand_cfg: Dict[str, Any], topic: str) -> Dict[str, Any]:
+def generate_post(brand_cfg: Dict[str, Any], topic: str,
+                  pack: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Generate one structured post for `topic`. Raises GenerationError on a
     malformed result. Dispatches on the brand's output format: the default MDX path
     returns body_mdx; the ts_posts_array path (WD) returns a structured block array.
-    Assembled + gated downstream."""
+    Assembled + gated downstream.
+
+    `pack` is the verified source pack from services/slipstream_research. With a
+    pack, the writer may cite only its sources and use only its figures. With
+    pack=None (a brand that does not research, e.g. Paper & Purpose) the prompt
+    is byte-for-byte what it was before research existed."""
     if brand_cfg.get("format") in _BLOCK_FORMATS:
-        return _generate_post_ts(brand_cfg, topic)
+        return _generate_post_ts(brand_cfg, topic, pack)
 
     user = f"Write the post for this topic: {topic}\nReturn only the JSON object."
-    return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user))
+    if pack is None:
+        return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user))
+    return _check_shape_mdx(_llm_json(_system_prompt(brand_cfg), user + _pack_block(pack, False),
+                                      with_pack=True))
 
 
 def _check_shape_mdx(post: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,12 +414,13 @@ def _check_shape_mdx(post: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def revise_post(brand_cfg: Dict[str, Any], topic: str, post: Dict[str, Any],
-                violations: List[str]) -> Dict[str, Any]:
+                violations: List[str], pack: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """ONE revision pass by the WRITER model, driven by the fact-check gate's
     violation list. The engine calls this at most once per run, then reruns the
     whole gate; a post that still fails is HELD. Cutting an unsupported claim is
     always an acceptable fix, and the slug and image prompts are pinned so the
-    revision cannot change what gets committed where."""
+    revision cannot change what gets committed where. The revision gets the
+    SAME source pack as the first draft, so it cannot introduce a new source."""
     block = brand_cfg.get("format") in _BLOCK_FORMATS
     system = _system_prompt_ts(brand_cfg) if block else _system_prompt(brand_cfg)
     user = (
@@ -350,8 +437,17 @@ def revise_post(brand_cfg: Dict[str, Any], topic: str, post: Dict[str, Any],
         "VIOLATIONS:\n" + "\n".join(f"- {v}" for v in violations) + "\n\n"
         "THE POST YOU WROTE (JSON):\n" + json.dumps(post, ensure_ascii=False) + "\n\n"
         "Return only the corrected JSON object."
+        + ("" if pack is None else
+           "\n\nThe ONE exception to 'no new source link': you may fix a violation by linking a "
+           "source from the verified pack below whose quote states the claim. Nothing outside "
+           "the pack.")
+        + _pack_block(pack, block)
     )
-    revised = _llm_json(system, user)
+    token = _REVISING.set(True)
+    try:
+        revised = _llm_json(system, user)
+    finally:
+        _REVISING.reset(token)
     revised = _check_shape_ts(revised) if block else _check_shape_mdx(revised)
     revised["slug"] = post["slug"]
     revised["image_prompts"] = post["image_prompts"]

@@ -86,7 +86,27 @@ def resolve_factcheck_cfg(full_cfg: Dict[str, Any], brand_key: str) -> Dict[str,
         "figure_allowlist": list(defaults.get("figure_allowlist") or [])
                             + list(brand.get("figure_allowlist") or []),
         "facts_file": brand.get("facts_file") or f"config/slipstream_facts/{brand_key}.md",
+        # Targeted repair after a revision that still fails (services/slipstream_repair).
+        # ON unless a literal `false`; a brand entry overrides the default.
+        "repair_pass": _pick(brand, defaults, "repair_pass", True) is not False,
+        "repair_max_fail_ratio": _num(_pick(brand, defaults, "repair_max_fail_ratio", None), 1 / 3),
+        "repair_min_words": int(_num(_pick(brand, defaults, "repair_min_words", None), 600)),
+        # Editor STYLE lines are counted on their own, against a larger limit:
+        # a style line is cheap to reword or cut, a failed claim is not.
+        "repair_max_style_ratio": _num(_pick(brand, defaults, "repair_max_style_ratio", None), 0.75),
     }
+
+
+def _pick(brand: Dict[str, Any], defaults: Dict[str, Any], key: str, fallback: Any) -> Any:
+    if key in brand and brand[key] is not None:
+        return brand[key]
+    if key in defaults and defaults[key] is not None:
+        return defaults[key]
+    return fallback
+
+
+def _num(value: Any, fallback: float) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
 
 
 def parse_facts(raw: str) -> str:
@@ -298,6 +318,23 @@ def extract_post(post: Dict[str, Any]) -> Tuple[List[Unit], List[str]]:
 
 
 # ----------------------------------------------------------------------------
+# Structured failures
+# ----------------------------------------------------------------------------
+# Every check below also reports WHICH sentence broke WHICH rule into an
+# optional `sink` list, next to the human-readable violation string. The
+# targeted repair pass (services/slipstream_repair) works from these; nothing
+# about the verdicts themselves depends on them.
+
+def _fail(sink: Optional[List[Dict[str, Any]]], unit: Optional[Unit], rule: str, violation: str,
+          **extra: Any) -> None:
+    if sink is None:
+        return
+    sink.append({"uid": unit.uid if unit else "", "where": unit.where if unit else "",
+                 "surface": unit.surface if unit else "", "text": unit.text if unit else "",
+                 "rule": rule, "violation": violation, **extra})
+
+
+# ----------------------------------------------------------------------------
 # Links
 # ----------------------------------------------------------------------------
 
@@ -409,15 +446,19 @@ def _root_loads(url: str, http_get: Callable[[str], Any]) -> bool:
 
 
 def check_links(units: List[Unit], domain: str, http_get: Callable[[str], Any],
-                cache: Optional[Dict[str, Fetched]] = None) -> Tuple[List[str], Dict[str, Fetched]]:
+                cache: Optional[Dict[str, Fetched]] = None,
+                sink: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], Dict[str, Fetched]]:
     """Check every link in the post once. Returns (violations, {href: Fetched}).
     The map is keyed by the href exactly as written in the post."""
     cache = cache if cache is not None else {}
     violations: List[str] = []
     by_href: Dict[str, Fetched] = {}
+    bad: Dict[str, str] = {}
     for u in units:
         for href in u.links:
             if href in by_href:
+                if href in bad:
+                    _fail(sink, u, "link", bad[href], href=href)   # every sentence that carries it
                 continue
             resolved = resolve_link(href, domain)
             if not resolved:
@@ -426,15 +467,20 @@ def check_links(units: List[Unit], domain: str, http_get: Callable[[str], Any],
             if url not in cache:
                 cache[url] = check_link(url, http_get, internal)
             f = by_href[href] = cache[url]
+            msg = ""
             if internal:
                 if f.state != "live" or f.status != 200:
-                    violations.append(f"internal link does not return 200 on {domain} "
-                                      f"({f.detail or f.status}): {href}")
+                    msg = (f"internal link does not return 200 on {domain} "
+                           f"({f.detail or f.status}): {href}")
             elif f.state == "dead":
-                violations.append(f"dead source link ({f.detail}): {href}")
+                msg = f"dead source link ({f.detail}): {href}"
             elif f.state == "unchecked":
-                violations.append(f"could not check source link ({f.detail}): {href} "
-                                  "(remove the claim it supports or cite a source that loads)")
+                msg = (f"could not check source link ({f.detail}): {href} "
+                       "(remove the claim it supports or cite a source that loads)")
+            if msg:
+                violations.append(msg)
+                bad[href] = msg
+                _fail(sink, u, "link", msg, href=href)
     return violations, by_href
 
 
@@ -561,7 +607,8 @@ def _short(s: str, n: int = 170) -> str:
 
 
 def check_figures(units: List[Unit], fetched: Dict[str, Fetched], facts_text: str,
-                  post_sources: List[str], allowlist: Iterable[str] = ()) -> Tuple[List[str], Dict[str, int]]:
+                  post_sources: List[str], allowlist: Iterable[str] = (),
+                  sink: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], Dict[str, int]]:
     """The code check for 'a real link that does not say what the post claims'.
     A figure passes only if it is in the brand facts file, or it sits in a
     sentence with a source link whose FETCHED TEXT contains the same figure."""
@@ -593,6 +640,7 @@ def check_figures(units: List[Unit], fetched: Dict[str, Fetched], facts_text: st
                 unmatched += 1
                 violations.append(f'figure "{fig.raw}" has no source link in its sentence '
                                   f'and is not in the brand facts file: "{_short(u.text)}"')
+                _fail(sink, u, "figure", violations[-1])
                 continue
             if any((i := _idx(h)) is not None and figure_in(fig, i) for h in candidates):
                 verified.add(fig.key)
@@ -606,6 +654,7 @@ def check_figures(units: List[Unit], fetched: Dict[str, Fetched], facts_text: st
                 violations.append(f'figure "{fig.raw}" cannot be confirmed because its source '
                                   f'did not load or has no readable text ({", ".join(candidates)}): '
                                   f'"{_short(u.text)}"')
+            _fail(sink, u, "figure", violations[-1])
     for u in units:
         if u.surface != "secondary":
             continue
@@ -616,6 +665,7 @@ def check_figures(units: List[Unit], fetched: Dict[str, Fetched], facts_text: st
             unmatched += 1
             violations.append(f'figure "{fig.raw}" in the {u.where} is not a sourced, verified '
                               f'figure from the article body: "{_short(u.text)}"')
+            _fail(sink, u, "figure", violations[-1])
     return violations, {"figures_checked": checked, "figures_unmatched": unmatched}
 
 
@@ -623,7 +673,8 @@ def check_figures(units: List[Unit], fetched: Dict[str, Fetched], facts_text: st
 # Banned content
 # ----------------------------------------------------------------------------
 
-def check_banned(units: List[Unit], rules: List[Dict[str, Any]], facts_text: str = "") -> List[str]:
+def check_banned(units: List[Unit], rules: List[Dict[str, Any]], facts_text: str = "",
+                 sink: Optional[List[Dict[str, Any]]] = None) -> List[str]:
     """Per-brand banned content. A rule with `unless_in_facts: true` lets a
     sentence through only when that exact sentence is in the brand facts file
     (an approved founder experience, for example)."""
@@ -646,6 +697,7 @@ def check_banned(units: List[Unit], rules: List[Dict[str, Any]], facts_text: str
             violations.append(f"banned content [{rule.get('id', 'rule')}] "
                               f"{rule.get('label', '')} (matched \"{hit.group(0)}\" in {u.where}): "
                               f'"{_short(u.text)}"')
+            _fail(sink, u, "banned", violations[-1], banned_id=str(rule.get("id", "rule")))
     return violations
 
 
@@ -672,7 +724,7 @@ VERIFIER_SYSTEM = (
     "SOURCES.\n"
     '- kind "brand": a claim about the brand itself. It is SUPPORTED only if APPROVED BRAND '
     "FACTS states it, or a page of the brand's own site that is listed in that sentence's "
-    "LINKS states it.\n"
+    "LINKS, or under POST-LEVEL BRAND PAGES, states it.\n"
     "Verdicts:\n"
     '- "SUPPORTED": you MUST give "source" (the exact source URL, or the word facts) and '
     '"quote": a passage copied CHARACTER FOR CHARACTER from that source, 8 to 45 words, that '
@@ -687,16 +739,46 @@ VERIFIER_SYSTEM = (
 )
 
 
+def post_brand_pages(units: List[Unit], domain: str) -> List[str]:
+    """Internal hrefs of a block-format post's `links` block. Prose in that
+    format cannot carry a link, so these are the brand's own pages available to
+    every sentence, the same way the `sources` block is for outside claims."""
+    out: List[str] = []
+    for u in units:
+        if u.where != "links block":
+            continue
+        for href in u.links:
+            resolved = resolve_link(href, domain)
+            if resolved and resolved[1] and href not in out:
+                out.append(href)
+    return out
+
+
 def build_verifier_prompt(units: List[Unit], fetched: Dict[str, Fetched], facts_text: str,
-                          post_sources: List[str]) -> str:
+                          post_sources: List[str], brand_pages: Optional[List[str]] = None,
+                          skip_ids: Optional[set] = None) -> str:
+    """`skip_ids`: sentences whose verdict is carried forward from an earlier
+    pass (see carry_forward). They are left out, and so is any source no
+    remaining sentence can use, which keeps a later pass small."""
+    skip_ids = skip_ids or set()
+    if skip_ids:
+        usable = set(post_sources) | set(brand_pages or [])
+        for u in units:
+            if u.uid not in skip_ids:
+                usable.update(u.links)
+        fetched = {h: f for h, f in fetched.items() if h in usable}
     lines = ["POST SENTENCES (id, where it sits, text, links in that sentence):"]
     for u in units:
         if u.surface == "meta" and u.where not in ("title",):
+            continue
+        if u.uid in skip_ids:
             continue
         link_s = f" LINKS: {', '.join(u.links)}" if u.links else ""
         lines.append(f"{u.uid} [{u.where}] {u.text}{link_s}")
     lines.append("")
     lines.append("POST-LEVEL SOURCES: " + (", ".join(post_sources) if post_sources else "(none)"))
+    if brand_pages:
+        lines.append("POST-LEVEL BRAND PAGES: " + ", ".join(brand_pages))
     lines.append("")
     lines.append("APPROVED BRAND FACTS (the only allowed support for claims about the brand):")
     lines.append(facts_text.strip() if (facts_text or "").strip() else "(none on file)")
@@ -720,8 +802,52 @@ def build_verifier_prompt(units: List[Unit], fetched: Dict[str, Fetched], facts_
     return "\n".join(lines)
 
 
+# A sentence that only points the reader at a page ("Book a discovery call",
+# "Reach out through the contact page") is navigation, not a claim. The
+# verifier used to list these as brand claims and fail them for want of a fact.
+# NARROW on purpose: the sentence must read as an invitation AND must not
+# assert anything. Anything that states what the brand or a page does, costs,
+# promises or achieves, or carries any figure, is still judged.
+_NAV_RE = re.compile(
+    r"\b(?:book|schedule|request|start with|use|visit|see|read|check out|head (?:over )?to|go to|"
+    r"reach out|get in touch|contact|talk (?:it |this |that )?through|ask (?:about|us)|"
+    r"bring (?:it|them|that|this|those|your)|learn more|find out more|take a look|explore)\b"
+    r"|\bis (?:the|a good) place to (?:ask|start|talk)\b"
+    r"|\bis where you can (?:ask|start|talk|book)\b", re.I)
+_NAV_ASSERT_RE = re.compile(
+    r"\b(?:we|our team|the (?:service|system|ai|assistant|product|platform|tool|software|page|team))\s+"
+    r"(?:will|can|does|do|is|are|has|have|offers?|provides?|includes?|answers?|books?|handles?|"
+    r"takes?|delivers?|builds?|sets?|gets?|makes?|helps?|runs?|works?)\b"
+    r"|\b(?:lays? out|outlin\w+|covers?|explains?|shows?|walks? (?:you )?through|details|describes?|"
+    r"offers?|provides?|includes?|delivers?|guarante\w+|promis\w+|free|pric\w+|costs?|fees?|"
+    r"discounts?|results?|proven|faster|fastest|instant\w*|same[- ]day|within|turnaround|"
+    r"no (?:contracts?|obligation|setup|commitment)|live in|up and running|increase\w*|boost\w*|"
+    r"sav(?:e|es|ed|ing)s?|more (?:leads|calls|customers|revenue|sales))\b"
+    r"|\$", re.I)
+_NAV_MAX_WORDS = 45
+
+
+def is_navigation_sentence(unit: Optional[Unit], domain: str = "") -> bool:
+    """True only for a pure call-to-action or pointer sentence: it invites the
+    reader to a page or a conversation, carries no outside link and no figure,
+    and asserts nothing about the brand or the world."""
+    if unit is None or not unit.text:
+        return False
+    text = unit.text
+    if len(text.split()) > _NAV_MAX_WORDS or not _NAV_RE.search(text):
+        return False
+    if _NAV_ASSERT_RE.search(text) or extract_figures(text):
+        return False
+    for href in unit.links:
+        resolved = resolve_link(href, domain)
+        if resolved and not resolved[1]:
+            return False                      # an outside link: this is a sourced statement
+    return True
+
+
 def evaluate_verifier(reply: Any, units: List[Unit], fetched: Dict[str, Fetched],
-                      facts_text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
+                      facts_text: str, domain: str = "",
+                      sink: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], List[Dict[str, Any]]]:
     """Turn the verifier's reply into violations + an audit record per claim.
     A SUPPORTED verdict is accepted only when CODE finds the quoted passage in
     the fetched source text (or the facts file). A quote the model made up is
@@ -759,10 +885,15 @@ def evaluate_verifier(reply: Any, units: List[Unit], fetched: Dict[str, Fetched]
                     final = "SUPPORTED" if qn in norm_cache[source] else "QUOTE_NOT_IN_SOURCE"
         elif verdict not in ("NOT_SUPPORTED", "UNVERIFIABLE"):
             final = "UNVERIFIABLE"
+        if final in ("NOT_SUPPORTED", "UNVERIFIABLE") and is_navigation_sentence(unit, domain):
+            # An invitation to a page, not a statement of fact. Only the verifier's
+            # own "no support" verdicts are waived: a SUPPORTED verdict whose quote
+            # code could not find still fails, navigation or not.
+            final = "NOT_A_CLAIM"
         records.append({"sentence_id": unit.uid if unit else "", "claim": claim,
                         "source": source or "", "verdict": final,
                         "quote": quote if final == "SUPPORTED" else ""})
-        if final == "SUPPORTED":
+        if final in ("SUPPORTED", "NOT_A_CLAIM"):
             continue
         reason = {
             "NOT_SUPPORTED": "claim is not supported by its source",
@@ -774,7 +905,94 @@ def evaluate_verifier(reply: Any, units: List[Unit], fetched: Dict[str, Fetched]
         }[final]
         violations.append(f'{reason}: "{_short(sentence)}"'
                           + (f" [source: {source}]" if source else ""))
+        _fail(sink, unit, "claim", violations[-1], verdict=final, source=source, claim=claim)
     return violations, records
+
+
+# ----------------------------------------------------------------------------
+# Carry-forward of verified sentences between gate passes
+# ----------------------------------------------------------------------------
+# The same sentence, judged twice, could come back SUPPORTED once and
+# NOT_SUPPORTED the next time (seen 2026-11-15 on a claim about Google's
+# popularity factor). A sentence that code-confirmed SUPPORTED in an earlier
+# pass and is byte-identical now, with the same links, is not sent to the
+# verifier again. Nothing is relaxed: the quote is re-confirmed by CODE against
+# the source as fetched for THIS pass, and any change to the sentence or its
+# links is a different key, so it is judged fresh.
+
+def verdict_key(unit: Unit) -> Tuple[str, Tuple[str, ...], str]:
+    return (unit.text, tuple(unit.links), unit.where)
+
+
+NO_CLAIM = "NO_CLAIM"       # cache value: the verifier was shown this sentence and listed no claim
+
+
+def remember_no_claims(cache: Dict[Any, Any], units: List[Unit], shown_ids: set,
+                       records: List[Dict[str, Any]]) -> None:
+    """A sentence the verifier was SHOWN and listed no checkable claim for is
+    remembered as such, the same way a SUPPORTED one is. Without this, an
+    untouched sentence could be read as 'no claim' on one pass and as a failing
+    claim on the next (two did, on 2026-11-19). Keyed on the exact text and
+    links, so any change is judged fresh."""
+    judged = {r.get("sentence_id") for r in records}
+    for u in units:
+        if u.uid in shown_ids and u.uid not in judged and verdict_key(u) not in cache:
+            cache[verdict_key(u)] = NO_CLAIM
+
+
+def remember_verdicts(cache: Dict[Any, List[Dict[str, Any]]], units: List[Unit],
+                      records: List[Dict[str, Any]]) -> None:
+    """Store sentences whose EVERY judged claim is SUPPORTED. A sentence with
+    any other verdict is removed, so it can never be carried."""
+    by_id: Dict[str, List[Dict[str, Any]]] = {}
+    for r in records:
+        if r.get("sentence_id"):
+            by_id.setdefault(r["sentence_id"], []).append(r)
+    for u in units:
+        recs = by_id.get(u.uid)
+        if not recs:
+            continue
+        key = verdict_key(u)
+        if all(r["verdict"] == "SUPPORTED" and r.get("quote") and r.get("source") for r in recs):
+            cache[key] = [dict(r) for r in recs if not r.get("carried")] or cache.get(key, [])
+        else:
+            cache.pop(key, None)
+
+
+def carry_forward(cache: Optional[Dict[Any, List[Dict[str, Any]]]], units: List[Unit],
+                  fetched: Dict[str, Fetched], facts_text: str, post_sources: List[str],
+                  brand_pages: List[str]) -> Tuple[set, List[Dict[str, Any]]]:
+    """(ids of sentences that need no new verdict, their carried records)."""
+    if not cache:
+        return set(), []
+    facts_norm = _norm(facts_text)
+    skip: set = set()
+    carried: List[Dict[str, Any]] = []
+    for u in units:
+        recs = cache.get(verdict_key(u))
+        if recs == NO_CLAIM:
+            skip.add(u.uid)           # seen before, unchanged, no claim: not shown again
+            continue
+        if not recs or not isinstance(recs, list):
+            continue
+        ok = True
+        for r in recs:
+            src, qn = str(r.get("source") or ""), _norm(str(r.get("quote") or ""))
+            if len(qn) < _MIN_QUOTE_CHARS:
+                ok = False
+            elif src.lower() == "facts":
+                ok = bool(facts_norm) and qn in facts_norm
+            else:
+                f = fetched.get(src)
+                available = src in u.links or src in post_sources or src in brand_pages
+                ok = bool(available and f and f.state == "live" and f.text and qn in _norm(f.text))
+            if not ok:
+                break
+        if not ok:
+            continue                      # source gone, moved or changed: judge it fresh
+        skip.add(u.uid)
+        carried.extend({**r, "sentence_id": u.uid, "carried": True} for r in recs)
+    return skip, carried
 
 
 # ----------------------------------------------------------------------------
@@ -788,7 +1006,9 @@ EDITOR_RUBRIC: List[Tuple[str, str, bool]] = [
                           "from a generic search result (a sourced number, a named system, a real "
                           "process detail from doing the work).", True),
     ("no_filler_or_hype", "There is no filler or hype: no padding, no sentence that only restates "
-                          "its heading, no inflated or sales-pitch line.", False),
+                          "its heading, no inflated or sales-pitch line. (A plain brand pitch or "
+                          "call-to-action sentence that meets the pitch_within_rules item is NOT "
+                          "hype; do not fail it here.)", False),
     ("no_unsupported_absolutes", "No factual sentence leans on an absolute or frequency word "
                                  "('most', 'never', 'always', 'none', 'every', 'usually') without a "
                                  "source link in that sentence.", False),
@@ -797,8 +1017,27 @@ EDITOR_RUBRIC: List[Tuple[str, str, bool]] = [
     ("no_em_dashes", "There are no em-dashes anywhere.", False),
     ("operator_voice", "It reads like an operator who does this work wrote it: specific and plain, "
                        "no template phrasing, no outsider framing such as 'the vendor' or 'most "
-                       "agencies'.", False),
+                       "agencies'. (A plain brand pitch or call-to-action sentence that meets the "
+                       "pitch_within_rules item is acceptable; do not fail it here.)", False),
 ]
+_PITCH_RULE = [
+    # What the brand's OWN pitch or call-to-action sentence may say, written down
+    # so the editor judges it against a rule and not taste. The banned-content
+    # rules are separate code checks and apply to these sentences like any other.
+    ("pitch_within_rules", "Every sentence that pitches the brand or invites the reader to contact "
+                           "it stays inside this rule: it may name the service and invite the "
+                           "reader to get in touch, book a call or read a page of the brand's "
+                           "site. It may NOT state a result, a number, a price, a timeline or a "
+                           "capability, unless that line is marked [link] or the statement is in "
+                           "APPROVED BRAND FACTS. A post with no pitch sentence passes.", False),
+]
+EDITOR_RUBRIC[-1:-1] = _PITCH_RULE          # operator_voice stays the last item
+
+# Rubric items that are about individual LINES. Their verdict on an unchanged
+# line is carried between passes (see stabilize_editor). The other items judge
+# the post as a whole and are answered fresh every pass.
+EDITOR_LINE_RULES = ("no_filler_or_hype", "no_unsupported_absolutes", "no_invented_timelines",
+                     "operator_voice", "pitch_within_rules")
 
 EDITOR_SYSTEM = (
     "You are the editor for a blog post that a DIFFERENT AI model wrote. You are strict. A model "
@@ -806,27 +1045,83 @@ EDITOR_SYSTEM = (
     "Answer every rubric item with pass true or false. Every answer needs \"evidence\": one line "
     "copied CHARACTER FOR CHARACTER from the post. For a pass, quote the line that earns the pass. "
     "For a fail, quote the line that causes the fail. If an item passes because something is absent "
-    "(for example there are no em-dashes), evidence may be an empty string.\n\n"
+    "(for example there are no em-dashes), evidence may be an empty string.\n"
+    "Each post line starts with its id (S1, S2, ...). For a FAIL, also give \"sentence_ids\": the "
+    "ids of EVERY line that breaks that rule, not only the worst one, so each can be fixed. Use "
+    "an empty list only when the fail is about something missing from the post as a whole.\n\n"
     "Return ONLY a JSON object, no prose and no code fence:\n"
-    '{"items": [{"id": "answers_title", "pass": true, "evidence": "verbatim line"}]}'
+    '{"items": [{"id": "answers_title", "pass": true, "evidence": "verbatim line", '
+    '"sentence_ids": []}]}'
 )
 
 
-def build_editor_prompt(post: Dict[str, Any], units: List[Unit], facts_text: str) -> str:
+def sourced_sentence_ids(claims: List[Dict[str, Any]]) -> set:
+    """Sentences whose EVERY judged claim the verifier marked SUPPORTED with a
+    code-confirmed quote from a fetched source or the facts file. Used only for
+    block formats, where prose cannot carry a link: such a sentence counts as
+    cited for the editor. A sentence with any unsupported claim is not in it."""
+    good, bad = set(), set()
+    for c in claims or []:
+        sid = c.get("sentence_id")
+        if not sid or c.get("verdict") == "NOT_A_CLAIM":
+            continue
+        (good if c.get("verdict") == "SUPPORTED" and c.get("source") else bad).add(sid)
+    return good - bad
+
+
+_EVIDENCE_PREFIX_RE = re.compile(r"^\s*(?:S\d+\s+)?\[[a-z][a-z ]{0,24}\]\s*")
+_EVIDENCE_SUFFIX_RE = re.compile(r"\s*\[link\]\s*$")
+
+
+def strip_prompt_markers(evidence: str) -> str:
+    """Remove the markers build_editor_prompt itself adds to each line ("[stat] "
+    in front, " [link]" behind). The editor copies its evidence from those
+    lines, markers included, and the markers are not part of the post."""
+    return _EVIDENCE_SUFFIX_RE.sub("", _EVIDENCE_PREFIX_RE.sub("", evidence or "")).strip()
+
+
+def build_editor_prompt(post: Dict[str, Any], units: List[Unit], facts_text: str,
+                        sourced_ids: Optional[set] = None) -> str:
     lines = [f"TITLE: {post.get('title', '')}", "", "RUBRIC (answer every id):"]
     for rid, question, _needs in EDITOR_RUBRIC:
         lines.append(f"- {rid}: {question}")
+    legend = "[link] marks a sentence that carries a source link"
+    if sourced_ids is not None:
+        # Block format: prose cannot hold a link. A sentence the fact-check step
+        # confirmed against one of the post's listed sources counts as cited.
+        legend += (", or one the fact-check step already confirmed, with a quoted passage, "
+                   "against a source listed in the post (this format cannot put a link inside "
+                   "a sentence, so treat both the same)")
     lines += ["", "APPROVED BRAND FACTS:",
               facts_text.strip() if (facts_text or "").strip() else "(none on file)",
-              "", "POST (one sentence per line; [link] marks a sentence that carries a source link):"]
+              "", f"POST (one sentence per line; {legend}):"]
     for u in units:
         if u.surface == "meta" and u.where != "title":
             continue
-        lines.append(f"[{u.where}] {u.text}{' [link]' if u.links else ''}")
+        cited = bool(u.links) or (sourced_ids is not None and u.uid in sourced_ids)
+        lines.append(f"{u.uid} [{u.where}] {u.text}{' [link]' if cited else ''}")
     return "\n".join(lines)
 
 
-def evaluate_editor(reply: Any, units: List[Unit]) -> Tuple[List[str], List[Dict[str, Any]]]:
+def _editor_units(item: Dict[str, Any], evidence: str, units: List[Unit]) -> List[Unit]:
+    """The sentences an editor FAIL points at: the ids it named, else the line
+    its evidence quotes. Empty when the fail is about the post as a whole."""
+    by_id = {u.uid: u for u in units}
+    ids = item.get("sentence_ids")
+    if isinstance(item.get("sentence_id"), str):
+        ids = list(ids or []) + [item["sentence_id"]]
+    found = [by_id[i] for i in dict.fromkeys(str(x).strip() for x in (ids or [])) if i in by_id]
+    if found:
+        return found
+    ev = _norm(evidence)
+    if len(ev) < 12:
+        return []
+    exact = [u for u in units if _norm(u.text) == ev]
+    return exact[:1] or [u for u in units if ev in _norm(u.text) or _norm(u.text) in ev][:1]
+
+
+def evaluate_editor(reply: Any, units: List[Unit],
+                    sink: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], List[Dict[str, Any]]]:
     """Rubric reply -> violations. Every rubric id must be answered. A pass on an
     evidence-required item only counts if the quoted line is really in the post."""
     if not isinstance(reply, dict) or not isinstance(reply.get("items"), list):
@@ -841,7 +1136,7 @@ def evaluate_editor(reply: Any, units: List[Unit]) -> Tuple[List[str], List[Dict
         if item is None or not isinstance(item.get("pass"), bool):
             raise GateError(f"editor reply is missing a pass/fail answer for '{rid}'")
         passed = item["pass"]
-        evidence = _clean(str(item.get("evidence") or ""))
+        evidence = strip_prompt_markers(_clean(str(item.get("evidence") or "")))
         if rid == "no_em_dashes" and has_em_dash:
             passed = False
         if passed and needs_evidence:
@@ -851,11 +1146,86 @@ def evaluate_editor(reply: Any, units: List[Unit]) -> Tuple[List[str], List[Dict
                 violations.append(f"editor: {rid} was passed with evidence that is not in the post "
                                   f'(treated as fail): "{_short(evidence)}"')
                 records.append({"id": rid, "pass": False, "evidence": evidence})
+                _fail(sink, None, f"editor:{rid}", violations[-1])
                 continue
         records.append({"id": rid, "pass": passed, "evidence": evidence})
         if not passed:
             violations.append(f'editor: {rid} FAIL ({question}) evidence: "{_short(evidence)}"')
+            named = _editor_units(item, evidence, units)
+            records[-1]["sentence_ids"] = [u.uid for u in named]
+            for u in named or [None]:
+                _fail(sink, u, f"editor:{rid}", violations[-1])
     return violations, records
+
+
+def stabilize_editor(violations: List[str], records: List[Dict[str, Any]],
+                     failures: List[Dict[str, Any]], units: List[Unit],
+                     cache: Dict[Any, set]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Carry the editor's LINE verdicts between passes, so an unchanged line
+    cannot pass on one look and fail on the next (its count of failing lines
+    moved between two identical calls on 2026-11-19).
+
+    `cache` maps a line (exact text + links) to the set of line rules it failed
+    when the editor last judged it; an empty set means it was judged clean.
+      * an unchanged line that was clean for a rule cannot be newly failed on it;
+      * an unchanged line that failed a rule still fails it, named or not;
+      * a new or changed line is judged fresh, and so are the whole-post items.
+    Returns the adjusted (violations, failures) and updates records and cache."""
+    by_id = {u.uid: u for u in units}
+    questions = {rid: q for rid, q, _n in EDITOR_RUBRIC}
+    rec_by_id = {r["id"]: r for r in records}
+    shown = [u for u in units if not (u.surface == "meta" and u.where != "title")]
+    out_fail = [f for f in failures if f["rule"].split(":", 1)[-1] not in EDITOR_LINE_RULES]
+    out_viol = list(violations)
+    for rid in EDITOR_LINE_RULES:
+        rule = f"editor:{rid}"
+        mine = [f for f in failures if f["rule"] == rule]
+        named = [f for f in mine if f["uid"] in by_id]
+        whole_post = [f for f in mine if f["uid"] not in by_id]      # a fail that names no line
+        keep: List[Dict[str, Any]] = []
+        for f in named:
+            before = cache.get(verdict_key(by_id[f["uid"]]))
+            if before is not None and rid not in before:
+                continue                      # judged clean before, unchanged: stays clean
+            keep.append(f)
+        kept_ids = {f["uid"] for f in keep}
+        old = next((v for v in out_viol if v.startswith(f"editor: {rid} ")), None)
+        for u in shown:
+            before = cache.get(verdict_key(u))
+            if before and rid in before and u.uid not in kept_ids:
+                msg = old or f'editor: {rid} FAIL ({questions[rid]}) evidence: "{_short(u.text)}"'
+                _fail(keep, u, rule, msg, carried=True)
+                kept_ids.add(u.uid)
+        remaining = keep + whole_post
+        if remaining:
+            first = by_id.get(remaining[0]["uid"])
+            msg = old if old and (whole_post or any(_short(by_id[f["uid"]].text) in old for f in keep
+                                                    if f["uid"] in by_id)) else (
+                f'editor: {rid} FAIL ({questions[rid]}) evidence: "{_short(first.text if first else "")}"')
+            for f in remaining:
+                f["violation"] = msg
+            if old:
+                out_viol[out_viol.index(old)] = msg
+            else:
+                out_viol.append(msg)
+            if rid in rec_by_id:
+                rec_by_id[rid]["pass"] = False
+                rec_by_id[rid]["sentence_ids"] = [f["uid"] for f in keep]
+        elif old:
+            out_viol.remove(old)              # every line it named had already been judged clean
+            if rid in rec_by_id:
+                rec_by_id[rid]["pass"] = True
+                rec_by_id[rid]["sentence_ids"] = []
+                rec_by_id[rid]["carried_clean"] = True
+        out_fail.extend(remaining)
+    failing: Dict[str, set] = {}
+    for f in out_fail:
+        rid = f["rule"].split(":", 1)[-1]
+        if rid in EDITOR_LINE_RULES and f["uid"] in by_id:
+            failing.setdefault(f["uid"], set()).add(rid)
+    for u in shown:
+        cache[verdict_key(u)] = set(failing.get(u.uid, set()))
+    return _dedupe(out_viol), out_fail
 
 
 # ----------------------------------------------------------------------------
@@ -898,7 +1268,9 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
              model: Optional[str] = None,
              link_cache: Optional[Dict[str, Fetched]] = None,
              use_llm: bool = True,
-             skip_llm_on_deterministic_fail: bool = False) -> Dict[str, Any]:
+             skip_llm_on_deterministic_fail: bool = False,
+             verdict_cache: Optional[Dict[Any, List[Dict[str, Any]]]] = None,
+             editor_cache: Optional[Dict[Any, set]] = None) -> Dict[str, Any]:
     """Run the whole gate on one generated post (either body shape).
 
     Returns {"ok", "violations", "error", "claims", "editor", "links", "counts",
@@ -907,17 +1279,19 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
     model = model or verifier_model()
     out: Dict[str, Any] = {"ok": False, "violations": [], "error": None, "claims": [],
                            "editor": [], "links": [], "counts": {}, "model": model,
-                           "llm_ran": False}
+                           "llm_ran": False, "failures": []}
+    failures: List[Dict[str, Any]] = out["failures"]
     try:
         fc = (cfg or {}).get("factcheck") or {}
         facts = load_facts(cfg) if facts_text is None else facts_text
         http_get = http_get or default_http_get
         units, post_sources = extract_post(post)
 
-        link_v, fetched = check_links(units, (cfg or {}).get("domain", ""), http_get, link_cache)
+        link_v, fetched = check_links(units, (cfg or {}).get("domain", ""), http_get, link_cache,
+                                      failures)
         fig_v, fig_counts = check_figures(units, fetched, facts, post_sources,
-                                          fc.get("figure_allowlist") or ())
-        ban_v = check_banned(units, fc.get("banned") or [], facts)
+                                          fc.get("figure_allowlist") or (), failures)
+        ban_v = check_banned(units, fc.get("banned") or [], facts, failures)
         det = link_v + fig_v + ban_v
 
         out["links"] = [{"href": h, "state": f.state, "status": f.status, "internal": f.internal}
@@ -935,17 +1309,49 @@ def run_gate(post: Dict[str, Any], cfg: Dict[str, Any], *,
         ed_v: List[str] = []
         if use_llm and not (skip_llm_on_deterministic_fail and det):
             llm = llm or default_llm(model)
-            ver_reply = llm(VERIFIER_SYSTEM, build_verifier_prompt(units, fetched, facts, post_sources))
-            ver_v, out["claims"] = evaluate_verifier(ver_reply, units, fetched, facts)
-            ed_reply = llm(EDITOR_SYSTEM, build_editor_prompt(post, units, facts))
-            ed_v, out["editor"] = evaluate_editor(ed_reply, units)
+            domain = (cfg or {}).get("domain", "")
+            block_format = isinstance(post.get("body"), list)
+            brand_pages = post_brand_pages(units, domain) if block_format else []
+            skip_ids, carried = carry_forward(verdict_cache, units, fetched, facts, post_sources,
+                                              brand_pages)
+            to_judge = [u for u in units if u.uid not in skip_ids
+                        and not (u.surface == "meta" and u.where != "title")]
+            if to_judge or not skip_ids:
+                ver_reply = llm(VERIFIER_SYSTEM, build_verifier_prompt(
+                    units, fetched, facts, post_sources, brand_pages, skip_ids))
+                ver_v, fresh = evaluate_verifier(ver_reply, units, fetched, facts, domain, failures)
+                # A carried sentence is settled for this pass: a stray new verdict on it
+                # (the model was not shown it) is ignored rather than double-counted.
+                dropped = {r["sentence_id"] for r in fresh if r.get("sentence_id") in skip_ids}
+                if dropped:
+                    fresh = [r for r in fresh if r.get("sentence_id") not in skip_ids]
+                    ver_v = [v for f_, v in ((f_, f_["violation"]) for f_ in failures
+                                             if f_["rule"] == "claim" and f_["uid"] not in skip_ids)]
+                    failures[:] = [f_ for f_ in failures
+                                   if not (f_["rule"] == "claim" and f_["uid"] in skip_ids)]
+            else:
+                fresh = []                 # every sentence carried: no verifier call at all
+            out["claims"] = carried + fresh
+            out["carried"] = len(skip_ids)
+            if verdict_cache is not None:
+                remember_verdicts(verdict_cache, units, out["claims"])
+                remember_no_claims(verdict_cache, units, {u.uid for u in to_judge}, out["claims"])
+            ed_reply = llm(EDITOR_SYSTEM, build_editor_prompt(
+                post, units, facts, sourced_sentence_ids(out["claims"]) if block_format else None))
+            ed_sink: List[Dict[str, Any]] = []
+            ed_v, out["editor"] = evaluate_editor(ed_reply, units, ed_sink)
+            if editor_cache is not None:
+                ed_v, ed_sink = stabilize_editor(ed_v, out["editor"], ed_sink, units, editor_cache)
+            failures.extend(ed_sink)
             out["llm_ran"] = True
         claims = out["claims"]
         counts.update({
             "claims": len(claims),
             "claims_supported": sum(1 for c in claims if c["verdict"] == "SUPPORTED"),
-            "claims_not_supported": sum(1 for c in claims if c["verdict"] != "SUPPORTED"),
+            "claims_not_supported": sum(1 for c in claims
+                                        if c["verdict"] not in ("SUPPORTED", "NOT_A_CLAIM")),
             "editor_fails": sum(1 for e in out["editor"] if not e["pass"]),
+            "claims_carried": sum(1 for c in claims if c.get("carried")),
         })
         out["violations"] = _dedupe(det + ver_v + ed_v)
         counts["violations"] = len(out["violations"])
@@ -976,6 +1382,9 @@ def summarize(results: List[Dict[str, Any]], revised: bool) -> Dict[str, Any]:
         "counts": dict(last.get("counts") or {}),
         "first_pass_violations": len((results[0].get("violations") or [])) if results else 0,
         "claims": list(last.get("claims") or []),
+        # Which sentence broke which rule on the last pass: the human editor's
+        # worklist when a held post is kept as a draft.
+        "failures": [dict(f) for f in last.get("failures") or []],
     }
 
 

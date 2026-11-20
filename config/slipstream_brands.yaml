@@ -23,6 +23,22 @@ vercel_team_id: team_1RhVPmDufqg6ESm15xfkXWQL
 # Facts files: config/slipstream_facts/<brand_key>.md (override with facts_file).
 factcheck:
   defaults:
+    # TARGETED REPAIR (services/slipstream_repair.py). When the post still fails
+    # after the one writer revision, ONE repair pass may rewrite a failing
+    # sentence to say no more than its cited quote, or delete it, and nothing
+    # else. Code diffs the result and throws the repair away if a passing
+    # sentence changed, a figure or URL was added, or a deletion broke the
+    # structure. Then the full gate runs one final time. Set false here or under
+    # brands.<key> to hold straight after the revision instead.
+    repair_pass: true
+    # Skip repair and HOLD when more than this share of the judged claims fail.
+    repair_max_fail_ratio: 0.34
+    # HOLD if a repair leaves the body under this many words.
+    repair_min_words: 600
+    # Sentences that fail ONLY an editor style rule are counted on their own,
+    # against this larger share of the judged claims (style lines are cheap to
+    # reword or cut; failed claims are not).
+    repair_max_style_ratio: 0.75
     # Tokens that look like numbers but are not statistics.
     figure_allowlist: ["24/7"]
     banned:
@@ -99,6 +115,72 @@ factcheck:
           patterns:
             - '\b(?:church(?:es)?|ministr(?:y|ies)|pastors?|congregations?|parish(?:es)?|sermons?|scriptures?|bible|biblical|gospel|prayers?|pray(?:s|ed|ing)?|christ|christians?|christianity|jesus|god|godly|faith|faith[- ]based|faithful(?:ly)?|believers?|blessed|blessings?|kingdom|tithes?|worship(?:ers?|ping)?(?!\s+digital))\b'
 
+# RESEARCH BEFORE WRITING (services/slipstream_research.py). Runs in run_brand
+# BEFORE the writer. A model with web search proposes sources; CODE fetches each
+# one with the fact-check gate's own fetcher and drops anything that does not
+# load; a model proposes exact quotes and CODE keeps only the ones that are
+# literally on the page. The writer then gets that source pack and may cite
+# nothing else. A research error on a brand that researches HOLDS the post.
+#
+# `enabled` is NOT set here on purpose: research follows the gate. It is ON for
+# every gated brand and OFF for a brand opted out of the gate (paperandpurpose),
+# so that brand's behavior is unchanged. Set research.brands.<key>.enabled to
+# true or false only to break that link deliberately.
+#   max_searches      web searches per post (each one is billed; this caps cost)
+#   max_candidates    candidate pages code will fetch per post
+#   max_sources       sources kept in the pack
+#   min_sources       fewer usable sources than this = the writer is told to write
+#                     qualitatively: no statistics, no citations beyond the pack
+#   blocked_domains   never used as a source (subdomains included)
+#   preferred_domains ranked first, with .gov / .edu / .mil (primary sources)
+# Lists under brands.<key> ADD to the defaults.
+research:
+  defaults:
+    max_searches: 4
+    max_candidates: 10
+    max_sources: 6
+    min_sources: 2
+    blocked_domains:
+      # user-generated, social, and aggregator pages: not sources an editor accepts
+      - reddit.com
+      - quora.com
+      - medium.com
+      - substack.com
+      - linkedin.com
+      - facebook.com
+      - instagram.com
+      - tiktok.com
+      - x.com
+      - twitter.com
+      - youtube.com
+      - pinterest.com
+      - wikipedia.org
+      - yelp.com
+      - g2.com
+      - capterra.com
+      - trustpilot.com
+      - prnewswire.com
+      - businesswire.com
+      - globenewswire.com
+    preferred_domains:
+      - nist.gov
+      - sba.gov
+      - census.gov
+      - bls.gov
+      - fcc.gov
+      - consumerfinance.gov
+      - support.google.com
+      - developers.google.com
+      - schema.org
+      - w3.org
+  brands:
+    autointelligence:
+      preferred_domains: [nada.org, coxautoinc.com, federalregister.gov, ecfr.gov]
+    aiphoneguy:
+      preferred_domains: [ecfr.gov, federalregister.gov]
+    worshipdigital:
+      preferred_domains: [business.google.com, blog.google]
+
 # Zernio account ids per brand+platform, used by slipstream_engine._distribute_social.
 # THESE ARE LOAD-BEARING FOR SAFETY, not a convenience. publish_to_zernio treats a
 # missing account id as "post to EVERY connected account on this platform", so a
@@ -160,6 +242,12 @@ zernio_accounts:
     facebook: "6a67e85911e357f89d7e4155"
     instagram: "6a67e8e011e357f89d7e4722"
 
+# HUMAN-FINISH MODE, per brand: `on_hold: draft_pr` (default `hold`, and NOT set
+# for any brand below). With it, a post the gate HOLDS is not thrown away: the
+# engine opens a GitHub DRAFT pull request titled "[NEEDS EDITOR] ..." whose body
+# lists every failing sentence, the rule it broke and the quote it cites, so a
+# person can finish it by hand. It is still a HOLD: never auto-merged (whatever
+# auto_merge says), no images bought, no topic check-off, no social.
 brands:
   autointelligence:
     repo: salesdroid/automotive-intelligence

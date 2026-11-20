@@ -71,8 +71,11 @@ def publish_post(
     *,
     base: str = "main",
     http: Callable = _default_http,
+    draft: bool = False,
 ) -> str:
-    """Create `branch` off `base`, commit each file, open a PR. Returns the PR URL."""
+    """Create `branch` off `base`, commit each file, open a PR. Returns the PR URL.
+    `draft=True` opens a GitHub DRAFT pull request, which cannot be merged until
+    a person marks it ready."""
     if not token:
         raise PublishError("SLIPSTREAM_GH_TOKEN missing")
     repo_api = f"{_API}/{repo}"
@@ -109,8 +112,10 @@ def publish_post(
             body["sha"] = existing_sha
         http("PUT", f"{repo_api}/contents/{path}", token, body)
 
-    pr = http("POST", f"{repo_api}/pulls", token,
-              {"title": pr_title, "head": branch, "base": base, "body": pr_body})
+    payload: Dict[str, Any] = {"title": pr_title, "head": branch, "base": base, "body": pr_body}
+    if draft:
+        payload["draft"] = True
+    pr = http("POST", f"{repo_api}/pulls", token, payload)
     return pr["html_url"]
 
 
