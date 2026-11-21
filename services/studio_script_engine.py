@@ -52,7 +52,10 @@ _BANNED_TAGS_RE = re.compile(r"#(?:fyp|viral|foryou)\b", re.I)
 _PCT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:%|percent)", re.I)
 _DOLLAR_RE = re.compile(r"\$\s*\d")
 _BOOKD_BANNED_RE = re.compile(r"\b(?:income|earn(?:ings)?|guarantee[ds]?)\b", re.I)
-_ALLOWED_PCTS = {"3%", "3 percent"}  # the take-QC'd Invoca voicemail line, only
+# Take-QC'd stats only: the Invoca voicemail line (3%) and the AIPG "97 percent" line,
+# which Michael approved as written on 2026-11-16 ("Nope, go with it") after being told
+# it carries no source. Nothing else passes until he clears it the same way.
+_ALLOWED_PCTS = {"3%", "3 percent", "97%", "97 percent"}
 
 _SCRIPT_PARTS = ("hook", "meat", "climax", "comment_ask", "follow_ask")
 
@@ -164,7 +167,8 @@ def gate_videos(videos: List[Dict[str, Any]], existing_titles: List[str]) -> Lis
             v.append(f"{label}: dollar figure in copy (pricing is banned)")
         for m in _PCT_RE.findall(blob):
             if m.strip().lower().replace(" ", "") not in {p.replace(" ", "") for p in _ALLOWED_PCTS}:
-                v.append(f"{label}: unapproved stat '{m}' (only the Invoca 3% line is take-QC'd)")
+                v.append(f"{label}: unapproved stat '{m}' (only the Invoca 3% line and the "
+                         f"approved AIPG 97% line are take-QC'd)")
         if _BANNED_TAGS_RE.search(blob):
             v.append(f"{label}: banned hashtag (#fyp/#viral/#foryou)")
         if vid.get("brand", "").lower() in ("bookd", "book'd") and _BOOKD_BANNED_RE.search(blob):

@@ -65,6 +65,11 @@ def test_gate_blocks_unapproved_stat_allows_invoca_3pct():
     assert any("unapproved stat" in x for x in se.gate_videos([bad], []))
     ok = _video(meat=_video()["meat"] + " Fewer than 3% of callers leave a voicemail.")
     assert not any("unapproved stat" in x for x in se.gate_videos([ok], []))
+    # the AIPG 97 percent line, approved as written by Michael 2026-11-16
+    ok97 = _video(meat=_video()["meat"] + " About 97 percent of them call the next guy.")
+    assert not any("unapproved stat" in x for x in se.gate_videos([ok97], []))
+    still_bad = _video(meat=_video()["meat"] + " Roughly 40% never call back.")
+    assert any("unapproved stat" in x for x in se.gate_videos([still_bad], []))
 
 
 def test_gate_catches_banned_hashtag():
